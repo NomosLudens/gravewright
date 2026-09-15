@@ -1,16 +1,18 @@
 {% macro kallistis_result(value) -%}
 <div data-v-gwresult class="dice-result__kallistis">
-  <span data-v-gwresult class="dice-result__summary"><code data-v-gwresult>KALLISTIS 2d10</code><strong data-v-gwresult>{{ 'Success' if value.success else 'Failure' }}</strong></span>
+  <span data-v-gwresult class="dice-result__summary"><code data-v-gwresult>KALLISTIS 2d10</code><strong data-v-gwresult>{{ 'Sucesso' if value.success else 'Falha' }}</strong></span>
   <div data-v-gwresult class="dice-result__kallistis-grid">
-    <span data-v-gwresult>☀ Luz: {{ value.light_die }}</span>
-    <span data-v-gwresult>● Escuridão: {{ value.dark_die }}</span>
+    <span data-v-gwresult>☀ Luz: {{ value.light_die }}{% if value.light_principle_label %} — {{ value.light_principle_label }}{% endif %}</span>
+    <span data-v-gwresult>● Escuridão: {{ value.dark_die }}{% if value.dark_principle_label %} — {{ value.dark_principle_label }}{% endif %}</span>
     <span data-v-gwresult>Natural: {{ value.natural_total }}</span>
     <span data-v-gwresult>Modificador: {{ value.modifier }}</span>
     <span data-v-gwresult>Total: {{ value.total }}</span>
     <span data-v-gwresult>Dificuldade: {{ value.difficulty }}</span>
     <span data-v-gwresult>Margem: {{ '+' if value.margin > 0 else '' }}{{ value.margin }}</span>
+    <span data-v-gwresult>Grau: {{ value.grade|default(value.degree, true) }}</span>
     <span data-v-gwresult>Predominância: {{ 'Luz' if value.predominance == 'light' else 'Escuridão' if value.predominance == 'dark' else 'Ressonância' }}</span>
-    <span data-v-gwresult>Ressonância: {{ 'Sim (' ~ value.resonance_value ~ ')' if value.resonance else 'Não' }}</span>
+    {% if value.predominance_intensity_label %}<span data-v-gwresult>Intensidade: {{ value.predominance_intensity_label }}</span>{% endif %}
+    {% if value.resonance %}<strong data-v-gwresult class="dice-result__kallistis-resonance">{{ value.resonance_name|default('Ressonância', true) }}{% if value.resonance_value %} ({{ value.resonance_value }}){% endif %}</strong>{% if value.resonance_opening %}<span data-v-gwresult class="dice-result__kallistis-opening">{{ value.resonance_opening }}</span>{% endif %}{% else %}<span data-v-gwresult>Ressonância: Não</span>{% endif %}
   </div>
 </div>
 {%- endmacro %}

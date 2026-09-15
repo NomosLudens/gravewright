@@ -57,10 +57,14 @@ class DiceTests(TransactionTestCase):
             message = (await self.event(socket, 'dice.ack'))['message']
             result = message['roll']['result']
             self.assertEqual(message['roll']['system'], 'kallistis')
-            self.assertEqual(set(('system', 'version', 'light_die', 'dark_die',
+            self.assertEqual(set(('system', 'version', 'light_die', 'light_principle',
+                                  'light_principle_label', 'light_reading', 'dark_die',
+                                  'dark_principle', 'dark_principle_label', 'dark_reading',
                                   'natural_total', 'modifier', 'total', 'difficulty',
-                                  'margin', 'success', 'degree', 'predominance',
-                                  'resonance', 'resonance_value')),
+                                  'margin', 'success', 'degree', 'grade', 'predominance',
+                                  'predominance_delta', 'predominance_intensity',
+                                  'predominance_intensity_label', 'resonance',
+                                  'resonance_value', 'resonance_name', 'resonance_opening')),
                              set(result))
             self.assertGreaterEqual(result['light_die'], 1)
             self.assertLessEqual(result['light_die'], 10)
@@ -78,6 +82,9 @@ class DiceTests(TransactionTestCase):
                 'resonance' if result['resonance'] else
                 'light' if result['light_die'] > result['dark_die'] else 'dark',
             )
+            self.assertIn(result['light_principle_label'], message['html'])
+            self.assertIn(result['dark_principle_label'], message['html'])
+            self.assertIn(result['predominance_intensity_label'], message['html'])
             self.assertEqual(await db(Message.objects.count)(), 1)
             await socket.send_json_to({'type': 'dice.roll', 'payload': payload})
             replay = (await self.event(socket, 'dice.ack'))['message']

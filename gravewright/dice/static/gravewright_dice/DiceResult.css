@@ -13,5 +13,6 @@
 }
 .dice-result__kallistis-grid[data-v-gwresult] { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px 10px; font-size:12px; }
 .dice-result__kallistis-grid span[data-v-gwresult] { overflow-wrap:anywhere; }
+.dice-result__kallistis-resonance[data-v-gwresult] { grid-column:1 / -1; color:var(--accent); }
+.dice-result__kallistis-opening[data-v-gwresult] { grid-column:1 / -1; font-style:italic; }
 .dice-result__batch[data-v-gwresult]{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.dice-result__batch>div>strong[data-v-gwresult]{font-size:11px;color:var(--muted)}
-
