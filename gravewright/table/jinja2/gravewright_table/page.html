@@ -31,7 +31,7 @@
 <script type="module" src="{{ static('gravewright_journals/workspace.js') }}"></script>
 <script src="{{ static('gravewright_web/windows.js') }}" defer></script>
 <script type="module" src="{{ static('gravewright_table/realtime.js') }}"></script>
-<script type="module" src="{{ static('gravewright_dice/tray.js') }}?v=20260914-gate03a"></script>
+<script type="module" src="{{ static('gravewright_dice/tray.js') }}?v=20260915-gate03b3"></script>
 {% endblock %}
 {% block content %}
 <main id="table-workspace" data-renderer-debug="{{ 'true' if renderer_debug else 'false' }}" data-role="{{ member_role }}" data-profile-id="{{ request.user.pk }}" data-table-id="{{ campaign.pk }}" data-detached-chat="{{ 'true' if detached_chat else 'false' }}" class="game-table" data-signals="{_houseSection:'table',_actorsOpen:false,_hasMap:false,_mapsOpen:false,_journalsOpen:false,_diceOpen:false,_layer:'game',_tool:'select',_house:false,_roster:false,_chatOpen:{{ 'true' if detached_chat else 'false' }},_chatMinimized:false,_chatDetached:false,_presence:'connecting',_onlineCount:0,_hasChat:false,_chatDraft:'',_chatPending:false,_chatError:''}" data-attr:data-table-layer="$_layer" data-on:keydown__window="if(evt.key==='Escape'){$_house=false;$_roster=false}else if(!evt.ctrlKey &amp;&amp; !evt.metaKey &amp;&amp; !evt.altKey &amp;&amp; !evt.target.closest('input,textarea,select,[contenteditable]')){const button=[...el.querySelectorAll('button[aria-keyshortcuts]')].find(b=&gt;b.offsetParent!==null &amp;&amp; b.getAttribute('aria-disabled')!=='true' &amp;&amp; b.getAttribute('aria-keyshortcuts')===evt.key.toUpperCase());if(button){evt.preventDefault();button.click()}}" >

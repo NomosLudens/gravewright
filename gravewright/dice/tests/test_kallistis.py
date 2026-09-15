@@ -2,10 +2,13 @@ from unittest import TestCase
 
 from gravewright.dice.engine import RollError
 from gravewright.dice.kallistis import (
+    ATTRIBUTES,
     DARK_PRINCIPLES,
+    DIFFICULTY_PRESETS,
     LIGHT_PRINCIPLES,
     RESONANCES,
     evaluate,
+    prepare_action,
 )
 
 
@@ -131,3 +134,41 @@ class KallistisEngineTests(TestCase):
             with self.subTest(modifier=modifier, difficulty=difficulty):
                 with self.assertRaises(RollError):
                     evaluate(modifier, difficulty)
+
+    def test_action_calculates_base_circumstance_and_shared_impulse_cap(self):
+        action = prepare_action({
+            "action_label": "Examinar inscrição",
+            "attribute": {"name": "intelecto", "value": 3},
+            "skill": {"name": "conhecimento", "value": 2},
+            "impulse": {"level": 1, "reason": "ferramenta adequada"},
+            "pressure": {"level": 1, "reason": "sob vigilância"},
+            "helpers": [{"label": "A", "reason": "luz"}, {"label": "B", "reason": "mapa"}],
+        })
+        self.assertEqual(set(ATTRIBUTES), {"corpo", "agilidade", "intelecto", "presenca", "vontade", "sintonia"})
+        self.assertEqual(action["base_modifier"], 5)
+        self.assertEqual(action["impulse"]["bonus"], 4)
+        self.assertEqual(action["pressure"]["penalty"], -2)
+        self.assertEqual(action["circumstance_modifier"], 2)
+        self.assertEqual(action["modifier_total"], 7)
+        self.assertEqual(action["helper_count"], 2)
+
+    def test_action_circumstance_cancellation_and_invalid_levels(self):
+        base = {"action_label": "Ação", "attribute": {"name": "corpo", "value": 1},
+                "skill": {"name": "atletismo", "value": 1}}
+        for impulse, pressure, expected in [(1, 1, 0), (2, 1, 2), (1, 2, -2), (0, 2, -4)]:
+            with self.subTest(impulse=impulse, pressure=pressure):
+                action = prepare_action({**base, "impulse": {"level": impulse}, "pressure": {"level": pressure}})
+                self.assertEqual(action["circumstance_modifier"], expected)
+        for invalid in [
+            {"helpers": [{}, {}, {}]},
+            {"impulse": {"level": 3}},
+            {"pressure": {"level": -1}},
+        ]:
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(RollError):
+                    prepare_action({**base, **invalid})
+
+    def test_difficulty_presets_leave_custom_values_open(self):
+        self.assertEqual(list(DIFFICULTY_PRESETS), [10, 12, 15, 18, 21, 24, 27, 30])
+        self.assertEqual(DIFFICULTY_PRESETS[15], "incerta")
+        self.assertEqual(evaluate(0, 31, random_source=source(0, 0))["difficulty"], 31)

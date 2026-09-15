@@ -4,6 +4,7 @@ A durable claim is recorded before evaluation. Completion rechecks authorization
 and persists the result; retries retrieve that result instead of drawing again."""
 
 from datetime import timedelta
+from uuid import UUID, uuid5
 from django import forms
 from django.db import transaction
 from django.utils import timezone
@@ -16,7 +17,7 @@ from gravewright.realtime.services import authorize
 from .models import Submission
 from gravewright.chat.context import scene_for, readable
 from .engine import RollError
-from .kallistis import evaluate as evaluate_kallistis
+from .kallistis import evaluate as evaluate_kallistis, prepare_action
 
 
 class RollForm(forms.Form):
@@ -31,17 +32,69 @@ class RollForm(forms.Form):
 
 
 def validate(payload):
+    if not isinstance(payload, dict):
+        raise RollError('Invalid roll request.')
     values = {'label': '', 'visibility': 'public', 'repeat': 1, 'system': 'generic',
               'modifier': 0, 'difficulty': 15, **payload}
+    mode = payload.get('mode', payload.get('kallistisMode', 'single'))
+    if mode not in ('single', 'action', 'opposed'):
+        raise RollError('KALLISTIS mode must be single, action or opposed.')
+    raw_difficulty = values['difficulty']
+    difficulty_label = None
+    if isinstance(raw_difficulty, dict):
+        difficulty_label = raw_difficulty.get('label')
+        values['difficulty'] = raw_difficulty.get('value')
+    elif isinstance(raw_difficulty, int):
+        difficulty_label = payload.get('difficultyLabel')
     if any(not isinstance(values.get(key), str) for key in ['expression', 'label', 'visibility', 'requestId', 'system']) or type(values['repeat']) is not int or type(values['modifier']) is not int or type(values['difficulty']) is not int:
         raise RollError('Invalid roll request.')
     form = RollForm(values)
     if not form.is_valid():
         raise RollError(' '.join(str(e) for errors in form.errors.values() for e in errors))
-    data = {**form.cleaned_data, 'mapId': payload.get('mapId'), 'block_id': payload.get('block_id')}
+    data = {**form.cleaned_data, 'mapId': payload.get('mapId'), 'block_id': payload.get('block_id'),
+            'mode': mode, 'difficulty_label': difficulty_label}
     if data['system'] == 'kallistis' and data['expression'].strip().lower() != '2d10':
         raise RollError('KALLISTIS rolls use the fixed 2d10 expression.')
+    if data['system'] != 'kallistis' and mode != 'single':
+        raise RollError('KALLISTIS action modes require the KALLISTIS system.')
+    if data['system'] == 'kallistis' and mode == 'action':
+        data['action'] = prepare_action(_action_payload(payload))
+        data['modifier'] = data['action']['modifier_total']
+    elif data['system'] == 'kallistis' and mode == 'opposed':
+        opposed = payload.get('opposed')
+        if not isinstance(opposed, dict):
+            raise RollError('Opposed KALLISTIS rolls require two sides.')
+        side_a = opposed.get('side_a', opposed.get('sideA'))
+        side_b = opposed.get('side_b', opposed.get('sideB'))
+        data['opposed'] = {
+            'opposed_test_id': _opposed_test_id(data['requestId'], payload.get('opposed_test_id', payload.get('opposedTestId'))),
+            'side_a': prepare_action(side_a),
+            'side_b': prepare_action(side_b),
+        }
     return data
+
+
+def _action_payload(payload):
+    action = payload.get('action')
+    if isinstance(action, dict):
+        return action
+    names = ('action_label', 'actionLabel', 'attribute', 'attribute_name', 'attributeName',
+             'attribute_value', 'attributeValue', 'skill', 'skill_name', 'skillName',
+             'skill_value', 'skillValue', 'impulse', 'pressure', 'helpers', 'helper_count', 'helperCount')
+    return {name: payload[name] for name in names if name in payload}
+
+
+def _opposed_test_id(request_id, requested=None):
+    if requested is None:
+        return str(uuid5(UUID(str(request_id)), 'kallistis-opposed'))
+    try:
+        return str(UUID(str(requested)))
+    except (ValueError, TypeError, AttributeError):
+        raise RollError('opposed_test_id must be a UUID.') from None
+
+
+def _opposed_request_id(request_id, side):
+    return str(uuid5(UUID(str(request_id)), f'kallistis-opposed:{side}'))
 
 
 def envelope(message):
@@ -93,16 +146,30 @@ def complete(reservation_id, data, result, session_key, campaign_id, user_id):
         claim = Submission.objects.select_for_update().get(pk=reservation_id)
         if claim.error or claim.expires_at <= timezone.now():
             raise RollError('The roll was interrupted. Submit a new roll.')
-        roll = {'expression': data['expression'], 'label': data['label'],
-                'secret': data['visibility'] == 'gm', 'result': result[0] if isinstance(result, list) else result}
+        label = data['label'] or data.get('action', {}).get('action_label', '')
+        result_value = result[0] if isinstance(result, list) else result
+        if data.get('action'):
+            result_value = {**result_value, 'action': data['action']}
+        if data.get('mode') == 'opposed':
+            result_value = {**result_value, 'opposed': data['opposed']}
+        roll = {'expression': data['expression'], 'label': label,
+                'secret': data['visibility'] == 'gm', 'result': result_value}
         if data['system'] == 'kallistis':
             roll.update({'system': 'kallistis', 'modifier': data['modifier'],
                          'difficulty': data['difficulty']})
+            if data.get('difficulty_label'):
+                roll['difficulty_label'] = data['difficulty_label']
+            if data.get('action'):
+                roll['action'] = data['action']
+            if data.get('mode') == 'action':
+                roll['mode'] = 'action'
+            if data.get('mode') == 'opposed':
+                roll.update({'mode': 'opposed', 'opposed': data['opposed']})
         if isinstance(result, list):
             roll['batch'] = [{'label': f'Value {i+1}', 'result': value} for i, value in enumerate(result)]
         scene = scene_for(member, data['resolved_scene_id']) if data.get('resolved_scene_id') else None
         message = Message.objects.create(campaign_id=campaign_id, author_id=user_id, scene=scene,
-            author_name=member.user.name, text=data['label'], request_id=data['requestId'],
+            author_name=member.user.name, text=label, request_id=data['requestId'],
             visibility=data['visibility'], roll=roll)
         if roll['secret']:
             audience = set(Membership.objects.filter(campaign_id=campaign_id, role='gm').values_list('user_id', flat=True))
@@ -114,14 +181,90 @@ def complete(reservation_id, data, result, session_key, campaign_id, user_id):
     return envelope(message)
 
 
+def _opposed_messages(campaign_id, test_id):
+    messages = Message.objects.filter(
+        campaign_id=campaign_id,
+        roll__opposed__opposed_test_id=test_id,
+        deleted=False,
+    ).order_by('id')
+    return list(messages)
+
+
+def _opposed_resolution(side_a, side_b):
+    if side_a['total'] > side_b['total']:
+        winner = 'SIDE_A_WINS'
+    elif side_b['total'] > side_a['total']:
+        winner = 'SIDE_B_WINS'
+    else:
+        winner = 'TIE_PENDING_CONTEXT'
+    return {'winner': winner, 'tie_policy': 'TIE_REQUIRES_CONTEXT'}
+
+
+def opposed_roll(member_id, data, session_key, campaign_id, user_id):
+    """Create or replay two real KALLISTIS submissions for one opposed test."""
+    member = Membership.objects.filter(pk=member_id, campaign_id=campaign_id,
+                                       user_id=user_id, user__is_active=True).first()
+    if member is None or member.role == 'streamer':
+        raise AuthError('not_a_member', 403)
+    test_id = data['opposed']['opposed_test_id']
+    existing = _opposed_messages(campaign_id, test_id)
+    if len(existing) == 2:
+        return [envelope(message) for message in existing]
+    side_data = []
+    for side in ('side_a', 'side_b'):
+        side_data.append({**data, 'requestId': data['requestId'] if side == 'side_a' else _opposed_request_id(data['requestId'], side),
+                          'label': f"{'Side A' if side == 'side_a' else 'Side B'} · {data['opposed'][side]['action_label']}",
+                          'action': data['opposed'][side], 'modifier': data['opposed'][side]['modifier_total'],
+                          'mode': 'opposed',
+                          'opposed_side': side})
+    reservations = []
+    try:
+        for entry in side_data:
+            reservation, previous = claim(member_id, entry)
+            if previous:
+                previous_message, audience = previous
+                found = _opposed_messages(campaign_id, test_id)
+                if len(found) == 2:
+                    return [envelope(message) for message in found]
+                raise AuthError('roll_in_progress')
+            reservations.append(reservation)
+        results = [evaluate_kallistis(entry['modifier'], entry['difficulty'], repeat=1)
+                   for entry in side_data]
+        resolution = _opposed_resolution(results[0], results[1])
+        envelopes = []
+        for entry, result in zip(side_data, results):
+            entry['opposed'] = {
+                'opposed_test_id': test_id,
+                'side': entry['opposed_side'],
+                'resolution': resolution,
+                'other_total': results[1]['total'] if entry['opposed_side'] == 'side_a' else results[0]['total'],
+            }
+            envelopes.append(complete(reservations.pop(0), entry, result, session_key, campaign_id, user_id))
+        return envelopes
+    except (AuthError, RollError):
+        for reservation in reservations:
+            fail(reservation, 'Opposed test was interrupted.')
+        raise
+
+
 def roll(campaign_id, user_id, expression, request_id, *, repeat=1, label='', visibility='public',
-         map_id=None, system='generic', modifier=0, difficulty=15):
+         map_id=None, system='generic', modifier=0, difficulty=15, mode='single', action=None,
+         opposed=None, opposed_test_id=None):
     """Persist a roll from the native grammar without requiring an HTTP session."""
-    data=validate(dict(expression=expression,requestId=str(request_id),repeat=repeat,label=label,
-                       visibility=visibility,mapId=map_id,system=system,modifier=modifier,
-                       difficulty=difficulty))
+    payload = dict(expression=expression, requestId=str(request_id), repeat=repeat, label=label,
+                   visibility=visibility, mapId=map_id, system=system, modifier=modifier,
+                   difficulty=difficulty, mode=mode)
+    if action is not None:
+        payload['action'] = action
+    if opposed is not None:
+        payload['opposed'] = opposed
+    if opposed_test_id is not None:
+        payload['opposed_test_id'] = opposed_test_id
+    data=validate(payload)
     member=Membership.objects.filter(campaign_id=campaign_id,user_id=user_id,user__is_active=True).first()
     if member is None or member.role=='streamer':raise AuthError('not_a_member',403)
+    if data.get('mode') == 'opposed':
+        return opposed_roll(member.pk, data, None, campaign_id, user_id)[0][0]
     reservation,previous=claim(member.pk,data)
     if previous:return previous[0]
     try:

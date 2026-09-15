@@ -9,6 +9,32 @@ MAX_DIFFICULTY = 1000
 MIN_MODIFIER = -1000
 MAX_MODIFIER = 1000
 
+ACTION_VALUE_MIN = -1000
+ACTION_VALUE_MAX = 1000
+ACTION_LABEL_MAX = 80
+SKILL_LABEL_MAX = 80
+REASON_MAX = 200
+
+ATTRIBUTES = {
+    "corpo": "Corpo",
+    "agilidade": "Agilidade",
+    "intelecto": "Intelecto",
+    "presenca": "Presença",
+    "vontade": "Vontade",
+    "sintonia": "Sintonia",
+}
+
+DIFFICULTY_PRESETS = {
+    10: "baixa",
+    12: "favorável",
+    15: "incerta",
+    18: "difícil",
+    21: "severa",
+    24: "extrema",
+    27: "lendária",
+    30: "épica",
+}
+
 
 LIGHT_PRINCIPLES = {
     1: {
@@ -176,6 +202,138 @@ def _validate(modifier, difficulty):
         raise RollError("KALLISTIS modifier must be an integer between -1000 and 1000.")
     if type(difficulty) is not int or not MIN_DIFFICULTY <= difficulty <= MAX_DIFFICULTY:
         raise RollError("KALLISTIS difficulty must be an integer between 1 and 1000.")
+
+
+def _text(value, field, maximum, *, required=True):
+    if not isinstance(value, str):
+        raise RollError(f"{field} must be text.")
+    value = value.strip()
+    if required and not value:
+        raise RollError(f"{field} is required.")
+    if len(value) > maximum:
+        raise RollError(f"{field} must contain at most {maximum} characters.")
+    return value
+
+
+def _integer(value, field):
+    if type(value) is not int or not ACTION_VALUE_MIN <= value <= ACTION_VALUE_MAX:
+        raise RollError(f"{field} must be an integer between {ACTION_VALUE_MIN} and {ACTION_VALUE_MAX}.")
+    return value
+
+
+def prepare_action(action):
+    """Validate an action input and calculate every derived modifier server-side.
+
+    This is deliberately a value object: no character, inventory or party
+    schema is implied by an action roll in this gate.
+    """
+    if not isinstance(action, dict):
+        raise RollError("KALLISTIS action data is required.")
+
+    def value(*names, default=None):
+        for name in names:
+            if name in action:
+                return action[name]
+        return default
+
+    action_label = _text(value("action_label", "actionLabel", "label"), "action_label", ACTION_LABEL_MAX)
+
+    attribute = value("attribute", default=None)
+    if attribute is None:
+        attribute = {"name": value("attribute_name", "attributeName"),
+                     "value": value("attribute_value", "attributeValue")}
+    if not isinstance(attribute, dict):
+        raise RollError("attribute must be an object.")
+    attribute_name = value_from(attribute, "name", "attribute_name", "attributeName")
+    attribute_name = _text(attribute_name, "attribute_name", 24).lower()
+    if attribute_name not in ATTRIBUTES:
+        raise RollError("attribute_name must be one of Corpo, Agilidade, Intelecto, Presença, Vontade or Sintonia.")
+    attribute_value = _integer(value_from(attribute, "value", "attribute_value", "attributeValue"), "attribute_value")
+
+    skill = value("skill", default=None)
+    if skill is None:
+        skill = {"name": value("skill_name", "skillName"),
+                 "value": value("skill_value", "skillValue")}
+    if not isinstance(skill, dict):
+        raise RollError("skill must be an object.")
+    skill_name = _text(value_from(skill, "name", "skill_name", "skillName"), "skill_name", SKILL_LABEL_MAX)
+    skill_value = _integer(value_from(skill, "value", "skill_value", "skillValue"), "skill_value")
+
+    impulse = value("impulse", default=None)
+    pressure = value("pressure", default=None)
+    if impulse is None:
+        impulse = {"level": value("impulse_level", "impulseLevel", default=0),
+                   "reason": value("impulse_reason", "impulseReason", default="")}
+    if pressure is None:
+        pressure = {"level": value("pressure_level", "pressureLevel", default=0),
+                    "reason": value("pressure_reason", "pressureReason", default="")}
+    if not isinstance(impulse, dict) or not isinstance(pressure, dict):
+        raise RollError("impulse and pressure must be objects.")
+    impulse_level = _level(value_from(impulse, "level", "impulse_level", "impulseLevel", default=0), "impulse_level")
+    pressure_level = _level(value_from(pressure, "level", "pressure_level", "pressureLevel", default=0), "pressure_level")
+    impulse_reason = _text(value_from(impulse, "reason", "impulse_reason", "impulseReason", default=""), "impulse_reason", REASON_MAX, required=False)
+    pressure_reason = _text(value_from(pressure, "reason", "pressure_reason", "pressureReason", default=""), "pressure_reason", REASON_MAX, required=False)
+
+    helpers = value("helpers", default=None)
+    helper_count = value("helper_count", "helperCount", default=None)
+    if helpers is not None and not isinstance(helpers, list):
+        raise RollError("helpers must be a list.")
+    if helpers is not None and len(helpers) > 2:
+        raise RollError("A KALLISTIS action accepts at most 2 helpers.")
+    if helper_count is not None and (type(helper_count) is not int or not 0 <= helper_count <= 2):
+        raise RollError("helper_count must be 0, 1 or 2.")
+    if helpers is None:
+        helpers = [{"label": "", "reason": ""} for _ in range(helper_count or 0)]
+    elif helper_count is not None and helper_count != len(helpers):
+        raise RollError("helper_count must match helpers.")
+    normalized_helpers = []
+    for helper in helpers:
+        if not isinstance(helper, dict):
+            raise RollError("Each helper must be an object.")
+        normalized_helpers.append({
+            "label": _text(helper.get("label", ""), "helper.label", ACTION_LABEL_MAX, required=False),
+            "reason": _text(helper.get("reason", ""), "helper.reason", REASON_MAX, required=False),
+        })
+    helper_count = len(normalized_helpers)
+
+    impulse_base_bonus = impulse_level * 2
+    helper_bonus = helper_count * 2
+    impulse_bonus = min(4, impulse_base_bonus + helper_bonus)
+    pressure_penalty = -(pressure_level * 2)
+    base_modifier = attribute_value + skill_value
+    circumstance_modifier = impulse_bonus + pressure_penalty
+    modifier_total = base_modifier + circumstance_modifier
+    if not MIN_MODIFIER <= modifier_total <= MAX_MODIFIER:
+        raise RollError("The calculated KALLISTIS modifier must be between -1000 and 1000.")
+
+    return {
+        "action_label": action_label,
+        "attribute": {"name": attribute_name, "label": ATTRIBUTES[attribute_name], "value": attribute_value},
+        "skill": {"name": skill_name, "value": skill_value},
+        "impulse": {"level": impulse_level, "base_bonus": impulse_base_bonus,
+                    "bonus": impulse_bonus, "reason": impulse_reason},
+        "pressure": {"level": pressure_level, "penalty": pressure_penalty,
+                     "reason": pressure_reason},
+        "helpers": normalized_helpers,
+        "helper_count": helper_count,
+        "helper_bonus": helper_bonus,
+        "base_modifier": base_modifier,
+        "circumstance_modifier": circumstance_modifier,
+        "modifier_total": modifier_total,
+    }
+
+
+def value_from(mapping, *names, default=None):
+    for name in names:
+        if name in mapping:
+            return mapping[name]
+    return default
+
+
+def _level(value, field):
+    if type(value) is not int or not 0 <= value <= 2:
+        raise RollError(f"{field} must be 0, 1 or 2.")
+    return value
 
 
 def _die(random_source):

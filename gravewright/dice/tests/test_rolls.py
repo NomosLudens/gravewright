@@ -6,6 +6,7 @@ from gravewright.realtime.tests import test_sockets as fixtures
 from gravewright.chat.models import Message
 from gravewright.dice.models import Submission
 from gravewright.dice.engine import evaluate
+from gravewright.dice.kallistis import evaluate as evaluate_kallistis
 
 
 # Reuse only the socket fixtures, not the parent test methods.
@@ -91,6 +92,72 @@ class DiceTests(TransactionTestCase):
             self.assertEqual(replay['id'], message['id'])
             self.assertEqual(replay['roll']['result'], result)
             self.assertEqual(await db(Message.objects.count)(), 1)
+        finally:
+            await self.finish()
+
+    async def test_kallistis_action_persists_inputs_and_ignores_forged_modifier(self):
+        socket = self.socket(self.player)
+        try:
+            self.assertTrue((await socket.connect())[0]); await self.event(socket, 'chat.history')
+            payload = await self.command(
+                socket,
+                expression='2d10',
+                system='kallistis',
+                mode='action',
+                modifier=999,
+                difficulty=31,
+                action={
+                    'action_label': 'Examinar inscrição',
+                    'attribute': {'name': 'intelecto', 'value': 3},
+                    'skill': {'name': 'conhecimento', 'value': 2},
+                    'impulse': {'level': 1, 'reason': 'ferramenta adequada'},
+                    'pressure': {'level': 1, 'reason': 'sob vigilância'},
+                    'helpers': [{'label': 'A', 'reason': 'luz'}, {'label': 'B', 'reason': 'mapa'}],
+                },
+            )
+            message = (await self.event(socket, 'dice.ack'))['message']
+            result, action = message['roll']['result'], message['roll']['action']
+            self.assertEqual(message['roll']['mode'], 'action')
+            self.assertEqual(action['base_modifier'], 5)
+            self.assertEqual(action['impulse']['bonus'], 4)
+            self.assertEqual(action['pressure']['penalty'], -2)
+            self.assertEqual(action['circumstance_modifier'], 2)
+            self.assertEqual(action['modifier_total'], 7)
+            self.assertEqual(message['roll']['modifier'], 7)
+            self.assertEqual(result['modifier'], 7)
+            self.assertEqual(result['difficulty'], 31)
+            self.assertIn('Examinar inscrição', message['html'])
+            self.assertIn('sob vigilância', message['html'])
+        finally:
+            await self.finish()
+
+    async def test_opposed_roll_creates_two_real_submissions_with_stable_resolution(self):
+        socket = self.socket(self.player)
+        side_a = {'action_label': 'Avançar', 'attribute': {'name': 'corpo', 'value': 3},
+                  'skill': {'name': 'atletismo', 'value': 2}}
+        side_b = {'action_label': 'Resistir', 'attribute': {'name': 'vontade', 'value': 1},
+                  'skill': {'name': 'disciplina', 'value': 1}}
+        try:
+            self.assertTrue((await socket.connect())[0]); await self.event(socket, 'chat.history')
+            a = evaluate_kallistis(0, 15, random_source=iter([0.9, 0.8]).__next__)
+            b = evaluate_kallistis(0, 15, random_source=iter([0.0, 0.0]).__next__)
+            with patch('gravewright.dice.services.evaluate_kallistis', side_effect=[
+                {**a, 'modifier': 5, 'total': a['natural_total'] + 5, 'margin': a['natural_total'] + 5 - 15},
+                {**b, 'modifier': 2, 'total': b['natural_total'] + 2, 'margin': b['natural_total'] + 2 - 15},
+            ]):
+                payload = await self.command(socket, expression='2d10', system='kallistis', mode='opposed',
+                    opposed={'side_a': side_a, 'side_b': side_b})
+                ack = await self.event(socket, 'dice.ack')
+            self.assertEqual(len(ack['messages']), 2)
+            self.assertEqual({m['roll']['mode'] for m in ack['messages']}, {'opposed'})
+            self.assertEqual({m['roll']['opposed']['opposed_test_id'] for m in ack['messages']},
+                             {ack['messages'][0]['roll']['opposed']['opposed_test_id']})
+            self.assertEqual(ack['messages'][0]['roll']['opposed']['resolution']['winner'], 'SIDE_A_WINS')
+            self.assertEqual(await db(Message.objects.count)(), 2)
+            await socket.send_json_to({'type': 'dice.roll', 'payload': payload})
+            replay = await self.event(socket, 'dice.ack')
+            self.assertEqual([m['id'] for m in replay['messages']], [m['id'] for m in ack['messages']])
+            self.assertEqual(await db(Message.objects.count)(), 2)
         finally:
             await self.finish()
 

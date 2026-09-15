@@ -537,6 +537,28 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
         request_id = payload.get("requestId")
         try:
             data = dice.validate(payload)
+            if data.get('mode') == 'opposed':
+                entries = await asyncio.to_thread(
+                    dice.opposed_roll,
+                    self.member.pk,
+                    data,
+                    self.session_key,
+                    self.campaign_id,
+                    self.user_id,
+                )
+                if not await self.authorized():
+                    return
+                for entry, audience in entries:
+                    await self.channel_layer.group_send(
+                        self.group,
+                        {'type': 'room.message', 'message': entry, 'audience': audience},
+                    )
+                await self.emit(
+                    "dice.ack",
+                    {"requestId": request_id, "message": entries[0][0],
+                     "messages": [entry for entry, _ in entries]},
+                )
+                return
             reservation, previous = await db(dice.claim)(self.member.pk, data)
             if previous:
                 entry, audience = previous

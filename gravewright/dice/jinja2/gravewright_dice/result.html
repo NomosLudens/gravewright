@@ -1,6 +1,8 @@
-{% macro kallistis_result(value) -%}
+{% macro kallistis_result(value, action=None, opposed=None) -%}
 <div data-v-gwresult class="dice-result__kallistis">
   <span data-v-gwresult class="dice-result__summary"><code data-v-gwresult>KALLISTIS 2d10</code><strong data-v-gwresult>{{ 'Sucesso' if value.success else 'Falha' }}</strong></span>
+  {% if value.action %}<div data-v-gwresult class="dice-result__action"><strong data-v-gwresult>{{ value.action.action_label }}</strong><span data-v-gwresult>{{ value.action.attribute.label }} {{ value.action.attribute.value }} + {{ value.action.skill.name }} {{ value.action.skill.value }} = base {{ value.action.base_modifier }}</span><span data-v-gwresult>Impulso {{ value.action.impulse.level }} ({{ '+' if value.action.impulse.bonus > 0 else '' }}{{ value.action.impulse.bonus }}){% if value.action.impulse.reason %} — {{ value.action.impulse.reason }}{% endif %} · Pressão {{ value.action.pressure.level }} ({{ value.action.pressure.penalty }}){% if value.action.pressure.reason %} — {{ value.action.pressure.reason }}{% endif %} · Ajuda {{ value.action.helper_count }}</span></div>{% endif %}
+  {% if value.opposed %}<div data-v-gwresult class="dice-result__opposed"><strong data-v-gwresult>{{ 'Lado A' if value.opposed.side == 'side_a' else 'Lado B' }}</strong><span data-v-gwresult>Teste oposto {{ value.opposed.opposed_test_id }}</span><span data-v-gwresult>{{ value.opposed.resolution.winner }} · outro total {{ value.opposed.other_total }}</span></div>{% endif %}
   <div data-v-gwresult class="dice-result__kallistis-grid">
     <span data-v-gwresult>☀ Luz: {{ value.light_die }}{% if value.light_principle_label %} — {{ value.light_principle_label }}{% endif %}</span>
     <span data-v-gwresult>● Escuridão: {{ value.dark_die }}{% if value.dark_principle_label %} — {{ value.dark_principle_label }}{% endif %}</span>
