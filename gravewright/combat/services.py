@@ -237,15 +237,16 @@ def _require_gm(who):
 
 def _resolve_action(row, who, payload):
     attacker = actors.get(payload.get("actorId"), who)
-    target_entry = _entry_for_target(row, payload.get("targetId"))
-    target_actor = actor_for(target_entry)
-    if not target_actor:
-        raise MapError("Target not found.")
     if who.role != "gm" and not actors.access(attacker, who, True):
         raise MapError("Character not controlled.", "forbidden")
     defense_name = str(payload.get("targetDefense", payload.get("defense", "GUARDA"))).upper()
-    if defense_name not in DEFENSES:
+    environmental = defense_name in {"ENVIRONMENT", "DIFFICULTY"}
+    if defense_name not in DEFENSES and not environmental:
         raise MapError("Invalid target defense.")
+    target_entry = None if environmental else _entry_for_target(row, payload.get("targetId"))
+    target_actor = attacker if environmental else actor_for(target_entry)
+    if not target_actor:
+        raise MapError("Target not found.")
     action = payload.get("action")
     if not isinstance(action, dict):
         raise MapError("Structured action is required.")
@@ -255,7 +256,7 @@ def _resolve_action(row, who, payload):
     modifier = prepared["modifier_total"]
     condition_modifier = 0
     sources = []
-    if _condition(target_state, "EXPOSTO"):
+    if not environmental and _condition(target_state, "EXPOSTO"):
         condition_modifier += 2
         sources.append("Exposto")
     if payload.get("grave_wound_applies") is True and attacker_state.get("combat", {}).get("grave_wound"):
@@ -265,18 +266,20 @@ def _resolve_action(row, who, payload):
             prepared["pressure"]["penalty"] = -(prepared["pressure"]["level"] * 2)
             modifier -= 2
             sources.append("Ferida Grave")
-    roll = evaluate_kallistis(modifier + condition_modifier, defenses(target_actor)[defense_name])
+    target_value = number(payload.get("difficulty"), 1, 1000) if environmental else defenses(target_actor)[defense_name]
+    result_defense = "DIFFICULTY" if environmental else defense_name
+    roll = evaluate_kallistis(modifier + condition_modifier, target_value)
     result = {
         **roll, "attribute": prepared["attribute"], "skill": prepared["skill"],
         "light": roll["light_die"], "dark": roll["dark_die"],
         "modifier": modifier + condition_modifier, "condition_modifier": condition_modifier,
-        "condition_source": sources[0] if sources else None, "target_defense": defense_name,
-        "target_defense_value": defenses(target_actor)[defense_name],
+        "condition_source": sources[0] if sources else None, "target_defense": result_defense,
+        "target_defense_value": target_value, "environmental": environmental,
         "grave_wound_applies": payload.get("grave_wound_applies") is True,
     }
     config = _config(row)
     config["resolutions"] = (config["resolutions"] + [{"id": str(uuid4()), "kind": "action", **result}])[-MAX_EVENTS:]
-    return {"kind": "action", "attackerId": str(attacker.pk), "targetId": str(target_actor.pk), "result": result}
+    return {"kind": "action", "attackerId": str(attacker.pk), "targetId": None if environmental else str(target_actor.pk), "result": result}
 
 
 def _damage(row, who, payload):

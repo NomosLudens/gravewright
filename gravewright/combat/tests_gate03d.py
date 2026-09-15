@@ -72,6 +72,15 @@ class MinimumCombatTests(TransactionTestCase):
         self.assertEqual(second["target_defense"], "INTEGRIDADE")
         self.assertEqual(second["condition_modifier"], 2)
         self.assertEqual(second["condition_source"], "Exposto")
+        environmental = self.command(
+            "resolve", actorId=str(self.one.pk), targetDefense="ENVIRONMENT", difficulty=12,
+            action={
+                "action_label": "Crossing", "attribute": {"name": "agilidade", "value": 3},
+                "skill": {"name": "Atletismo", "value": 1},
+            },
+        )["resolution"]["result"]
+        self.assertEqual(environmental["target_defense"], "DIFFICULTY")
+        self.assertEqual(environmental["target_defense_value"], 12)
 
     def test_damage_pipeline_and_idempotent_down_failure(self):
         self.initialize(self.one, attributes={"corpo": 1, "agilidade": 1, "vontade": 1, "sintonia": 1}, protection=2)
