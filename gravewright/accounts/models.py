@@ -52,6 +52,18 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.email
 
 
+class KallistisIdentity(models.Model):
+    """Shadow principal provisioned only by a validated KALLISTIS handoff."""
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="kallistis_identity")
+    source_system = models.CharField(max_length=32, default="kallistis")
+    source_user_id = models.CharField(max_length=64)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["source_system", "source_user_id"], name="accounts_kallistis_source_identity"),
+        ]
+
 class AuthAttempt(models.Model):
     """Shared, database-backed attempt window; contains no raw IP addresses."""
 

@@ -45,6 +45,18 @@ class Campaign(models.Model):
         return self.name
 
 
+class KallistisCampaignLink(models.Model):
+    """Explicit Mesa-to-campaign mapping; never inferred by name."""
+    source_system = models.CharField(max_length=32, default="kallistis")
+    source_mesa_id = models.UUIDField(unique=True)
+    campaign = models.OneToOneField(Campaign, on_delete=models.CASCADE, related_name="kallistis_link")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["source_system", "source_mesa_id"], name="campaigns_kallistis_mesa_link"),
+        ]
+
 class Membership(models.Model):
     """One campaign-local GM, player or streamer role for a user."""
     class Role(models.TextChoices):

@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from datastar_py.django import DatastarResponse, ServerSentEventGenerator as SSE
+from django.conf import settings
 from django.contrib.auth import logout
 from django.http import Http404, HttpResponse, JsonResponse
 from django.middleware.csrf import get_token
@@ -14,6 +15,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from gravewright.web.responses import navigate
 
 from . import services
+from .kallistis import KallistisHandoffError, consume_handoff
 from .forms import AccountUpdateForm, LoginForm, RegistrationForm
 
 
@@ -91,6 +93,27 @@ def authenticate_submission(request, mode, data):
 
 
 @ensure_csrf_cookie
+@require_GET
+def kallistis_handoff(request):
+    code = request.GET.get("code", "")
+    try:
+        campaign_id = consume_handoff(request, code)
+    except KallistisHandoffError:
+        return HttpResponse("KALLISTIS handoff inválido ou expirado.", status=401)
+    request.session.modified = False
+    response = navigate(request, "/game/" + str(campaign_id))
+    if request.headers.get("Datastar-Request") != "true":
+        response.set_cookie(
+            settings.SESSION_COOKIE_NAME,
+            request.session.session_key,
+            max_age=settings.SESSION_COOKIE_AGE,
+            secure=settings.SESSION_COOKIE_SECURE,
+            httponly=settings.SESSION_COOKIE_HTTPONLY,
+            samesite="Lax",
+            path=settings.SESSION_COOKIE_PATH,
+        )
+    return response
+
 @require_GET
 def gate(request):
     return gate_response(request)

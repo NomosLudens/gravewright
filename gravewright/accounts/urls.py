@@ -9,6 +9,7 @@ urlpatterns = [
     path('login', views.access, {'mode': 'login'}, name='login'),
     path('register', views.access, {'mode': 'register'}, name='register'),
     path('logout', views.browser_logout, name='logout'),
+    path('sso/kallistis', views.kallistis_handoff, name='kallistis-handoff'),
     path('api/security/csrf', views.csrf, name='csrf'),
     path('__gravewright/csrf', views.csrf),
     path('api/auth/status', views.status, name='status'),
