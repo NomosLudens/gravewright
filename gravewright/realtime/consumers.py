@@ -18,6 +18,7 @@ from gravewright.actors import services as actors
 from gravewright.chat import services as chat
 from gravewright.dice import services as dice
 from gravewright.dice.engine import RollError, evaluate
+from gravewright.dice.kallistis import evaluate as evaluate_kallistis
 from gravewright.journals import services as journals
 from gravewright.maps import services as maps
 from gravewright.tokens import services as tokens
@@ -541,9 +542,15 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
                 entry, audience = previous
             else:
                 # Engine work is isolated from both the event loop and the DB executor.
-                result = await asyncio.to_thread(
-                    evaluate, data["expression"], data["repeat"]
-                )
+                evaluator = evaluate_kallistis if data['system'] == 'kallistis' else evaluate
+                if data['system'] == 'kallistis':
+                    result = await asyncio.to_thread(
+                        evaluator, data['modifier'], data['difficulty'], repeat=data['repeat']
+                    )
+                else:
+                    result = await asyncio.to_thread(
+                        evaluator, data["expression"], data["repeat"]
+                    )
                 entry, audience = await db(dice.complete)(
                     reservation,
                     data,

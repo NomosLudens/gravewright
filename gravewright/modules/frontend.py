@@ -72,7 +72,9 @@ def invoke(campaign_id, user_id, domain, method, payload, request_id=None, scene
         if domain == 'dice' and method == 'roll':
             return dice.roll(campaign_id, user_id, p.get('expression'), UUID(str(request_id)),
                              repeat=p.get('repeat', 1), label=p.get('label', ''),
-                             visibility=p.get('visibility', 'public'), map_id=scene)
+                             visibility=p.get('visibility', 'public'), map_id=scene,
+                             system=p.get('system', 'generic'), modifier=p.get('modifier', 0),
+                             difficulty=p.get('difficulty', 15))
         if domain == 'table':
             if method == 'search':
                 return table.search(campaign_id, user_id, p.get('query', ''))

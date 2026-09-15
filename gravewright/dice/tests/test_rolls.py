@@ -41,6 +41,52 @@ class DiceTests(TransactionTestCase):
         finally:
             await self.finish()
 
+    async def test_kallistis_roll_is_structured_server_authoritative_and_idempotent(self):
+        socket = self.socket(self.player)
+        try:
+            self.assertTrue((await socket.connect())[0]); await self.event(socket, 'chat.history')
+            payload = await self.command(
+                socket,
+                expression='2d10',
+                system='kallistis',
+                modifier=2,
+                difficulty=15,
+                label='KALLISTIS check',
+                result={'light_die': 99, 'dark_die': 99, 'total': 999},
+            )
+            message = (await self.event(socket, 'dice.ack'))['message']
+            result = message['roll']['result']
+            self.assertEqual(message['roll']['system'], 'kallistis')
+            self.assertEqual(set(('system', 'version', 'light_die', 'dark_die',
+                                  'natural_total', 'modifier', 'total', 'difficulty',
+                                  'margin', 'success', 'degree', 'predominance',
+                                  'resonance', 'resonance_value')),
+                             set(result))
+            self.assertGreaterEqual(result['light_die'], 1)
+            self.assertLessEqual(result['light_die'], 10)
+            self.assertGreaterEqual(result['dark_die'], 1)
+            self.assertLessEqual(result['dark_die'], 10)
+            self.assertEqual(result['natural_total'], result['light_die'] + result['dark_die'])
+            self.assertEqual(result['modifier'], 2)
+            self.assertEqual(result['total'], result['natural_total'] + 2)
+            self.assertEqual(result['difficulty'], 15)
+            self.assertEqual(result['margin'], result['total'] - 15)
+            self.assertEqual(result['success'], result['total'] >= 15)
+            self.assertEqual(result['resonance'], result['light_die'] == result['dark_die'])
+            self.assertEqual(
+                result['predominance'],
+                'resonance' if result['resonance'] else
+                'light' if result['light_die'] > result['dark_die'] else 'dark',
+            )
+            self.assertEqual(await db(Message.objects.count)(), 1)
+            await socket.send_json_to({'type': 'dice.roll', 'payload': payload})
+            replay = (await self.event(socket, 'dice.ack'))['message']
+            self.assertEqual(replay['id'], message['id'])
+            self.assertEqual(replay['roll']['result'], result)
+            self.assertEqual(await db(Message.objects.count)(), 1)
+        finally:
+            await self.finish()
+
     async def test_secret_roll_is_filtered_live_and_in_history(self):
         from gravewright.campaigns.models import Membership
         await db(Membership.objects.create)(campaign=self.campaign,user=self.outsider)

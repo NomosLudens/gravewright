@@ -30,9 +30,12 @@ catch {
         show(el, true);
     }
 } }
-function formula() { field('expression').value = terms.map(t => `${t.count}d${t.faces}${t.explode ? '!' : ''}${t.selection ? t.selection + t.selectedCount : ''}`).join(' + ') + (Number($('#dice-modifier').value) ? ` ${Number($('#dice-modifier').value) > 0 ? '+' : '-'} ${Math.abs(Number($('#dice-modifier').value))}` : ''); refresh(); }
+function formula() { if (field('system').value === 'kallistis') { field('expression').value = '2d10'; refresh(); return; } field('expression').value = terms.map(t => `${t.count}d${t.faces}${t.explode ? '!' : ''}${t.selection ? t.selection + t.selectedCount : ''}`).join(' + ') + (Number($('#dice-modifier').value) ? ` ${Number($('#dice-modifier').value) > 0 ? '+' : '-'} ${Math.abs(Number($('#dice-modifier').value))}` : ''); refresh(); }
 function refresh() {
-    const expression = field('expression').value.trim(), repeat = Number(field('repeat').value);
+    const expression = field('expression').value.trim(), repeat = Number(field('repeat').value), kallistis = field('system').value === 'kallistis';
+    show($('[data-kallistis-fields]'), kallistis);
+    field('expression').readOnly = kallistis;
+    for (const el of tray.querySelectorAll('[data-generic-only]')) show(el, !kallistis);
     for (const b of $('.dice-tray__actions').querySelectorAll('button'))
         b.disabled = !expression;
     const hint = $('[data-dice-repeat-hint]');
@@ -90,7 +93,7 @@ else {
     $('#dice-faces').disabled = false;
     $('#dice-modifier').disabled = false;
 } }
-function apply(p) { terms = []; selected = 0; $('#dice-modifier').value = 0; field('expression').value = p.expression; field('label').value = p.label; field('repeat').value = p.repeat ?? 1; error(); chooseTab(tab); refresh(); }
+function apply(p) { terms = []; selected = 0; field('system').value = p.system ?? 'generic'; $('#dice-modifier').value = p.modifier ?? 0; field('difficulty').value = p.difficulty ?? 15; field('expression').value = p.expression; field('label').value = p.label; field('repeat').value = p.repeat ?? 1; error(); chooseTab(tab); if (field('system').value === 'kallistis') field('expression').value = '2d10'; refresh(); }
 function history() { const list = $('.dice-tray__history'); list.replaceChildren(); show(list, historyOpen); $('[data-history-count]').textContent = recent.length; $('[data-dice-action="history"]').setAttribute('aria-expanded', String(historyOpen)); recent.forEach((p, i) => { const el = clone('history-entry'); el.querySelector('strong').textContent = p.label || p.expression; const small = el.querySelector('small'); small.textContent = `${p.repeat > 1 ? p.repeat + ' × ' : ''}${p.expression}`; show(small, !!p.label); el.querySelector('[data-history-use]').dataset.historyUse = i; el.querySelector('[data-history-remove]').dataset.historyRemove = i; list.append(el); }); if (!recent.length) {
     const li = document.createElement('li');
     li.setAttribute('data-v-gwdice', '');
@@ -124,10 +127,10 @@ function save() { const name = field('customName').value.trim() || field('label'
     return; const item = { id: saved.find(p => p.name === name)?.id || crypto.randomUUID(), name, expression, repeat }; saved = [item, ...saved.filter(p => p.id !== item.id)].slice(0, 24); persist('presets', saved); field('customName').value = ''; savedList(); refresh(); }
 function setBusy(value) { busy = value; $('fieldset').disabled = value; tray.setAttribute('aria-busy', String(value)); $('[data-roll-label]').textContent = value ? 'Rolling…' : 'Roll'; }
 // Only the submitted roll fields participate; preset drafts have their own validation.
-function roll(visibility) { if (busy || !['expression', 'repeat', 'label'].every(name => field(name).reportValidity()))
-    return; const entry = { expression: field('expression').value.trim(), label: field('label').value.trim(), repeat: Number(field('repeat').value) }; error(); setBusy(true); window.gravewrightRealtime.roll({ ...entry, visibility }).then(() => { recent = [entry, ...recent.filter(p => p.expression !== entry.expression || p.label !== entry.label || (p.repeat ?? 1) !== entry.repeat)].slice(0, 30); persist('history', recent); history(); window.gravewrightDice.close(); }).catch(e => error(e.message)).finally(() => setBusy(false)); }
+function roll(visibility) { if (busy || !['expression', 'repeat', 'label', 'system', 'modifier', 'difficulty'].every(name => field(name).reportValidity()))
+    return; const entry = { expression: field('expression').value.trim(), label: field('label').value.trim(), repeat: Number(field('repeat').value), system: field('system').value, modifier: Number(field('modifier').value), difficulty: Number(field('difficulty').value) }; error(); setBusy(true); window.gravewrightRealtime.roll({ ...entry, visibility }).then(() => { recent = [entry, ...recent.filter(p => p.expression !== entry.expression || p.label !== entry.label || (p.repeat ?? 1) !== entry.repeat || p.system !== entry.system || p.modifier !== entry.modifier || p.difficulty !== entry.difficulty)].slice(0, 30); persist('history', recent); history(); window.gravewrightDice.close(); }).catch(e => error(e.message)).finally(() => setBusy(false)); }
 tray.addEventListener('submit', e => { e.preventDefault(); roll('public'); });
-tray.addEventListener('input', e => { const el = e.target; if (el.dataset.presetField) {
+for (const eventName of ["input", "change"]) tray.addEventListener(eventName, e => { const el = e.target; if (el.name === 'system') { terms = []; selected = 0; if (field('system').value === 'kallistis') field('expression').value = '2d10'; else formula(); refresh(); return; } if (el.dataset.presetField) {
     values[el.dataset.presetField] = el.valueAsNumber;
     preview();
     return;
@@ -189,6 +192,8 @@ window.gravewrightDice = {
         historyOpen = false;
         $('#dice-faces').value = 24;
         $('#dice-modifier').value = 0;
+        field('system').value = 'generic';
+        field('difficulty').value = 15;
         field('expression').value = '';
         field('label').value = '';
         field('repeat').value = 1;
