@@ -59,6 +59,14 @@ def validate(payload):
         raise RollError('KALLISTIS action modes require the KALLISTIS system.')
     if data['system'] == 'kallistis' and mode == 'action':
         data['action'] = prepare_action(_action_payload(payload))
+        actor_input = payload.get('action') if isinstance(payload.get('action'), dict) else {}
+        actor_id = payload.get('actorId', payload.get('actor_id')) or actor_input.get('actorId', actor_input.get('actor_id'))
+        if actor_id:
+            try:
+                data['actor_id'] = str(UUID(str(actor_id)))
+            except (ValueError, TypeError, AttributeError):
+                raise RollError('actor_id must be a UUID.') from None
+            data['action']['actor_id'] = data['actor_id']
         data['modifier'] = data['action']['modifier_total']
     elif data['system'] == 'kallistis' and mode == 'opposed':
         opposed = payload.get('opposed')
@@ -80,7 +88,8 @@ def _action_payload(payload):
         return action
     names = ('action_label', 'actionLabel', 'attribute', 'attribute_name', 'attributeName',
              'attribute_value', 'attributeValue', 'skill', 'skill_name', 'skillName',
-             'skill_value', 'skillValue', 'impulse', 'pressure', 'helpers', 'helper_count', 'helperCount')
+             'skill_value', 'skillValue', 'impulse', 'pressure', 'helpers', 'helper_count', 'helperCount',
+             'corruption_applies', 'corruptionApplies')
     return {name: payload[name] for name in names if name in payload}
 
 
@@ -146,6 +155,15 @@ def complete(reservation_id, data, result, session_key, campaign_id, user_id):
         claim = Submission.objects.select_for_update().get(pk=reservation_id)
         if claim.error or claim.expires_at <= timezone.now():
             raise RollError('The roll was interrupted. Submit a new roll.')
+        if data.get('action'):
+            from gravewright.actors import runtime
+            condition_modifier, _ = runtime.action_modifier(
+                data.get('actor_id'), member, data['action'], consume=True
+            )
+            if condition_modifier:
+                result = [runtime.adjust_result(item, condition_modifier) for item in result] if isinstance(result, list) else runtime.adjust_result(result, condition_modifier)
+                data = {**data, 'modifier': data['modifier'] + condition_modifier,
+                        'action': {**data['action'], 'condition_modifier': condition_modifier}}
         label = data['label'] or data.get('action', {}).get('action_label', '')
         result_value = result[0] if isinstance(result, list) else result
         if data.get('action'):
@@ -277,3 +295,64 @@ def roll(campaign_id, user_id, expression, request_id, *, repeat=1, label='', vi
     except (AuthError,RollError) as error:
         fail(reservation,error)
         raise
+
+
+def reroll(campaign_id, user_id, request_id, message_id):
+    """Spend one Determination and replace both natural dice in one action roll."""
+    from gravewright.actors import runtime
+    from gravewright.actors.models import Actor
+    from gravewright.campaigns.models import Campaign
+    from gravewright.journals.services import member as resolve_member
+
+    try:
+        request_id = UUID(str(request_id))
+        message_id = int(message_id)
+    except (ValueError, TypeError, AttributeError):
+        raise RollError("Invalid reroll request.") from None
+    with transaction.atomic():
+        Campaign.objects.select_for_update().get(pk=campaign_id)
+        who = resolve_member(campaign_id, user_id)
+        previous = Message.objects.filter(campaign_id=campaign_id, author_id=user_id,
+                                           request_id=request_id).first()
+        if previous:
+            return envelope(previous)
+        original = Message.objects.select_for_update().filter(
+            pk=message_id, campaign_id=campaign_id, roll__system="kallistis",
+            roll__mode="action", deleted=False,
+        ).first()
+        if original is None:
+            raise RollError("Only a persisted KALLISTIS action can be rerolled.")
+        roll_data = original.roll or {}
+        if roll_data.get("reroll_of") or roll_data.get("rerolled_by"):
+            raise RollError("This action already used Determination.")
+        action = roll_data.get("action") or {}
+        actor_id = action.get("actor_id")
+        if not actor_id:
+            raise RollError("This action has no runtime actor.")
+        actor = Actor.objects.select_for_update().filter(pk=actor_id, campaign_id=campaign_id).first()
+        if actor is None or not runtime.access(actor, who, True):
+            raise AuthError("not_found")
+        state = runtime.read(actor.data)
+        determination = state["resources"]["determination"]
+        if determination["current"] < 1:
+            raise RollError("Insufficient determination.")
+        determination["current"] -= 1
+        runtime._write(actor, state)
+        result = evaluate_kallistis(roll_data["modifier"], roll_data["difficulty"], repeat=1)
+        new_roll = {**roll_data, "result": {**result, "action": action},
+                    "reroll_of": str(original.pk), "determination_spent": 1}
+        message = Message.objects.create(
+            campaign_id=campaign_id, author_id=user_id, scene_id=original.scene_id,
+            author_name=who.user.name, text=original.text, request_id=request_id,
+            visibility=original.visibility, roll=new_roll,
+        )
+        if message.visibility == "gm":
+            audience = set(Membership.objects.filter(campaign_id=campaign_id, role="gm").values_list("user_id", flat=True))
+            audience.add(user_id)
+            Recipient.objects.bulk_create([Recipient(message=message, user_id=pk) for pk in audience])
+        original.roll = {**roll_data, "rerolled_by": str(message.pk)}
+        original.save(update_fields=["roll"])
+        from gravewright.realtime.dispatch import message as publish, changed
+        publish(campaign_id, message.pk)
+        changed(campaign_id, user_id, "actors", "runtime.resource", request_id, {"actorId": str(actor.pk)})
+    return envelope(message)

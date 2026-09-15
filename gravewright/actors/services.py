@@ -57,7 +57,9 @@ def image_url(row, kind):
 
 
 def project(row, who):
-    """Serialize actor metadata for one member; this does not include sheet data."""
+    """Serialize actor metadata and the shared runtime projection."""
+    from .runtime import read as runtime_state
+
     return dict(
         id=str(row.pk),
         containerId=str(row.campaign_id),
@@ -70,6 +72,7 @@ def project(row, who):
         sheetVersion=row.sheet_version,
         portraitUrl=image_url(row, "portrait"),
         tokenUrl=image_url(row, "token"),
+        runtime=runtime_state(row.data),
         **({"permissions": row.permissions} if who.role == "gm" else {}),
     )
 
@@ -222,7 +225,10 @@ def command(campaign, user, action, data, request_id):
     if receipt:
         return receipt.result
     result = {}
-    if action == "sheet.save":
+    if isinstance(action, str) and action.startswith("runtime."):
+        from . import runtime
+        result = runtime.command(data, who, action)
+    elif action == "sheet.save":
         result = save_sheet(who, data)
     else:
         manage(who)

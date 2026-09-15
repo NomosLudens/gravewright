@@ -232,6 +232,8 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
             await self.journal_command(payload)
         elif kind == "dice.roll":
             await self.roll(payload)
+        elif kind == "dice.reroll":
+            await self.reroll(payload)
         elif kind in ("chat.delete", "chat.clear"):
             try:
                 if kind == 'chat.delete' and payload.get('messageId') is None:
@@ -607,6 +609,26 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
                     }.get(error.code, "Could not roll dice."),
                 },
             )
+
+    async def reroll(self, payload):
+        request_id = payload.get("requestId")
+        try:
+            entry, audience = await db(dice.reroll)(
+                self.campaign_id, self.user_id, request_id, payload.get("messageId")
+            )
+            if not await self.authorized():
+                return
+            await self.channel_layer.group_send(
+                self.group, {"type": "room.message", "message": entry, "audience": audience}
+            )
+            await self.emit("dice.reroll.ack", {"requestId": request_id, "message": entry})
+        except (RollError, AuthError, maps.MapError, journals.JournalError) as error:
+            if not await self.authorized():
+                return
+            await self.emit("dice.reroll.error", {
+                "requestId": request_id if isinstance(request_id, str) else None,
+                "code": getattr(error, "code", "invalid_roll"), "message": str(error),
+            })
 
     async def publish_presence(self):
         await self.channel_layer.group_send(self.group, {"type": "room.presence"})

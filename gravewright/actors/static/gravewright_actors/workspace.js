@@ -100,6 +100,7 @@ let state = {
   },
   sheet,
   dialog,
+  runtimeDialog,
   deletedTemplate,
   popup;
 const command = (action, data) =>
@@ -231,6 +232,68 @@ function open(actor, token) {
   sheet = openSheet(campaign, actor.id, token, state.is_gm, () => {
     sheet = undefined;
   });
+}
+function runtime(actor) {
+  runtimeDialog?.remove();
+  const el = clone("actor-runtime");
+  runtimeDialog = el;
+  el.dataset.runtimeActorId = actor.id;
+  el.querySelector("header strong").textContent = "Runtime — " + actor.name;
+  const r = panel.getBoundingClientRect();
+  el.style.left = Math.max(13, r.left - 258) + "px";
+  el.style.top = Math.max(13, r.top + 51) + "px";
+  el.querySelector("header button").onclick = () => { el.remove(); runtimeDialog = undefined; };
+  const editable = actor.canEdit;
+  const showError = message => {
+    const p = el.querySelector("[role=alert]");
+    p.textContent = message;
+    show(p, true);
+  };
+  const run = (action, data = {}) => command(action, { id: actor.id, ...data }).catch(cause => showError(cause.message));
+  const render = current => {
+    const state = current.runtime || {};
+    const resources = state.resources || {};
+    const labels = { vitality: "Vitality", lucidity: "Lucidity", flow: "Flow", breath: "Breath", determination: "Determination" };
+    const box = el.querySelector("[data-runtime-resources]");
+    box.replaceChildren();
+    for (const name of Object.keys(labels)) {
+      const value = resources[name] || { current: 0, max: 0 };
+      const row = document.createElement("div");
+      row.className = "actor-runtime-dialog__resource";
+      const label = document.createElement("strong");
+      label.textContent = `${labels[name]}: ${value.current}/${value.max}`;
+      const spend = document.createElement("button");
+      spend.type = "button"; spend.textContent = "−"; spend.disabled = !editable;
+      spend.title = `Spend 1 ${labels[name]}`;
+      spend.onclick = () => run("runtime.resource", { resource: name, operation: "spend", amount: 1 });
+      const gain = document.createElement("button");
+      gain.type = "button"; gain.textContent = "+"; gain.disabled = !editable;
+      gain.title = `Recover 1 ${labels[name]}`;
+      gain.onclick = () => run("runtime.resource", { resource: name, operation: "recover", amount: 1 });
+      row.append(label, spend, gain); box.append(row);
+    }
+    for (const input of el.querySelectorAll("fieldset input")) input.value = state.attributes?.[input.name] ?? 0;
+    for (const button of el.querySelectorAll("button[data-runtime-action]")) button.disabled = !editable;
+    const conditions = el.querySelector("[data-runtime-conditions]");
+    conditions.replaceChildren();
+    for (const item of state.conditions || []) {
+      const row = document.createElement("div");
+      row.textContent = item.type;
+      const remove = document.createElement("button");
+      remove.type = "button"; remove.textContent = "Remove"; remove.disabled = !editable;
+      remove.onclick = () => run("runtime.condition.remove", { conditionId: item.id });
+      row.append(" ", remove); conditions.append(row);
+    }
+  };
+  el.querySelector('[name="condition_type"]').replaceChildren(...["ABALADO", "EXPOSTO", "IMOBILIZADO", "LENTO", "SANGRANDO", "SILENCIADO", "DISSONANTE", "FRATURADO", "CORROMPIDO", "CAIDO"].map(type => new Option(type, type)));
+  el.querySelector('[data-runtime-action="safe_pause"]').onclick = () => run("runtime.safe_pause");
+  el.querySelector('[data-runtime-action="full_rest"]').onclick = () => run("runtime.full_rest");
+  el.querySelector('[data-runtime-action="condition.apply"]').onclick = () => run("runtime.condition.apply", { conditionType: el.elements.condition_type.value });
+  el.querySelector('[data-runtime-action="initialize"]').onclick = () => run("runtime.initialize", { attributes: Object.fromEntries(["corpo", "vontade", "sintonia", "marco"].map(name => [name, Number(el.elements[name].value)])) });
+  el.querySelector("[type=submit]")?.removeAttribute("type");
+  render(actor);
+  el._runtimeRender = render;
+  document.body.append(el);
 }
 function remove(actor) {
   const el = clone("journal-confirm");
@@ -377,8 +440,9 @@ function paint() {
         );
       };
       el.oncontextmenu = (e) => {
-        if (state.is_gm)
-          context(e, [
+        context(e, [
+            { icon: "Heart", label: "Runtime resources", run: () => runtime(a) },
+            ...(state.is_gm ? [
             { icon: "NotePencil", label: "Open sheet", run: () => open(a) },
             {
               icon: "PencilSimple",
@@ -396,6 +460,7 @@ function paint() {
               danger: true,
               run: () => remove(a),
             },
+            ] : []),
           ]);
       };
       list.append(el);
@@ -575,6 +640,10 @@ if (panel) {
       if (!a || (sheet.element.dataset.canEdit === "true" && !a.canEdit))
         sheet.close();
     }
+    if (runtimeDialog) {
+      const current = state.actors.find(a => a.id === runtimeDialog.dataset.runtimeActorId);
+      if (current) runtimeDialog._runtimeRender?.(current);
+    }
   });
   window.addEventListener("gravewright:actor-error", (e) => error(e.detail));
   window.addEventListener("gravewright:connected", () =>
@@ -587,6 +656,7 @@ if (panel) {
   window.addEventListener("gravewright:access-revoked", () => {
     sheet?.close();
     dialog?.remove();
+    runtimeDialog?.remove();
     menu?.remove();
     state = { ...state, actors: [], templates: [], folders: [] };
     paint();
@@ -598,6 +668,7 @@ window.addEventListener("pagehide", () => {
   popup?.close();
   sheet?.close();
   dialog?.remove();
+  runtimeDialog?.remove();
   menu?.remove();
 });
 

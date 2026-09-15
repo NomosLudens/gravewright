@@ -32,6 +32,12 @@ def defaults():
             "display": {"name": True, "bar_1": True, "bar_2": True},
         },
         "bars": {k: {"value": 0, "max": 0} for k in ("bar_1", "bar_2")},
+        "runtime": {
+            "attributes": {"corpo": 0, "vontade": 0, "sintonia": 0, "marco": 0},
+            "resources": {},
+            "conditions": [],
+            "lucidity_zero_pending_resolution": False,
+        },
     }
 
 
@@ -55,6 +61,12 @@ def normalize(raw, previous=None, gm=True):
         return base
 
     data = merge(defaults(), raw)
+    # Runtime state is owned by the actor command channel, never by the PDF
+    # sheet editor. Preserve it across sheet saves and reject sheet injection.
+    if previous and isinstance(previous.get("runtime"), dict):
+        data["runtime"] = deepcopy(previous["runtime"])
+    else:
+        data["runtime"] = deepcopy(defaults()["runtime"])
     if set(data) - set(defaults()):
         raise MapError("Unknown character sheet property.")
     if not gm and "effects" not in raw:

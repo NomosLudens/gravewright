@@ -14,7 +14,7 @@ function load(kind) { try {
 catch {
     return [];
 } }
-let terms = [], selected = 0, tab = 'manual', minimized = false, historyOpen = false, busy = false, popup;
+let terms = [], selected = 0, tab = 'manual', minimized = false, historyOpen = false, busy = false, popup, actors = [];
 let recent = load('history').filter(p => typeof p.expression === 'string' && typeof p.label === 'string').slice(0, 30);
 let saved = load('presets').filter(p => typeof p.id === 'string' && typeof p.name === 'string' && typeof p.expression === 'string' && p.expression.length <= 512 && Number.isInteger(p.repeat) && p.repeat >= 1 && p.repeat <= 12).slice(0, 24);
 let preset = dicePresets[0], values = { attributes: 6 }, prepared;
@@ -141,7 +141,7 @@ function roll(visibility) {
     if (system === 'kallistis' && mode === 'action' && !valid(['actionLabel', 'attributeValue', 'skillName', 'skillValue', 'impulseLevel', 'impulseReason', 'pressureLevel', 'pressureReason', 'helperCount'])) return;
     if (system === 'kallistis' && mode === 'opposed' && !valid(['sideAActionLabel', 'sideAAttributeValue', 'sideASkillName', 'sideASkillValue', 'sideBActionLabel', 'sideBAttributeValue', 'sideBSkillName', 'sideBSkillValue'])) return;
     const entry = { expression: field('expression').value.trim(), label: field('label').value.trim(), repeat: Number(field('repeat').value), system, modifier: Number(field('modifier').value), difficulty: Number(field('difficulty').value), mode };
-    if (mode === 'action') { entry.action = action(); if (!entry.label) entry.label = entry.action.action_label; }
+    if (mode === 'action') { entry.action = action(); entry.actorId = field('actorId').value || undefined; if (!entry.label) entry.label = entry.action.action_label; }
     if (mode === 'opposed') { entry.label = entry.label || 'Opposed KALLISTIS test'; entry.opposed = { side_a: actionSide('sideA'), side_b: actionSide('sideB') }; }
     error(); setBusy(true); window.gravewrightRealtime.roll({ ...entry, visibility }).then(() => { recent = [entry, ...recent.filter(p => p.expression !== entry.expression || p.label !== entry.label || (p.repeat ?? 1) !== entry.repeat || p.system !== entry.system || p.modifier !== entry.modifier || p.difficulty !== entry.difficulty)].slice(0, 30); persist('history', recent); history(); window.gravewrightDice.close(); }).catch(e => error(e.message)).finally(() => setBusy(false));
 }
@@ -244,3 +244,14 @@ chooseTab('manual');
 refresh();
 history();
 savedList();
+function syncActors(value) {
+    actors = value?.actors || [];
+    const select = field('actorId');
+    if (!select) return;
+    const selected = select.value;
+    select.replaceChildren(new Option('No runtime actor', ''));
+    for (const actor of actors) select.append(new Option(actor.name, actor.id));
+    if (actors.some(actor => actor.id === selected)) select.value = selected;
+}
+window.addEventListener('gravewright:actors.state', event => syncActors(event.detail));
+window.addEventListener('gravewright:connected', () => window.gravewrightRealtime.actorsSubscribe());

@@ -295,6 +295,9 @@ def prepare_action(action):
             "reason": _text(helper.get("reason", ""), "helper.reason", REASON_MAX, required=False),
         })
     helper_count = len(normalized_helpers)
+    corruption_applies = value("corruption_applies", "corruptionApplies", default=False)
+    if type(corruption_applies) is not bool:
+        raise RollError("corruption_applies must be boolean.")
 
     impulse_base_bonus = impulse_level * 2
     helper_bonus = helper_count * 2
@@ -317,6 +320,7 @@ def prepare_action(action):
         "helpers": normalized_helpers,
         "helper_count": helper_count,
         "helper_bonus": helper_bonus,
+        "corruption_applies": corruption_applies,
         "base_modifier": base_modifier,
         "circumstance_modifier": circumstance_modifier,
         "modifier_total": modifier_total,

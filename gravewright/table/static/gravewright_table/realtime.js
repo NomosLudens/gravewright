@@ -1,6 +1,6 @@
 let chatMapId = null;
 let streamRegion, streamGeneration = 0;
-const resourceCommands=new Map();let actorsSubscribed=false,tokenMapId=null;
+const resourceCommands=new Map();const rerolls=new Map();let actorsSubscribed=false,tokenMapId=null;
 // Bidirectional table transport. Django owns identity, authorization and rendered content.
 import {mergePatch, getPath} from '/static/gravewright_web/vendor/datastar-1.0.3.js';
 
@@ -155,6 +155,13 @@ function receive(event) {
   } else if (type === 'dice.error') {
     const roll = rolls.get(payload.requestId);
     if (roll && payload.code !== 'roll_in_progress') { rolls.delete(payload.requestId); roll.reject(new Error(payload.message)); }
+  } else if (type === 'dice.reroll.ack') {
+    renderMessages([payload.message]);
+    const reroll = rerolls.get(payload.requestId);
+    if (reroll) { rerolls.delete(payload.requestId); reroll.resolve(payload.message); }
+  } else if (type === 'dice.reroll.error') {
+    const reroll = rerolls.get(payload.requestId);
+    if (reroll) { rerolls.delete(payload.requestId); reroll.reject(Object.assign(new Error(payload.message), {code: payload.code})); }
   } else if (type === 'error') {
     const errors = {
       gm_required: 'Only the GM can remove chat messages.',
@@ -267,6 +274,14 @@ window.gravewrightRealtime = {
       }
     });
   },
+  reroll(messageId) {
+    if (getPath('_presence') !== 'seated') return Promise.reject(new Error('Connect to the table before rerolling.'));
+    const requestId = crypto.randomUUID(), payload = {messageId: String(messageId), requestId};
+    return new Promise((resolve, reject) => {
+      rerolls.set(requestId, {payload, resolve, reject});
+      if (!send('dice.reroll', payload)) { rerolls.delete(requestId); reject(new Error('Connect to the table before rerolling.')); }
+    });
+  },
   say(text) {
     if (pending || getPath('_chatPending') || getPath('_presence') !== 'seated' || typeof text !== 'string' || !text.trim()) return;
     const command = text.trim().match(/^\/(roll|r|gmroll)\s+([\s\S]+)$/i);
@@ -307,6 +322,12 @@ window.gravewrightRealtime = {
 if (detached) document.body.classList.add('game-detached');
 document.addEventListener('click', event => {
   if (!event.target.closest('.game-menubar__roster')) mergePatch({_roster: false});
+  const button = event.target.closest('[data-dice-reroll]');
+  if (button && !button.disabled) {
+    button.disabled = true;
+    window.gravewrightRealtime.reroll(button.closest('[data-message-id]')?.dataset.messageId)
+      .catch(error => { button.disabled = false; window.dispatchEvent(new CustomEvent('gravewright:dice-error', {detail: error.message})); });
+  }
 });
 window.addEventListener('pagehide', () => {
   stopping = true;
