@@ -167,7 +167,7 @@ def blocked(t, a, b, walls=None):
     return False
 
 
-def movement(t, who, raw, start=None, limit=512, walls=None):
+def movement(t, who, raw, start=None, limit=512, walls=None, *, enforce_combat=False):
     """Validate control, revision, bounds and path collisions without saving a move."""
     if not control(t, who) or t.locked:
         raise maps.MapError("Token is locked or not controlled.", "forbidden")
@@ -195,6 +195,14 @@ def movement(t, who, raw, start=None, limit=512, walls=None):
         for a, b in itertools.pairwise(points)
     ):
         raise maps.MapError("Movement blocked by a wall.", "blocked")
+    if enforce_combat:
+        from gravewright.combat.services import movement_context
+        movement_context(
+            t,
+            who,
+            points,
+            gm_override=raw.get("gmOverride") is True,
+        )
     return end
 
 
@@ -248,7 +256,7 @@ def command(campaign, user, action, raw, request_id):
         if t.scene_id != scene.pk:
             raise maps.MapError("Token is not in this scene.")
         before=(t.grid_x,t.grid_y,t.elevation)
-        t.grid_x, t.grid_y = movement(t, who, raw)
+        t.grid_x, t.grid_y = movement(t, who, raw, enforce_combat=True)
         t.version += 1
         t.save()
         from gravewright.maps.zones import movement_events

@@ -58,6 +58,14 @@ def empty():
             for name in RESOURCE_NAMES
         },
         "conditions": [],
+        "skills": {},
+        "protection": 0,
+        "combat": {
+            "permanence_successes": 0,
+            "permanence_failures": 0,
+            "permanence_outcome": None,
+            "grave_wound": False,
+        },
         "lucidity_zero_pending_resolution": False,
     }
 
@@ -83,13 +91,26 @@ def read(data):
                 result["resources"][name]["current"] = max(0, min(maximum[name], current))
     for name in RESOURCE_NAMES:
         result["resources"][name]["max"] = maximum[name]
+    protection = raw.get("protection", 0)
+    result["protection"] = protection if type(protection) is int and protection >= 0 else 0
+    skills = raw.get("skills", {})
+    if isinstance(skills, dict):
+        result["skills"] = {str(k): v for k, v in skills.items() if type(v) is int and -1000 <= v <= 1000}
+    combat = raw.get("combat", {})
+    if isinstance(combat, dict):
+        for key in ("permanence_successes", "permanence_failures"):
+            if type(combat.get(key)) is int and combat[key] >= 0:
+                result["combat"][key] = combat[key]
+        if combat.get("permanence_outcome") in {None, "STABILIZED", "TERMINAL"}:
+            result["combat"]["permanence_outcome"] = combat.get("permanence_outcome")
+        result["combat"]["grave_wound"] = combat.get("grave_wound") is True
+        if isinstance(combat.get("permanence_last"), dict):
+            result["combat"]["permanence_last"] = deepcopy(combat["permanence_last"])
     conditions = raw.get("conditions", [])
     if isinstance(conditions, list):
         result["conditions"] = [deepcopy(c) for c in conditions if isinstance(c, dict) and c.get("type") in CONDITION_TYPES]
     result["lucidity_zero_pending_resolution"] = bool(raw.get("lucidity_zero_pending_resolution"))
     return result
-
-
 def _write(row, state):
     row.data = {**(row.data if isinstance(row.data, dict) else {}), "runtime": state}
     row.version += 1
@@ -119,6 +140,15 @@ def initialize(data, who):
             if name in supplied:
                 state["attributes"][name] = _attribute(supplied[name], name)
     maximum = maxima(state["attributes"])
+    if "protection" in data:
+        state["protection"] = _int(data["protection"], "protection", 0, 1000)
+    if "skills" in data:
+        if not isinstance(data["skills"], dict):
+            raise MapError("Invalid runtime skills.")
+        state["skills"] = {
+            str(name): _int(value, f"skills.{name}", -1000, 1000)
+            for name, value in data["skills"].items()
+        }
     for name in RESOURCE_NAMES:
         current = data.get("resources", {}).get(name) if isinstance(data.get("resources"), dict) else None
         if isinstance(current, dict) and "current" in current:
