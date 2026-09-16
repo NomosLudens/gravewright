@@ -1,7 +1,6 @@
 import json
 import hashlib
 import hmac
-import secrets
 import time
 from pathlib import Path
 
