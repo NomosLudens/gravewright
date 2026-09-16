@@ -1,5 +1,8 @@
 import json
+import hashlib
+import hmac
 import secrets
+import time
 from pathlib import Path
 
 from datastar_py.django import DatastarResponse, ServerSentEventGenerator as SSE
@@ -117,14 +120,37 @@ def kallistis_handoff(request):
     return response
 
 
+PROVISION_SIGNATURE_MAX_AGE_SECONDS = 60
+
+
+def verify_kallistis_provision_signature(request):
+    secret = settings.KALLISTIS_VTT_SERVICE_SECRET
+    if not secret:
+        return JsonResponse({"valid": False, "error": "service_not_configured"}, status=503)
+    timestamp = request.headers.get("X-Kallistis-Timestamp", "")
+    signature = request.headers.get("X-Kallistis-Signature", "")
+    if not timestamp or not signature:
+        return JsonResponse({"valid": False, "error": "signature_required"}, status=401)
+    try:
+        issued_at = int(timestamp)
+    except ValueError:
+        return JsonResponse({"valid": False, "error": "signature_invalid"}, status=401)
+    if abs(time.time() - issued_at) > PROVISION_SIGNATURE_MAX_AGE_SECONDS:
+        return JsonResponse({"valid": False, "error": "signature_expired"}, status=401)
+    expected = "sha256=" + hmac.new(
+        secret.encode("utf-8"), timestamp.encode("ascii") + b"." + request.body, hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        return JsonResponse({"valid": False, "error": "signature_invalid"}, status=401)
+    return None
+
+
 @csrf_exempt
 @require_POST
 def kallistis_provision(request):
-    secret = settings.KALLISTIS_VTT_SERVICE_SECRET
-    if not secret or not secrets.compare_digest(
-        request.headers.get("Authorization", ""), "Bearer " + secret
-    ):
-        return JsonResponse({"valid": False, "error": "service_unauthorized"}, status=401)
+    signature_error = verify_kallistis_provision_signature(request)
+    if signature_error is not None:
+        return signature_error
     if len(request.body) > 64 * 1024:
         return JsonResponse({"valid": False, "error": "request_too_large"}, status=413)
     try:
