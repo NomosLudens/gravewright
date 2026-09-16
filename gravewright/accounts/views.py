@@ -1,4 +1,5 @@
 import json
+import secrets
 from pathlib import Path
 
 from datastar_py.django import DatastarResponse, ServerSentEventGenerator as SSE
@@ -8,7 +9,7 @@ from django.http import Http404, HttpResponse, JsonResponse
 from django.middleware.csrf import get_token
 from django.shortcuts import redirect, render
 from django.template.loader import render_to_string
-from django.views.decorators.csrf import ensure_csrf_cookie
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
@@ -16,6 +17,7 @@ from gravewright.web.responses import navigate
 
 from . import services
 from .kallistis import KallistisHandoffError, consume_handoff
+from .provisioning import KallistisProvisionError, provision
 from .forms import AccountUpdateForm, LoginForm, RegistrationForm
 
 
@@ -113,6 +115,26 @@ def kallistis_handoff(request):
             path=settings.SESSION_COOKIE_PATH,
         )
     return response
+
+
+@csrf_exempt
+@require_POST
+def kallistis_provision(request):
+    secret = settings.KALLISTIS_VTT_SERVICE_SECRET
+    if not secret or not secrets.compare_digest(
+        request.headers.get("Authorization", ""), "Bearer " + secret
+    ):
+        return JsonResponse({"valid": False, "error": "service_unauthorized"}, status=401)
+    if len(request.body) > 64 * 1024:
+        return JsonResponse({"valid": False, "error": "request_too_large"}, status=413)
+    try:
+        payload = json.loads(request.body)
+        result = provision(payload)
+    except (ValueError, UnicodeDecodeError):
+        return JsonResponse({"valid": False, "error": "invalid_json"}, status=400)
+    except KallistisProvisionError as error:
+        return JsonResponse({"valid": False, "error": error.code}, status=error.status)
+    return JsonResponse(result, status=200)
 
 @require_GET
 def gate(request):
