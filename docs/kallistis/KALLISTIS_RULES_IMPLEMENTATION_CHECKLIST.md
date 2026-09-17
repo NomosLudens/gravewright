@@ -28,9 +28,9 @@ Nenhum item autoriza inventar regra. Todas as referências apontam para seções
   - REF=Guia §3
   - EVIDENCE=metadata de face preserva a identidade do glifo por dado, sem derivar valor globalmente; UI renderiza a identidade textual quando aplicável.
 - [ ] CORE-04 — Atributo + Perícia
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §4 e §9
-  - EVIDENCE=prepare_action calcula base_modifier como atributo + perícia e o teste determinístico cobre a fórmula; autoridade server-side do actor permanece BLOCKED_BY_CHARACTER_CONTRACT porque Actor.data.runtime não possui contrato canônico completo de perícias.
+  - EVIDENCE=prepare_action calcula base_modifier como atributo + perícia; para KALLISTIS com actor_id, o servidor resolve os valores em Actor.data.runtime após validar campanha e controle, substituindo valores numéricos forjados do cliente. Action sem Actor preserva o caminho genérico explícito.
 - [ ] CORE-05 — Dificuldade
   - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §4
