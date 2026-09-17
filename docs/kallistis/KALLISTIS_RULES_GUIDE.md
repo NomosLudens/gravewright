@@ -432,3 +432,107 @@ Apêndices, Glossário     terminologia operacional
 ~~~
 
 Conclusão: a adaptação cabe no pipeline existente. Os gaps técnicos mínimos são a extensão do resultado KALLISTIS para faces semanticamente etiquetadas e a classificação crítica da igualdade como Ressonância, preservando a projeção numérica. Nenhum efeito mecânico adicional de crítico está definido.
+
+### Povos
+
+Fonte canônica: Livro III, seção **Povos**, subseção **Regras dos Povos**, do corpus vigente. Cada Povo oferece um Traço, um Dom, uma Herança escolhida durante a criação e uma Dissonância. O Traço expressa uma característica constante; o Dom acrescenta uma capacidade ativa com limite próprio; a Herança é escolhida entre duas opções; e a Dissonância mostra como uma virtude do Povo pode ser deformada pela Sombra.
+
+Traço e Dom pertencem ao Núcleo permanente e continuam disponíveis independentemente da Trilha de Ofício ativa. Uma Herança muda apenas por transformação narrativa real, normalmente durante um Marco ou arco dedicado. A Dissonância produz pressão e consequência, enquanto o controle da personagem permanece com o jogador dentro do acordo de mesa. Alinhamento, profissão, personalidade, mundo de criação, lealdade e capacidade intelectual pertencem à história da personagem.
+
+#### Aelvari
+
+**Traço — Memória Estratificada.** Ao investigar lugar, objeto ou tradição com vínculo histórico, receba +2. Em sucesso forte, também pode descobrir o que aconteceu, quem tentou ocultá-lo ou qual versão foi descartada.
+
+**Dom — Eco Paralelo.** Uma vez por cena, depois de uma rolagem, substitua um dado pelo valor natural do outro. Se os dois passarem a mostrar o mesmo valor, ocorre Ressonância. Depois, sofra 1 Pressão no próximo teste de Intelecto ou Vontade.
+
+**Heranças:** Cronista (Conhecimento +1; pode registrar uma memória de cena como evidência resistente a alteração comum) ou Vidente Cauteloso (uma vez por cena, perguntar qual consequência imediata parece mais provável se a ação continuar).
+
+**Dissonância — Sobrecarga Temporal.** Ao falhar usando memória ancestral, o Mestre pode oferecer confusão entre passado e possibilidade, perda temporária de uma lembrança atual ou a condição Abalado.
+
+#### Kragor
+
+**Traço — Força de Comunidade.** Enquanto estiver adjacente ou na mesma zona que um aliado consciente, receba +1 Fortitude e +1 dano corpo a corpo.
+
+**Dom — Juramento Operante.** Durante uma Pausa Segura, formule um juramento específico com outro personagem que consinta. Enquanto ambos o cumprem, cada um pode conceder +2 ao outro uma vez por cena. Quebrar conscientemente o juramento causa Dissonante até existir reparação.
+
+**Heranças:** Escudo do Clã (usar a Reação para receber metade do dano destinado a um aliado próximo) ou Voz da Assembleia (ao liderar ação coletiva, dois aliados podem ajudar sem gastar suas ações completas).
+
+**Dissonância — Honra Fechada.** Quando a proteção da comunidade se transforma em exclusão, aceitar o apagamento da autonomia de alguém “pelo grupo” marca 1 Sombra.
+
+#### Draken
+
+**Traço — Corpo Elemental.** Escolha uma Afinidade entre brasa, frio, tormenta, pedra, maré ou vento. Reduza em 2 o dano proveniente dessa Afinidade.
+
+**Dom — Manifestação Elemental.** Gaste 1 Fluxo para acrescentar +3 de dano elemental, alterar o terreno de uma zona, resistir automaticamente a um perigo ambiental da Afinidade ou produzir efeito narrativo equivalente que respeite a escala da cena.
+
+**Heranças:** Soberania (+2 contra coerção e medo) ou Condutor (ao usar magia elemental, um aliado na mesma zona recebe +1 Guarda até o próximo turno).
+
+**Dissonância — Hýbris.** Quando o poder elemental for usado para impor obediência sem necessidade, o Mestre pode oferecer 1 Fluxo em troca de 1 Sombra.
+
+#### Nomos
+
+**Traço — Chassi Modular.** Escolha dois módulos: Visão ampliada (+2 Percepção uma vez por cena contra distância, ocultação ou cobertura); Ferramenta integrada (ferramenta adequada sem ocupar espaço); Compartimento protegido (+2 espaços de Carga); Blindagem leve (+1 Proteção, sem acúmulo com outra Blindagem); Interface de dados (+2 Investigação ou Conhecimento uma vez por cena ao lidar com dispositivo, registro ou padrão); ou Membros adaptáveis (ignora uma penalidade de Movimento ou manuseio por turno). Trocar módulo exige oficina e Descanso Completo. Os bônus respeitam Impulso e a economia normal de ações.
+
+**Dom — Lei Interior.** Uma vez por cena, quando uma regra externa tentar controlar sua ação, declare sua Lei Interior. Sua Integridade aumenta em +4 contra esse efeito. Se a rolagem do agente falhar contra sua Integridade, recupere 1 Lucidez.
+
+**Heranças:** Reparador (usar Ofício no lugar de Cuidado ao tratar Nomos e dispositivos) ou Processador (uma vez por cena, transformar pergunta de Investigação em cálculo imediato dos padrões presentes).
+
+**Dissonância — Otimização Absoluta.** Quando remover a escolha de alguém for apresentada como solução perfeita, resistir exige recordar um vínculo. Sem vínculo relevante, sofra -2 Integridade.
+
+#### Livres
+
+**Traço — Aprendizagem Cruzada.** Escolha uma Perícia fora do Ofício e aumente-a em +1. Depois de cada Marco, essa Perícia pode ser trocada.
+
+**Dom — Solução Improvisada.** Uma vez por cena, declare uso inesperado de objeto, contato, costume ou fragmento de conhecimento. Receba +2 e ignore a falta de ferramenta básica apropriada.
+
+**Heranças:** Comunidade Escolhida (ao ajudar um vínculo, a ajuda concede +3) ou Múltiplos Caminhos (aprender uma Técnica inicial de outro Ofício, respeitando pré-requisitos narrativos).
+
+**Dissonância — Identidade Oferecida.** A Sombra pode oferecer identidade livre de dúvida. Aceitar essa certeza concede sucesso automático imediato e marca 2 Sombra.
+
+#### Dóreos
+
+**Traço — Memória da Matéria.** Ao tocar obra, ferramenta ou estrutura, role 2d10 + Sintonia + Ofício. Em sucesso, descubra seu propósito original, um reparo relevante, uma promessa quebrada ou seu último uso significativo.
+
+**Dom — Inscrição de Promessa.** Durante uma Pausa Segura, inscreva uma promessa em um objeto. Uma vez, o portador pode receber +3 em ação coerente com a promessa, impedir a destruição do objeto ou revelar quem violou sua função. Depois do uso, a inscrição precisa ser renovada.
+
+**Heranças:** Forjador (fabricar equipamento de qualidade sem oficina completa) ou Guardião de Obra (+2 Guarda ao defender estrutura, Artefato ou pessoa sob responsabilidade formal).
+
+**Dissonância — Permanência Rígida.** Quando preservar uma obra exigir sacrificar pessoas ou escolhas presentes, insistir sem negociação marca 1 Sombra.
+
+#### Teriantes
+
+**Traço — Aspecto Faunístico.** Escolha um Aspecto e um sentido associado: felinos/visão e equilíbrio, lupinos/cheiro e cooperação, avianos/distância e orientação, reptilianos/calor e imobilidade ou aquáticos/vibração e água. Outro Aspecto pode ser criado com aprovação do grupo. Receba +2 Percepção quando o sentido escolhido for relevante.
+
+**Dom — Instinto Inteiro.** Uma vez por cena, antes de rolar, pergunte qual saída parece mais segura, quem demonstra ameaça, o que está fora de lugar ou qual movimento preserva o bando. A resposta é verdadeira, embora possa ser incompleta.
+
+**Heranças:** Caçador (+1 dano contra alvo rastreado) ou Protetor de Bando (aliados próximos recebem +1 contra medo e emboscada).
+
+**Dissonância — Redução ao Impulso.** A Sombra pode pressionar o instinto até transformá-lo em perda de escolha. Quando um aliado chama a personagem pelo nome e pelo vínculo compartilhado, receba +2 Integridade para resistir.
+
+#### Nimari
+
+Nimari são o povo pequeno das rotas. Sua baixa estatura não modifica alcance ou deslocamento por si só; Passo Liminal, Fortuna e Herança expressam mecanicamente sua forma de atravessar o mundo.
+
+**Traço — Passo Liminal.** Uma vez por turno, atravesse espaço ocupado ou terreno difícil sem custo adicional. Barreiras sólidas continuam exigindo uma passagem real.
+
+**Dom — Dado da Fortuna.** Uma vez por cena, depois de qualquer rolagem visível, aumente ou reduza em 1 o valor natural de um dado, respeitando o intervalo de 1 a 10. A mudança pode criar ou desfazer uma dupla. Descreva qual possibilidade foi desviada.
+
+**Heranças:** Cartógrafo de Frestas (+2 Sobrevivência ao procurar rotas, portais e saídas) ou Negociador de Risco (ao aceitar uma consequência antes do teste, recebe +3 em vez de +2).
+
+**Dissonância — Caminho Sem Compromisso.** Abandonar um vínculo para evitar todo risco recupera 1 Fôlego, mas marca uma Ruptura nesse vínculo. Três Rupturas encerram o vínculo até existir reparação.
+
+#### Vitrálios
+
+**Traço — Corpo Harmônico.** Escolha uma frequência dominante entre calor, som, emoção, luz física, vibração ou magia. Perceba sem teste mudanças relevantes nessa frequência quando próximas.
+
+**Dom — Ressonância Prismática.** Gaste 1 Fluxo para refletir magia de alvo único com efeito reduzido, emitir luz ou som estruturado, compartilhar emoção verdadeira com consentimento ou conceder +2 a teste de Sintonia de aliado.
+
+**Resistência Vitrália.** Resistência a uma condição concede Impulso 1 nos testes feitos especificamente para evitá-la, resistir a ela ou removê-la. Durante Pausa Segura, a Herança pode permitir trocar a condição protegida.
+
+**Reflexão Vitrália.** O novo alvo precisa ser válido e estar no alcance funcional. Ampliações pagas pelo conjurador original permanecem no efeito original. Dano refletido usa grau de potência abaixo do original, mínimo ×1; outro valor numérico é reduzido aproximadamente à metade, arredondando para baixo; sem escala numérica, duração ou intensidade cai um passo coerente. A reflexão preserva ou reduz a potência recebida.
+
+**Heranças:** Lapidador de Si (durante Pausa Segura, trocar a resistência a uma condição por outra até a próxima Pausa Segura) ou Coro Vitrálio (quando outro personagem gerar Ressonância, recuperar 1 Lucidez, uma vez por cena).
+
+**Dissonância — Quebra Frequencial.** Ao sofrer dano de Lucidez igual ou superior à Vontade, escolha tornar a emoção visível, perder temporariamente acesso ao Dom ou sofrer Fraturado.
+
+**Trocados e identidade.** Em Vitrálio Trocado, escolha Luz ou Escuridão antes da rolagem. Role um segundo d10 dessa identidade, mantenha um dos dois dados dela e preserve o dado da outra identidade. Predominância e Ressonância usam os dois dados mantidos.

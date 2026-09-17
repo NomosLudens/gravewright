@@ -66,6 +66,6 @@ STATUS=RULE_DEFINED_IMPLEMENTATION_MISSING
 
 REF=Guia §9, §11, §12 e §16
 
-Há regras definidas, mas sem implementação auditada completa para personagem, magia, Tecelão, Evocação, Velarim, Merge, Coro, progressão e procedimentos completos de GM.
+Há regras definidas, mas sem implementação auditada completa para magia, Tecelão, Evocação, Velarim, Merge, Coro, progressão e procedimentos completos de GM. O contrato de Povo, Traço, Dom, Herança e Dissonância foi recuperado do corpus vigente e registrado no GUIDE; sua implementação permanece no Gate D.
 
 Esta é uma lacuna de implementação, não uma regra ausente. Cada domínio deve ser tratado em gate próprio, sem ampliar o escopo do núcleo de dados.
