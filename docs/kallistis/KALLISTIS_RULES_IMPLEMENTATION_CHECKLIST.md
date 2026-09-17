@@ -1,0 +1,442 @@
+# KALLISTIS — Rules Implementation Checklist
+
+Checklist derivado exclusivamente de KALLISTIS_RULES_GUIDE.md e da auditoria do Gravewright realizada no Rules Adaptation Gate 01.
+
+Status permitidos:
+
+~~~
+ALREADY_IMPLEMENTED  existe e atende ao contrato auditado
+PARTIAL              existe parcialmente ou sem a autoridade/semântica completa
+MISSING              não existe no Gravewright auditado
+UNVERIFIED            não foi provado pela auditoria disponível
+~~~
+
+Nenhum item autoriza inventar regra. Todas as referências apontam para seções do guia canônico.
+
+## CORE
+
+- [ ] CORE-01 — Dado da Luz
+  - STATUS=PARTIAL
+  - REF=Guia §3
+  - EVIDENCE=valor numérico existe; face com Glifo da Luz ainda não existe.
+- [ ] CORE-02 — Dado da Escuridão
+  - STATUS=PARTIAL
+  - REF=Guia §3
+  - EVIDENCE=valor numérico existe; face com Glifo da Escuridão ainda não existe.
+- [ ] CORE-03 — Glifos invertidos
+  - STATUS=MISSING
+  - REF=Guia §3
+  - EVIDENCE=não há representação de glifo nem orientação invertida no engine atual.
+- [ ] CORE-04 — Atributo + Perícia
+  - STATUS=PARTIAL
+  - REF=Guia §4 e §9
+  - EVIDENCE=ação calcula valores recebidos; actor ainda não é a autoridade completa.
+- [ ] CORE-05 — Dificuldade
+  - STATUS=ALREADY_IMPLEMENTED
+  - REF=Guia §4
+  - EVIDENCE=validação, presets e persistência de dificuldade existem.
+- [ ] CORE-06 — Margem
+  - STATUS=ALREADY_IMPLEMENTED
+  - REF=Guia §4
+  - EVIDENCE=margem é calculada como total menos dificuldade e persiste no resultado.
+- [ ] CORE-07 — Grau de resultado
+  - STATUS=ALREADY_IMPLEMENTED
+  - REF=Guia §4
+  - EVIDENCE=faixas de falha/sucesso existem em kallistis.py.
+- [ ] CORE-08 — Predominância
+  - STATUS=ALREADY_IMPLEMENTED
+  - REF=Guia §5
+  - EVIDENCE=light/dark/resonance e comparação dos dados existem.
+- [ ] CORE-09 — Intensidade da Predominância
+  - STATUS=ALREADY_IMPLEMENTED
+  - REF=Guia §5
+  - EVIDENCE=delta e faixas Sutil/Clara/Intensa/Absoluta existem.
+- [ ] CORE-10 — Ressonâncias 1–10
+  - STATUS=PARTIAL
+  - REF=Guia §6
+  - EVIDENCE=nomes e aberturas existem; efeitos específicos permanecem narrativos/UNSPECIFIED.
+- [ ] CORE-11 — Classificação crítica por igualdade
+  - STATUS=PARTIAL
+  - REF=Guia §6
+  - EVIDENCE=igualdade registra resonance, mas ainda não registra critical.
+- [ ] CORE-12 — Impulso
+  - STATUS=PARTIAL
+  - REF=Guia §8
+  - EVIDENCE=cálculo existe em action; cobertura universal e autoridade de ficha não estão completas.
+- [ ] CORE-13 — Pressão
+  - STATUS=PARTIAL
+  - REF=Guia §8
+  - EVIDENCE=penalidade de action existe; cobertura universal e autoridade de ficha não estão completas.
+
+## CHARACTER
+
+- [ ] CHARACTER-01 — Seis Atributos
+  - STATUS=PARTIAL
+  - REF=Guia §9
+  - EVIDENCE=runtime de actor não expõe a ficha canônica completa.
+- [ ] CHARACTER-02 — Perícias 0–5
+  - STATUS=PARTIAL
+  - REF=Guia §9
+  - EVIDENCE=payload de action aceita perícia; ficha server-side não é fonte completa.
+- [ ] CHARACTER-03 — Povo: Traço, Dom, Herança e Dissonância
+  - STATUS=MISSING
+  - REF=Guia §9 e §16
+  - EVIDENCE=não há contrato canônico KALLISTIS equivalente no actor runtime.
+- [ ] CHARACTER-04 — Ofício, Papel, Trilha e Chave
+  - STATUS=MISSING
+  - REF=Guia §16
+  - EVIDENCE=não há implementação KALLISTIS comprovada.
+- [ ] CHARACTER-05 — Origem cosmológica
+  - STATUS=MISSING
+  - REF=Guia §2 e §9
+  - EVIDENCE=Criado na Luz, Escuridão, Trocado e Outro não são campos canônicos do actor atual.
+- [ ] CHARACTER-06 — Vínculos, Promessa, Ferida e Pergunta
+  - STATUS=MISSING
+  - REF=Guia §9
+  - EVIDENCE=não há modelo/runtime auditado para esses elementos.
+- [ ] CHARACTER-07 — Autoridade server-side do actor
+  - STATUS=PARTIAL
+  - REF=Guia §13 e §14
+  - EVIDENCE=actorId é opcional; valores de atributo/perícia ainda podem vir do cliente.
+
+## RESOURCES
+
+- [ ] RESOURCES-01 — Vitalidade
+  - STATUS=PARTIAL
+  - REF=Guia §9
+  - EVIDENCE=recurso existe no runtime; fórmula canônica precisa ser reconciliada.
+- [ ] RESOURCES-02 — Lucidez
+  - STATUS=PARTIAL
+  - REF=Guia §9
+  - EVIDENCE=recurso existe no runtime; fórmula e consequências canônicas não estão completas.
+- [ ] RESOURCES-03 — Fluxo
+  - STATUS=PARTIAL
+  - REF=Guia §9
+  - EVIDENCE=recurso existe; integração com magia, Fendas e Evocação não está completa.
+- [ ] RESOURCES-04 — Guarda
+  - STATUS=PARTIAL
+  - REF=Guia §9
+  - EVIDENCE=combate usa defesas, mas derivação completa de ficha não foi provada.
+- [ ] RESOURCES-05 — Fortitude
+  - STATUS=PARTIAL
+  - REF=Guia §9
+  - EVIDENCE=combate referencia defesa; autoridade de personagem não está completa.
+- [ ] RESOURCES-06 — Integridade
+  - STATUS=PARTIAL
+  - REF=Guia §9
+  - EVIDENCE=combate referencia defesa; autoridade de personagem não está completa.
+- [ ] RESOURCES-07 — Fôlego e Determinação
+  - STATUS=PARTIAL
+  - REF=Guia §9
+  - EVIDENCE=recursos existem; todos os procedimentos canônicos ainda não estão no runtime.
+
+## COMBAT
+
+- [ ] COMBAT-01 — Ataque corpo a corpo
+  - STATUS=PARTIAL
+  - REF=Guia §10
+  - EVIDENCE=combat resolve ação KALLISTIS, mas o contrato integral de ficha/defesa não está fechado.
+- [ ] COMBAT-02 — Ataque à distância
+  - STATUS=PARTIAL
+  - REF=Guia §10
+  - EVIDENCE=estrutura de combate existe; cobertura completa não foi provada.
+- [ ] COMBAT-03 — Ataque mágico contra Defesa
+  - STATUS=MISSING
+  - REF=Guia §10 e §16
+  - EVIDENCE=DSL genérico não equivale à magia KALLISTIS.
+- [ ] COMBAT-04 — Testes opostos
+  - STATUS=PARTIAL
+  - REF=Guia §10
+  - EVIDENCE=opposed dice existe; empate e resolução completa precisam de reconciliação.
+- [ ] COMBAT-05 — Dano, margem e potência
+  - STATUS=PARTIAL
+  - REF=Guia §10
+  - EVIDENCE=combat possui dano; regras completas de potência/margem não estão centralizadas.
+- [ ] COMBAT-06 — Grade, zonas, Movimento e cobertura
+  - STATUS=PARTIAL
+  - REF=Guia §9 e §10
+  - EVIDENCE=mapa/tokens existem; contrato mecânico completo não foi provado.
+- [ ] COMBAT-07 — Ataque de área: uma rolagem, Defesas separadas
+  - STATUS=MISSING
+  - REF=Guia §10
+  - EVIDENCE=não há prova de implementação desta regra KALLISTIS.
+- [ ] COMBAT-08 — Objetivo de cena, fases e ação anunciada
+  - STATUS=MISSING
+  - REF=Guia §10 e §16
+  - EVIDENCE=procedimento de condução não está representado como runtime canônico.
+
+## CONDITIONS
+
+- [ ] CONDITIONS-01 — Abalado, Exposto, Lento e Sangrando
+  - STATUS=PARTIAL
+  - REF=Guia §10
+  - EVIDENCE=conditions runtime existe; cobertura e duração canônicas são incompletas.
+- [ ] CONDITIONS-02 — Dissonante, Fraturado e Corrompido
+  - STATUS=PARTIAL
+  - REF=Guia §10
+  - EVIDENCE=modificadores de condição existem; semântica completa não está fechada.
+- [ ] CONDITIONS-03 — Caído e Teste de Permanência
+  - STATUS=PARTIAL
+  - REF=Guia §10
+  - EVIDENCE=estado de queda existe; procedimento completo não foi provado.
+- [ ] CONDITIONS-04 — Ferimento Grave e dano excedente
+  - STATUS=MISSING
+  - REF=Guia §10
+  - EVIDENCE=não há contrato KALLISTIS equivalente auditado.
+- [ ] CONDITIONS-05 — Morte, Lucidez zero e Sombra
+  - STATUS=PARTIAL
+  - REF=Guia §10 e §2
+  - EVIDENCE=alguns estados existem; consequências canônicas completas não estão implementadas.
+
+## MAGIC
+
+- [ ] MAGIC-01 — Estrutura Nome/Tradição/Grau/Ação/Alvo
+  - STATUS=MISSING
+  - REF=Guia §16
+  - EVIDENCE=não há schema KALLISTIS de magia auditado.
+- [ ] MAGIC-02 — Graus 0–3 e acesso por Marco
+  - STATUS=MISSING
+  - REF=Guia §16
+  - EVIDENCE=DSL de fórmula não representa esse contrato.
+- [ ] MAGIC-03 — Magias conhecidas e limite de Sintonia
+  - STATUS=MISSING
+  - REF=Guia §16
+  - EVIDENCE=não há repertório canônico auditado.
+- [ ] MAGIC-04 — Custo, Fluxo, concentração e consequência
+  - STATUS=MISSING
+  - REF=Guia §9 e §16
+  - EVIDENCE=integração KALLISTIS não foi provada.
+- [ ] MAGIC-05 — Teste mágico
+  - STATUS=PARTIAL
+  - REF=Guia §10 e §16
+  - EVIDENCE=generic formula path existe, mas não carrega o contrato KALLISTIS.
+- [ ] MAGIC-06 — Área, resistência e dano mágico
+  - STATUS=PARTIAL
+  - REF=Guia §10 e §16
+  - EVIDENCE=há componentes genéricos; semântica KALLISTIS completa não está centralizada.
+
+## WEAVER
+
+- [ ] WEAVER-01 — Tradições, Formas e Grau do Tecelão
+  - STATUS=MISSING
+  - REF=Guia §16
+  - EVIDENCE=não há runtime KALLISTIS específico.
+- [ ] WEAVER-02 — Forma Estável, Chaves e progressão de repertório
+  - STATUS=MISSING
+  - REF=Guia §16
+  - EVIDENCE=não há modelo auditado.
+- [ ] WEAVER-03 — Limites de Velarim e Magia do Tecelão
+  - STATUS=MISSING
+  - REF=Guia §12 e §16
+  - EVIDENCE=não há implementação comprovada.
+
+## EVOCATION
+
+- [ ] EVOCATION-01 — Âncora, Forma, Impulso e Pacto
+  - STATUS=MISSING
+  - REF=Guia §12 e §16
+  - EVIDENCE=não há contrato KALLISTIS de vínculo persistido.
+- [ ] EVOCATION-02 — Portes Menor, Padrão, Maior e Instável
+  - STATUS=MISSING
+  - REF=Guia §16
+  - EVIDENCE=não há runtime específico auditado.
+- [ ] EVOCATION-03 — Convocar, manter e comandar
+  - STATUS=MISSING
+  - REF=Guia §16
+  - EVIDENCE=não há pipeline KALLISTIS comprovado.
+- [ ] EVOCATION-04 — Consciência e recusa compatível com Pacto
+  - STATUS=MISSING
+  - REF=Guia §16
+  - EVIDENCE=não há representação auditada.
+
+## VELARIM
+
+- [ ] VELARIM-01 — Catálogo autorizado de Silmain com 76 glifos
+  - STATUS=MISSING
+  - REF=Guia §12
+  - EVIDENCE=o catálogo editorial não está integrado ao Gravewright.
+- [ ] VELARIM-02 — Analisar
+  - STATUS=MISSING
+  - REF=Guia §12
+  - EVIDENCE=não há comando/resultado específico auditado.
+- [ ] VELARIM-03 — Pronunciar
+  - STATUS=MISSING
+  - REF=Guia §12
+  - EVIDENCE=não há comando/resultado específico auditado.
+- [ ] VELARIM-04 — Inscrever
+  - STATUS=MISSING
+  - REF=Guia §12
+  - EVIDENCE=não há comando/resultado específico auditado.
+- [ ] VELARIM-05 — Traduzir com alternativas e certeza
+  - STATUS=MISSING
+  - REF=Guia §12
+  - EVIDENCE=não há modelo de proveniência linguística auditado.
+
+## MERGE
+
+- [ ] MERGE-01 — Consentimento, limites, duração e saída
+  - STATUS=MISSING
+  - REF=Guia §12
+  - EVIDENCE=não há fluxo KALLISTIS de consentimento.
+- [ ] MERGE-02 — Âncora e custo de 1 Fluxo por participante
+  - STATUS=MISSING
+  - REF=Guia §12
+  - EVIDENCE=não há procedimento persistido.
+- [ ] MERGE-03 — Teste contra Dificuldade 15
+  - STATUS=MISSING
+  - REF=Guia §12
+  - EVIDENCE=não há entrypoint específico.
+- [ ] MERGE-04 — Dois benefícios em sucesso
+  - STATUS=MISSING
+  - REF=Guia §12
+  - EVIDENCE=não há resolução específica.
+- [ ] MERGE-05 — Fusão forçada e Merge corrompido como violência
+  - STATUS=MISSING
+  - REF=Guia §12
+  - EVIDENCE=não há estado/efeito específico auditado.
+
+## RESONANCE_COLLECTIVE
+
+- [ ] RESONANCE_COLLECTIVE-01 — Medidor compartilhado de Pulsos e Barras
+  - STATUS=MISSING
+  - REF=Guia §11
+  - EVIDENCE=combat reage narrativamente ao Coro, mas não há medidor canônico.
+- [ ] RESONANCE_COLLECTIVE-02 — Limites por tamanho do grupo
+  - STATUS=MISSING
+  - REF=Guia §11
+  - EVIDENCE=não há estado persistido auditado.
+- [ ] RESONANCE_COLLECTIVE-03 — Geração de no máximo 1 Pulso por personagem/rodada
+  - STATUS=MISSING
+  - REF=Guia §11
+  - EVIDENCE=não há regra executável auditada.
+- [ ] RESONANCE_COLLECTIVE-04 — Ativação Nível I/II/III
+  - STATUS=MISSING
+  - REF=Guia §11
+  - EVIDENCE=não há comando específico auditado.
+- [ ] RESONANCE_COLLECTIVE-05 — Papéis Vanguarda, Artilharia, Amparo e Bastião
+  - STATUS=MISSING
+  - REF=Guia §11
+  - EVIDENCE=não há contrato de Papel do actor.
+- [ ] RESONANCE_COLLECTIVE-06 — Uma ativação por rodada
+  - STATUS=MISSING
+  - REF=Guia §11
+  - EVIDENCE=não há enforcement auditado.
+- [ ] RESONANCE_COLLECTIVE-07 — Persistência entre cenas e reset
+  - STATUS=MISSING
+  - REF=Guia §11
+  - EVIDENCE=não há modelo de Coro auditado.
+
+## PROGRESSION
+
+- [ ] PROGRESSION-01 — Marcos 1–10
+  - STATUS=MISSING
+  - REF=Guia §16
+  - EVIDENCE=não há progressão KALLISTIS comprovada.
+- [ ] PROGRESSION-02 — Ganhos por Marco e limites de Atributo
+  - STATUS=MISSING
+  - REF=Guia §9 e §16
+  - EVIDENCE=não há regra de progressão no actor runtime.
+- [ ] PROGRESSION-03 — Legado e Marcos 11–15
+  - STATUS=MISSING
+  - REF=Guia §16
+  - EVIDENCE=não há camada épica auditada.
+- [ ] PROGRESSION-04 — M16 histórico e não jogável
+  - STATUS=UNVERIFIED
+  - REF=Guia §16
+  - EVIDENCE=não houve prova de modelagem desse limite no produto.
+
+## GM
+
+- [ ] GM-01 — Objetivo, oposição, risco e consequência de cena
+  - STATUS=UNVERIFIED
+  - REF=Guia §4 e §16
+  - EVIDENCE=há documentação de condução, mas não foi provado runtime de GM.
+- [ ] GM-02 — Testes prolongados e relógios
+  - STATUS=MISSING
+  - REF=Guia §16
+  - EVIDENCE=não há serviço KALLISTIS auditado.
+- [ ] GM-03 — Bloco de adversário com Ofensiva +X
+  - STATUS=PARTIAL
+  - REF=Guia §10 e §16
+  - EVIDENCE=combat possui adversários; contrato completo de bestiário não está integrado.
+- [ ] GM-04 — Moral, rendição e fuga
+  - STATUS=MISSING
+  - REF=Guia §16
+  - EVIDENCE=não há procedimento específico auditado.
+- [ ] GM-05 — Técnicas anunciadas e fases de chefe
+  - STATUS=MISSING
+  - REF=Guia §16
+  - EVIDENCE=não há runtime específico.
+- [ ] GM-06 — Consequência persistente pós-conflito
+  - STATUS=UNVERIFIED
+  - REF=Guia §16
+  - EVIDENCE=Message e dados existem, mas o fluxo canônico de consequência não foi provado.
+
+## UI
+
+- [ ] UI-01 — Tray com seleção KALLISTIS
+  - STATUS=ALREADY_IMPLEMENTED
+  - REF=Guia §13
+  - EVIDENCE=tray força 2d10 e envia modo/action/opposed.
+- [ ] UI-02 — Exibir Luz e Escuridão separadamente
+  - STATUS=ALREADY_IMPLEMENTED
+  - REF=Guia §3 e §7
+  - EVIDENCE=template exibe ambos os valores e leituras.
+- [ ] UI-03 — Exibir glifos e valores matemáticos
+  - STATUS=MISSING
+  - REF=Guia §3 e §13
+  - EVIDENCE=template atual exibe apenas números.
+- [ ] UI-04 — Exibir classificação crítica sem sucesso automático
+  - STATUS=MISSING
+  - REF=Guia §6 e §13
+  - EVIDENCE=não há campo critical nem apresentação correspondente.
+- [ ] UI-05 — Exibir Ressonância por valor e abertura
+  - STATUS=ALREADY_IMPLEMENTED
+  - REF=Guia §6 e §7
+  - EVIDENCE=template exibe nome, valor e abertura quando presentes.
+
+## PERSISTENCE
+
+- [ ] PERSISTENCE-01 — Reserva antes da aleatoriedade
+  - STATUS=ALREADY_IMPLEMENTED
+  - REF=Guia §13
+  - EVIDENCE=Submission é criada antes da avaliação.
+- [ ] PERSISTENCE-02 — Resultado JSON em Message.roll
+  - STATUS=PARTIAL
+  - REF=Guia §13 e §14
+  - EVIDENCE=estrutura suporta resultado; glifo e critical ainda não são persistidos.
+- [ ] PERSISTENCE-03 — Idempotência por request_id
+  - STATUS=ALREADY_IMPLEMENTED
+  - REF=Guia §13
+  - EVIDENCE=Submission e Message protegem retries/replays.
+- [ ] PERSISTENCE-04 — Resultado secreto e Recipient
+  - STATUS=ALREADY_IMPLEMENTED
+  - REF=Guia §13
+  - EVIDENCE=Recipient define audiência de roll GM.
+
+## REALTIME
+
+- [ ] REALTIME-01 — WebSocket de tabela autenticado
+  - STATUS=ALREADY_IMPLEMENTED
+  - REF=Guia §13
+  - EVIDENCE=TableConsumer revalida sessão e membership.
+- [ ] REALTIME-02 — Avaliação server-side
+  - STATUS=ALREADY_IMPLEMENTED
+  - REF=Guia §13 e §14
+  - EVIDENCE=engine KALLISTIS é executado no servidor.
+- [ ] REALTIME-03 — Broadcast pós-commit
+  - STATUS=ALREADY_IMPLEMENTED
+  - REF=Guia §13
+  - EVIDENCE=dispatch usa transaction.on_commit.
+- [ ] REALTIME-04 — Transmitir glifo e critical sem perda de dados
+  - STATUS=MISSING
+  - REF=Guia §3, §6 e §13
+  - EVIDENCE=o pipeline transporta JSON, mas esses campos ainda não existem no resultado.
+
+## Ordem sugerida de execução
+
+1. CORE-01 a CORE-03 e UI-03: representação dos dois dados e glifos.
+2. CORE-10 e CORE-11: Ressonância por valor e classificação crítica.
+3. PERSISTENCE-02 e REALTIME-04: preservar/transmitir os novos campos.
+4. CHARACTER-01, CHARACTER-02 e CHARACTER-07: autoridade do actor.
+5. Os demais domínios somente após contrato funcional específico e sem duplicar o pipeline de dice.
