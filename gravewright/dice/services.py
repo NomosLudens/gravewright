@@ -58,9 +58,21 @@ def validate(payload):
     if data['system'] != 'kallistis' and mode != 'single':
         raise RollError('KALLISTIS action modes require the KALLISTIS system.')
     if data['system'] == 'kallistis' and mode == 'action':
-        data['action'] = prepare_action(_action_payload(payload))
+        action_payload = _action_payload(payload)
         actor_input = payload.get('action') if isinstance(payload.get('action'), dict) else {}
-        actor_id = payload.get('actorId', payload.get('actor_id')) or actor_input.get('actorId', actor_input.get('actor_id'))
+        actor_id_input = payload.get('actorId', payload.get('actor_id')) or actor_input.get('actorId', actor_input.get('actor_id'))
+        if actor_id_input:
+            # Numeric values are replaced from Actor after membership and
+            # campaign authorization; keep validation structural here.
+            action_payload = dict(action_payload)
+            for field in ('attribute', 'skill'):
+                if isinstance(action_payload.get(field), dict):
+                    action_payload[field] = {**action_payload[field], 'value': 0}
+            for field in ('attribute_value', 'attributeValue', 'skill_value', 'skillValue'):
+                if field in action_payload:
+                    action_payload[field] = 0
+        data['action'] = prepare_action(action_payload)
+        actor_id = actor_id_input
         if actor_id:
             try:
                 data['actor_id'] = str(UUID(str(actor_id)))
@@ -91,6 +103,16 @@ def _action_payload(payload):
              'skill_value', 'skillValue', 'impulse', 'pressure', 'helpers', 'helper_count', 'helperCount',
              'corruption_applies', 'corruptionApplies')
     return {name: payload[name] for name in names if name in payload}
+
+
+def bind_actor_action(data, member):
+    """Replace client-supplied numeric action values with Actor values."""
+    if not data.get('action') or not data.get('actor_id'):
+        return data
+    from gravewright.actors import runtime
+
+    action = runtime.authoritative_action(data['actor_id'], member, data['action'])
+    return {**data, 'action': action, 'modifier': action['modifier_total']}
 
 
 def _opposed_test_id(request_id, requested=None):
@@ -155,6 +177,7 @@ def complete(reservation_id, data, result, session_key, campaign_id, user_id):
         claim = Submission.objects.select_for_update().get(pk=reservation_id)
         if claim.error or claim.expires_at <= timezone.now():
             raise RollError('The roll was interrupted. Submit a new roll.')
+        data = bind_actor_action(data, member)
         if data.get('action'):
             from gravewright.actors import runtime
             condition_modifier, _ = runtime.action_modifier(
@@ -281,6 +304,7 @@ def roll(campaign_id, user_id, expression, request_id, *, repeat=1, label='', vi
     data=validate(payload)
     member=Membership.objects.filter(campaign_id=campaign_id,user_id=user_id,user__is_active=True).first()
     if member is None or member.role=='streamer':raise AuthError('not_a_member',403)
+    data = bind_actor_action(data, member)
     if data.get('mode') == 'opposed':
         return opposed_roll(member.pk, data, None, campaign_id, user_id)[0][0]
     reservation,previous=claim(member.pk,data)

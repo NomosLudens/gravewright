@@ -6,7 +6,7 @@ from uuid import uuid4
 from gravewright.actors import runtime
 from gravewright.actors import services as actors
 from gravewright.actors.models import Actor
-from gravewright.dice.kallistis import evaluate as evaluate_kallistis, prepare_action
+from gravewright.dice.kallistis import evaluate as evaluate_kallistis
 from gravewright.maps.services import MapError, scene
 from gravewright.table.domain import boolean, number, version
 from gravewright.tokens import services as tokens
@@ -251,7 +251,7 @@ def _resolve_action(row, who, payload):
     action = payload.get("action")
     if not isinstance(action, dict):
         raise MapError("Structured action is required.")
-    prepared = prepare_action(action)
+    prepared = runtime.authoritative_action(attacker.pk, who, action)
     attacker_state = _actor_runtime(attacker)
     target_state = _actor_runtime(target_actor)
     modifier = prepared["modifier_total"]

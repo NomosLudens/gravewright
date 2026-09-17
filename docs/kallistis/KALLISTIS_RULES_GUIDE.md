@@ -392,7 +392,7 @@ Gaps comprovados:
 - _die() atual produz somente inteiros 1–10; não preserva glifo.
 - A UI exibe Luz/Escuridão como números, sem face visual.
 - O engine ainda não classifica explicitamente a igualdade como crítico; hoje registra apenas resonance.
-- Ação atualmente recebe atributo/perícia do cliente; o actor ainda não é autoridade completa desses valores.
+- Ação sem actor ligado mantém o caminho genérico explícito; quando actorId está presente, atributo e perícia são resolvidos server-side a partir de Actor.data.runtime.
 - KALLISTIS está hard-coded em dice/kallistis.py e no combate, não registrado como ruleset no catálogo.
 - combat.formula_engine é genérico e não deve substituir o engine KALLISTIS.
 
@@ -413,7 +413,7 @@ Gaps comprovados:
 2. Testar as duas orientações de glifo e os dez valores de Ressonância.
 3. Atualizar template/estilos para mostrar valor e glifo.
 4. Manter Submission, Message.roll, Recipient, chat, realtime e dispatch.
-5. Resolver atributo/perícia pela ficha quando actorId estiver presente.
+5. Resolver atributo/perícia pela ficha quando actorId estiver presente — concluído no Gate A.
 6. Registrar KALLISTIS no catálogo somente se a campanha precisar de seleção formal.
 7. Implementar somente a classificação crítica por igualdade; manter efeito mecânico extra como UNSPECIFIED.
 

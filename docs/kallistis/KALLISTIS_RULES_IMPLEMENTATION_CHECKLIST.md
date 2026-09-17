@@ -71,13 +71,13 @@ Nenhum item autoriza inventar regra. Todas as referências apontam para seções
 ## CHARACTER
 
 - [ ] CHARACTER-01 — Seis Atributos
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §9
-  - EVIDENCE=runtime de actor não expõe a ficha canônica completa.
+  - EVIDENCE=Actor.data.runtime persiste e projeta Corpo, Agilidade, Intelecto, Presença, Vontade e Sintonia; os seis identificadores e valores canônicos foram verificados após reload.
 - [ ] CHARACTER-02 — Perícias 0–5
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §9
-  - EVIDENCE=payload de action aceita perícia; ficha server-side não é fonte completa.
+  - EVIDENCE=Actor.data.runtime persiste as 15 Perícias canônicas com validação server-side de 0 a 5; todos os identificadores, zero e máximo 5 foram cobertos.
 - [ ] CHARACTER-03 — Povo: Traço, Dom, Herança e Dissonância
   - STATUS=MISSING
   - REF=Guia §9 e §16
@@ -95,9 +95,9 @@ Nenhum item autoriza inventar regra. Todas as referências apontam para seções
   - REF=Guia §9
   - EVIDENCE=não há modelo/runtime auditado para esses elementos.
 - [ ] CHARACTER-07 — Autoridade server-side do actor
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §13 e §14
-  - EVIDENCE=actorId é opcional; valores de atributo/perícia ainda podem vir do cliente.
+  - EVIDENCE=quando actor_id está vinculado, dice roll e combate substituem valores numéricos do cliente pelos valores do Actor após validação de campanha e controle; payload 999/999, actor inexistente, outra campanha e actor read-only foram rejeitados ou neutralizados.
 
 ## RESOURCES
 

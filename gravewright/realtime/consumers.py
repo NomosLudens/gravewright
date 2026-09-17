@@ -539,6 +539,7 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
         request_id = payload.get("requestId")
         try:
             data = dice.validate(payload)
+            data = dice.bind_actor_action(data, self.member)
             if data.get('mode') == 'opposed':
                 entries = await asyncio.to_thread(
                     dice.opposed_roll,

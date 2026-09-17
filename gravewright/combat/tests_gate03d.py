@@ -60,13 +60,13 @@ class MinimumCombatTests(TransactionTestCase):
             },
         )["resolution"]["result"]
         self.assertEqual(first["target_defense"], "GUARDA")
-        self.assertEqual(first["target_defense_value"], 10)
+        self.assertEqual(first["target_defense_value"], 11)
         runtime.condition({"id": self.two.pk, "conditionType": "EXPOSTO"}, self.who, "runtime.condition.apply")
         second = self.command(
             "resolve", actorId=str(self.one.pk), targetId=str(self.two.tokens.first().pk),
             targetDefense="INTEGRIDADE", action={
                 "action_label": "Will", "attribute": {"name": "vontade", "value": 1},
-                "skill": {"name": "Coerção", "value": 1},
+                "skill": {"name": "Influência", "value": 1},
             },
         )["resolution"]["result"]
         self.assertEqual(second["target_defense"], "INTEGRIDADE")

@@ -90,6 +90,14 @@ const panel = document.getElementById("actors-panel"),
 const labels = JSON.parse(
   document.getElementById("map-text")?.textContent || "{}",
 );
+const kallistisSkills = [
+  ["atletismo", "Atletismo"], ["combate", "Combate"], ["pontaria", "Pontaria"],
+  ["furtividade", "Furtividade"], ["percepcao", "Percepção"],
+  ["sobrevivencia", "Sobrevivência"], ["investigacao", "Investigação"],
+  ["conhecimento", "Conhecimento"], ["oficio", "Ofício"],
+  ["influencia", "Influência"], ["empatia", "Empatia"], ["cuidado", "Cuidado"],
+  ["magia", "Magia"], ["evocacao", "Evocação"], ["velarim", "Velarim"],
+];
 let state = {
     actors: [],
     actorTypes: [],
@@ -273,6 +281,16 @@ function runtime(actor) {
       row.append(label, spend, gain); box.append(row);
     }
     for (const input of el.querySelectorAll("fieldset input")) input.value = state.attributes?.[input.name] ?? 0;
+    const skillsBox = el.querySelector("[data-runtime-skills]");
+    skillsBox.replaceChildren();
+    for (const [name, labelText] of kallistisSkills) {
+      const label = document.createElement("label");
+      label.textContent = labelText;
+      const input = document.createElement("input");
+      input.name = name; input.type = "number"; input.min = "0"; input.max = "5";
+      input.dataset.runtimeSkill = name; input.value = state.skills?.[name] ?? 0;
+      label.append(input); skillsBox.append(label);
+    }
     for (const button of el.querySelectorAll("button[data-runtime-action]")) button.disabled = !editable;
     const conditions = el.querySelector("[data-runtime-conditions]");
     conditions.replaceChildren();
@@ -289,7 +307,10 @@ function runtime(actor) {
   el.querySelector('[data-runtime-action="safe_pause"]').onclick = () => run("runtime.safe_pause");
   el.querySelector('[data-runtime-action="full_rest"]').onclick = () => run("runtime.full_rest");
   el.querySelector('[data-runtime-action="condition.apply"]').onclick = () => run("runtime.condition.apply", { conditionType: el.elements.condition_type.value });
-  el.querySelector('[data-runtime-action="initialize"]').onclick = () => run("runtime.initialize", { attributes: Object.fromEntries(["corpo", "vontade", "sintonia", "marco"].map(name => [name, Number(el.elements[name].value)])) });
+  el.querySelector('[data-runtime-action="initialize"]').onclick = () => run("runtime.initialize", {
+    attributes: Object.fromEntries([...el.querySelectorAll("[data-runtime-attribute]"), el.elements.marco].map(input => [input.name, Number(input.value)])),
+    skills: Object.fromEntries([...el.querySelectorAll("[data-runtime-skill]")].map(input => [input.dataset.runtimeSkill, Number(input.value)])),
+  });
   el.querySelector("[type=submit]")?.removeAttribute("type");
   render(actor);
   el._runtimeRender = render;

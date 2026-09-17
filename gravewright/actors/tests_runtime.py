@@ -5,11 +5,12 @@ from django.test import TransactionTestCase, override_settings
 
 from gravewright.dice import services as dice
 from gravewright.dice.kallistis import evaluate
+from gravewright.dice.engine import RollError
 from gravewright.maps.services import MapError
 from gravewright.pdf_system.schema import normalize
 from gravewright.realtime.tests import test_sockets as fixtures
 
-from . import services
+from . import runtime, services
 from .models import Actor
 
 
@@ -51,6 +52,74 @@ class RuntimeTests(TransactionTestCase):
             self.command("runtime.resource", {"id": self.actor.pk, "resource": "flow", "operation": "spend", "amount": 99}, user=self.player)
         self.assertEqual(services.state(self.campaign.pk, self.player.pk)["actors"][0]["runtime"]["resources"]["flow"]["current"], 5)
 
+    def test_kallistis_actor_runtime_persists_canonical_attributes_and_skills(self):
+        attributes = {
+            "corpo": 3, "agilidade": 2, "intelecto": 2,
+            "presenca": 1, "vontade": 1, "sintonia": 0,
+        }
+        skills = {name: index % 6 for index, name in enumerate(runtime.SKILL_NAMES)}
+        result = self.command("runtime.initialize", {
+            "id": self.actor.pk, "attributes": attributes, "skills": skills,
+        }, user=self.player)
+        self.assertEqual(set(result["runtime"]["attributes"]) - {"marco"}, set(runtime.ATTRIBUTE_NAMES))
+        self.assertEqual(set(result["runtime"]["skills"]), set(runtime.SKILL_NAMES))
+        self.assertEqual(result["runtime"]["attributes"], {**attributes, "marco": 0})
+        self.assertEqual(result["runtime"]["skills"], skills)
+        self.actor.refresh_from_db()
+        persisted = services.state(self.campaign.pk, self.player.pk)["actors"][0]["runtime"]
+        self.assertEqual(persisted["attributes"], result["runtime"]["attributes"])
+        self.assertEqual(persisted["skills"], skills)
+
+    def test_linked_kallistis_roll_uses_actor_values_and_rejects_invalid_authority(self):
+        self.command("runtime.initialize", {
+            "id": self.actor.pk,
+            "attributes": {"corpo": 4}, "skills": {"combate": 5},
+        }, user=self.player)
+        action = {
+            "action_label": "Anti-tampering",
+            "attribute": {"name": "Corpo", "value": 999},
+            "skill": {"name": "Combate", "value": 999},
+            "actor_id": str(self.actor.pk),
+        }
+        entry = dice.roll(self.campaign.pk, self.player.pk, "2d10", uuid.uuid4(),
+                          system="kallistis", mode="action", action=action, difficulty=15)
+        persisted_action = entry["roll"]["action"]
+        self.assertEqual(persisted_action["attribute"]["value"], 4)
+        self.assertEqual(persisted_action["skill"]["value"], 5)
+        self.assertEqual(persisted_action["base_modifier"], 9)
+        self.assertEqual(entry["roll"]["modifier"], 9)
+
+        invalid = {**action, "attribute": {"name": "不存在", "value": 0}}
+        with self.assertRaises((MapError, RollError)):
+            dice.roll(self.campaign.pk, self.player.pk, "2d10", uuid.uuid4(),
+                      system="kallistis", mode="action", action=invalid)
+        invalid = {**action, "skill": {"name": "Coerção", "value": 0}}
+        with self.assertRaises(MapError):
+            dice.roll(self.campaign.pk, self.player.pk, "2d10", uuid.uuid4(),
+                      system="kallistis", mode="action", action=invalid)
+        invalid = {**action, "actor_id": str(uuid.uuid4())}
+        with self.assertRaises(MapError):
+            dice.roll(self.campaign.pk, self.player.pk, "2d10", uuid.uuid4(),
+                      system="kallistis", mode="action", action=invalid)
+
+    def test_linked_actor_roll_rejects_foreign_and_read_only_actor(self):
+        foreign = Actor.objects.create(campaign=self.other, name="Foreign", data=normalize({}))
+        action = {
+            "action_label": "Boundary",
+            "attribute": {"name": "Corpo", "value": 0},
+            "skill": {"name": "Atletismo", "value": 0},
+            "actor_id": str(foreign.pk),
+        }
+        with self.assertRaises(MapError):
+            dice.roll(self.campaign.pk, self.player.pk, "2d10", uuid.uuid4(),
+                      system="kallistis", mode="action", action=action)
+        self.actor.permissions = {str(self.player.pk): "read"}
+        self.actor.save(update_fields=["permissions"])
+        action["actor_id"] = str(self.actor.pk)
+        with self.assertRaises(MapError):
+            dice.roll(self.campaign.pk, self.player.pk, "2d10", uuid.uuid4(),
+                      system="kallistis", mode="action", action=action)
+
     def test_conditions_rest_rules_and_zero_transitions(self):
         self.command("runtime.initialize", {"id": self.actor.pk, "attributes": {"sintonia": 2}})
         self.command("runtime.condition.apply", {"id": self.actor.pk, "conditionType": "FRATURADO"})
@@ -70,7 +139,7 @@ class RuntimeTests(TransactionTestCase):
     def test_abalado_is_a_single_consumed_action_modifier(self):
         self.command("runtime.initialize", {"id": self.actor.pk})
         self.command("runtime.condition.apply", {"id": self.actor.pk, "conditionType": "ABALADO"})
-        action = {"action_label": "Test", "attribute": {"name": "corpo", "value": 2}, "skill": {"name": "Luta", "value": 1}}
+        action = {"action_label": "Test", "attribute": {"name": "corpo", "value": 2}, "skill": {"name": "Combate", "value": 1}}
         first = dice.roll(self.campaign.pk, self.player.pk, "2d10", uuid.uuid4(), system="kallistis", mode="action", action={**action, "actor_id": str(self.actor.pk)}, difficulty=15)
         self.assertEqual(first["roll"]["result"]["condition_modifier"], -2)
         second = dice.roll(self.campaign.pk, self.player.pk, "2d10", uuid.uuid4(), system="kallistis", mode="action", action={**action, "actor_id": str(self.actor.pk)}, difficulty=15)
@@ -78,7 +147,7 @@ class RuntimeTests(TransactionTestCase):
 
     def test_determination_reroll_spends_once_and_preserves_audit(self):
         self.command("runtime.initialize", {"id": self.actor.pk})
-        original = dice.roll(self.campaign.pk, self.player.pk, "2d10", uuid.uuid4(), system="kallistis", mode="action", action={"action_label": "Test", "attribute": {"name": "corpo", "value": 2}, "skill": {"name": "Luta", "value": 1}, "actor_id": str(self.actor.pk)}, difficulty=15)
+        original = dice.roll(self.campaign.pk, self.player.pk, "2d10", uuid.uuid4(), system="kallistis", mode="action", action={"action_label": "Test", "attribute": {"name": "corpo", "value": 2}, "skill": {"name": "Combate", "value": 1}, "actor_id": str(self.actor.pk)}, difficulty=15)
         original_id = original["id"]
         request_id = uuid.uuid4()
         with patch("gravewright.dice.services.evaluate_kallistis", return_value=evaluate(0, 15, random_source=iter([0.0, 0.0]).__next__)):

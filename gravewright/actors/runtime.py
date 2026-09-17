@@ -7,6 +7,7 @@ through the existing actor command/state channel.
 
 from copy import deepcopy
 from math import ceil
+import unicodedata
 from uuid import UUID, uuid4
 from django.utils import timezone
 
@@ -15,6 +16,19 @@ from .services import access
 from gravewright.maps.services import MapError
 
 
+ATTRIBUTE_NAMES = (
+    "corpo", "agilidade", "intelecto", "presenca", "vontade", "sintonia",
+)
+ATTRIBUTE_INITIALS = {
+    "corpo": 3, "agilidade": 2, "intelecto": 2,
+    "presenca": 1, "vontade": 1, "sintonia": 0,
+}
+SKILL_NAMES = (
+    "atletismo", "combate", "pontaria", "furtividade", "percepcao",
+    "sobrevivencia", "investigacao", "conhecimento", "oficio", "influencia",
+    "empatia", "cuidado", "magia", "evocacao", "velarim",
+)
+SKILL_MAX = 5
 RESOURCE_NAMES = ("vitality", "lucidity", "flow", "breath", "determination")
 CONDITION_TYPES = (
     "ABALADO", "EXPOSTO", "IMOBILIZADO", "LENTO", "SANGRANDO",
@@ -49,7 +63,10 @@ def _attribute(value, name):
 
 
 def empty():
-    attributes = {"corpo": 0, "vontade": 0, "sintonia": 0, "marco": 0}
+    # Marco remains a separate legacy/progression input used by the documented
+    # Fluxo formula; it is not one of the six character attributes.
+    attributes = {name: 0 for name in ATTRIBUTE_NAMES}
+    attributes["marco"] = 0
     maximum = maxima(attributes)
     return {
         "attributes": attributes,
@@ -58,7 +75,7 @@ def empty():
             for name in RESOURCE_NAMES
         },
         "conditions": [],
-        "skills": {},
+        "skills": {name: 0 for name in SKILL_NAMES},
         "protection": 0,
         "combat": {
             "permanence_successes": 0,
@@ -80,7 +97,7 @@ def read(data):
     if isinstance(attributes, dict):
         for name in result["attributes"]:
             if type(attributes.get(name)) is int:
-                result["attributes"][name] = attributes[name]
+                result["attributes"][name] = _attribute(attributes[name], name)
     maximum = maxima(result["attributes"])
     resources = raw.get("resources", {})
     if isinstance(resources, dict):
@@ -95,7 +112,10 @@ def read(data):
     result["protection"] = protection if type(protection) is int and protection >= 0 else 0
     skills = raw.get("skills", {})
     if isinstance(skills, dict):
-        result["skills"] = {str(k): v for k, v in skills.items() if type(v) is int and -1000 <= v <= 1000}
+        for name in SKILL_NAMES:
+            value = skills.get(name)
+            if type(value) is int and 0 <= value <= SKILL_MAX:
+                result["skills"][name] = value
     combat = raw.get("combat", {})
     if isinstance(combat, dict):
         for key in ("permanence_successes", "permanence_failures"):
@@ -136,6 +156,9 @@ def initialize(data, who):
     if supplied:
         if not isinstance(supplied, dict):
             raise MapError("Invalid runtime attributes.")
+        unknown = set(supplied) - set(ATTRIBUTE_NAMES) - {"marco"}
+        if unknown:
+            raise MapError("Invalid runtime attribute.")
         for name in state["attributes"]:
             if name in supplied:
                 state["attributes"][name] = _attribute(supplied[name], name)
@@ -145,10 +168,11 @@ def initialize(data, who):
     if "skills" in data:
         if not isinstance(data["skills"], dict):
             raise MapError("Invalid runtime skills.")
-        state["skills"] = {
-            str(name): _int(value, f"skills.{name}", -1000, 1000)
-            for name, value in data["skills"].items()
-        }
+        unknown = set(data["skills"]) - set(SKILL_NAMES)
+        if unknown:
+            raise MapError("Invalid runtime skill.")
+        for name, value in data["skills"].items():
+            state["skills"][name] = _int(value, f"skills.{name}", 0, SKILL_MAX)
     for name in RESOURCE_NAMES:
         current = data.get("resources", {}).get(name) if isinstance(data.get("resources"), dict) else None
         if isinstance(current, dict) and "current" in current:
@@ -160,6 +184,45 @@ def initialize(data, who):
         state["resources"][name] = {"current": current, "max": maximum[name]}
     _write(row, state)
     return {"actorId": str(row.pk), "runtime": state}
+
+
+def _canonical_name(value, names, field):
+    if not isinstance(value, str):
+        raise MapError(f"Invalid {field}.")
+    normalized = _fold_name(value)
+    for name in names:
+        if normalized == _fold_name(name):
+            return name
+    raise MapError(f"Invalid {field}.")
+
+
+def _fold_name(value):
+    return "".join(
+        char for char in unicodedata.normalize("NFKD", value.strip().casefold())
+        if not unicodedata.combining(char)
+    )
+
+
+def authoritative_action(actor_id, who, action_data):
+    """Prepare an action using the linked Actor as numeric authority."""
+    row = _actor({"actorId": actor_id}, who, lock=False)
+    state = read(row.data)
+    if not isinstance(action_data, dict):
+        raise MapError("Structured action is required.")
+    attribute = action_data.get("attribute")
+    attribute_name = attribute.get("name") if isinstance(attribute, dict) else action_data.get("attribute_name", action_data.get("attributeName"))
+    skill = action_data.get("skill")
+    skill_name = skill.get("name") if isinstance(skill, dict) else action_data.get("skill_name", action_data.get("skillName"))
+    attribute_name = _canonical_name(attribute_name, ATTRIBUTE_NAMES, "attribute")
+    skill_name = _canonical_name(skill_name, SKILL_NAMES, "skill")
+    bound = deepcopy(action_data)
+    bound["attribute"] = {"name": attribute_name, "value": state["attributes"][attribute_name]}
+    bound["skill"] = {"name": skill_name, "value": state["skills"].get(skill_name, 0)}
+    from gravewright.dice.kallistis import prepare_action
+    prepared = prepare_action(bound)
+    prepared["actor_id"] = str(row.pk)
+    prepared["actor_version"] = row.version
+    return prepared
 
 
 def resource(data, who):

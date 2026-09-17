@@ -38,15 +38,15 @@ Decisão necessária antes de automatizar: quais, se houver, efeitos devem ser c
 
 ## Q-04 — Fonte autoritativa de Atributo e Perícia
 
-STATUS=RULE_DEFINED_IMPLEMENTATION_PARTIAL
+STATUS=RULE_DEFINED_IMPLEMENTATION_CLOSED_FOR_LINKED_ACTOR
 
 REF=Guia §9, §13 e §14
 
 Definido: o teste usa Atributo + Perícia e a ficha possui valores próprios.
 
-Gap atual: no modo action, o Gravewright recebe valores no payload e aplica modificadores do actor quando actorId existe; não foi provada a resolução server-side completa da ficha.
+Implementado e provado: quando actor_id existe, o Gravewright resolve os seis Atributos e as 15 Perícias no Actor.data.runtime após validar campanha e controle; valores numéricos do payload não são autoridade.
 
-Decisão necessária: quais campos do Actor.data.runtime são a fonte canônica e como tratar action sem actor ligado.
+Contrato preservado: action sem actor ligado continua aceitando o caminho genérico explícito; action KALLISTIS vinculada a actor usa exclusivamente a ficha server-side.
 
 ## Q-05 — Registro formal do ruleset
 
