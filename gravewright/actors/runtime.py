@@ -70,6 +70,7 @@ def empty():
     maximum = maxima(attributes)
     return {
         "attributes": attributes,
+        "people": None,
         "resources": {
             name: {"current": maximum[name] if name != "determination" else 1, "max": maximum[name]}
             for name in RESOURCE_NAMES
@@ -116,6 +117,12 @@ def read(data):
             value = skills.get(name)
             if type(value) is int and 0 <= value <= SKILL_MAX:
                 result["skills"][name] = value
+    people = raw.get("people")
+    if isinstance(people, dict):
+        try:
+            result.update(_people_projection({**people, "heritage": raw.get("heritage", people.get("heritage"))}))
+        except MapError:
+            pass
     combat = raw.get("combat", {})
     if isinstance(combat, dict):
         for key in ("permanence_successes", "permanence_failures"):
@@ -176,6 +183,8 @@ def initialize(data, who):
             raise MapError("Invalid runtime skill.")
         for name, value in data["skills"].items():
             state["skills"][name] = _int(value, f"skills.{name}", 0, SKILL_MAX)
+    if "people" in data:
+        state.update(_people_projection(data["people"]))
     for name in RESOURCE_NAMES:
         current = data.get("resources", {}).get(name) if isinstance(data.get("resources"), dict) else None
         if isinstance(current, dict) and "current" in current:
@@ -224,6 +233,9 @@ def authoritative_action(actor_id, who, action_data):
     bound["skill"] = {"name": skill_name, "value": state["skills"].get(skill_name, 0)}
     from gravewright.dice.kallistis import prepare_action
     prepared = prepare_action(bound)
+    if state["people"] is not None:
+        for key in ("people", "trait", "gift", "heritage", "dissonance"):
+            prepared[key] = deepcopy(state[key])
     prepared["actor_id"] = str(row.pk)
     prepared["actor_version"] = row.version
     return prepared
@@ -400,3 +412,87 @@ def adjust_result(result, modifier):
     else:
         result["degree"] = result["grade"] = "success_extraordinary"
     return result
+PEOPLE_RULES = {
+    "aelvari": {
+        "label": "Aelvari",
+        "trait": {"id": "memoria_estratificada", "label": "Memória Estratificada"},
+        "gift": {"id": "eco_paralelo", "label": "Eco Paralelo"},
+        "heritages": {"cronista": {"label": "Cronista"}, "vidente_cauteloso": {"label": "Vidente Cauteloso"}},
+        "dissonance": {"id": "sobrecarga_temporal", "label": "Sobrecarga Temporal"},
+    },
+    "kragor": {
+        "label": "Kragor",
+        "trait": {"id": "forca_de_comunidade", "label": "Força de Comunidade"},
+        "gift": {"id": "juramento_operante", "label": "Juramento Operante"},
+        "heritages": {"escudo_do_cla": {"label": "Escudo do Clã"}, "voz_da_assembleia": {"label": "Voz da Assembleia"}},
+        "dissonance": {"id": "honra_fechada", "label": "Honra Fechada"},
+    },
+    "draken": {
+        "label": "Draken",
+        "trait": {"id": "corpo_elemental", "label": "Corpo Elemental"},
+        "gift": {"id": "manifestacao_elemental", "label": "Manifestação Elemental"},
+        "heritages": {"soberania": {"label": "Soberania"}, "condutor": {"label": "Condutor"}},
+        "dissonance": {"id": "hybris", "label": "Hýbris"},
+    },
+    "nomos": {
+        "label": "Nomos",
+        "trait": {"id": "chassi_modular", "label": "Chassi Modular"},
+        "gift": {"id": "lei_interior", "label": "Lei Interior"},
+        "heritages": {"reparador": {"label": "Reparador"}, "processador": {"label": "Processador"}},
+        "dissonance": {"id": "otimizacao_absoluta", "label": "Otimização Absoluta"},
+    },
+    "livres": {
+        "label": "Livres",
+        "trait": {"id": "aprendizagem_cruzada", "label": "Aprendizagem Cruzada"},
+        "gift": {"id": "solucao_improvisada", "label": "Solução Improvisada"},
+        "heritages": {"comunidade_escolhida": {"label": "Comunidade Escolhida"}, "multiplos_caminhos": {"label": "Múltiplos Caminhos"}},
+        "dissonance": {"id": "identidade_oferecida", "label": "Identidade Oferecida"},
+    },
+    "doreos": {
+        "label": "Dóreos",
+        "trait": {"id": "memoria_da_materia", "label": "Memória da Matéria"},
+        "gift": {"id": "inscricao_de_promessa", "label": "Inscrição de Promessa"},
+        "heritages": {"forjador": {"label": "Forjador"}, "guardiao_de_obra": {"label": "Guardião de Obra"}},
+        "dissonance": {"id": "permanencia_rigida", "label": "Permanência Rígida"},
+    },
+    "teriantes": {
+        "label": "Teriantes",
+        "trait": {"id": "aspecto_faunistico", "label": "Aspecto Faunístico"},
+        "gift": {"id": "instinto_inteiro", "label": "Instinto Inteiro"},
+        "heritages": {"cacador": {"label": "Caçador"}, "protetor_de_bando": {"label": "Protetor de Bando"}},
+        "dissonance": {"id": "reducao_ao_impulso", "label": "Redução ao Impulso"},
+    },
+    "nimari": {
+        "label": "Nimari",
+        "trait": {"id": "passo_liminal", "label": "Passo Liminal"},
+        "gift": {"id": "dado_da_fortuna", "label": "Dado da Fortuna"},
+        "heritages": {"cartografo_de_frestas": {"label": "Cartógrafo de Frestas"}, "negociador_de_risco": {"label": "Negociador de Risco"}},
+        "dissonance": {"id": "caminho_sem_compromisso", "label": "Caminho Sem Compromisso"},
+    },
+    "vitralios": {
+        "label": "Vitrálios",
+        "trait": {"id": "corpo_harmonico", "label": "Corpo Harmônico"},
+        "gift": {"id": "ressonancia_prismatica", "label": "Ressonância Prismática"},
+        "heritages": {"lapidador_de_si": {"label": "Lapidador de Si"}, "coro_vitralio": {"label": "Coro Vitrálio"}},
+        "dissonance": {"id": "quebra_frequencial", "label": "Quebra Frequencial"},
+    },
+}
+
+def _people_projection(value):
+    if not isinstance(value, dict):
+        raise MapError("Invalid people data.")
+    people_value = value.get("id", value.get("name"))
+    people_id = _canonical_name(people_value, PEOPLE_RULES, "people")
+    rule = PEOPLE_RULES[people_id]
+    heritage = value.get("heritage")
+    if isinstance(heritage, dict):
+        heritage = heritage.get("id", heritage.get("name"))
+    heritage_id = _canonical_name(heritage, rule["heritages"], "heritage")
+    selected = rule["heritages"][heritage_id]
+    return {
+        "people": {"id": people_id, "label": rule["label"]},
+        "trait": deepcopy(rule["trait"]),
+        "gift": deepcopy(rule["gift"]),
+        "heritage": {"id": heritage_id, "label": selected["label"]},
+        "dissonance": deepcopy(rule["dissonance"]),
+    }

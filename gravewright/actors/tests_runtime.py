@@ -191,3 +191,48 @@ class RuntimeTests(TransactionTestCase):
         self.assertEqual(dice.reroll(self.campaign.pk, self.player.pk, request_id, original_id)[0]["id"], rerolled_entry["id"])
         with self.assertRaises(Exception):
             dice.reroll(self.campaign.pk, self.player.pk, uuid.uuid4(), original_id)
+
+    def test_canonical_people_rules_persist_reload_and_bind_to_actions(self):
+        for people_id, rule in runtime.PEOPLE_RULES.items():
+            heritage_id = next(iter(rule["heritages"]))
+            result = self.command("runtime.initialize", {
+                "id": self.actor.pk,
+                "people": {
+                    "id": people_id,
+                    "heritage": heritage_id,
+                    "trait": {"id": "forged_trait"},
+                    "gift": {"id": "forged_gift"},
+                    "dissonance": {"id": "forged_dissonance"},
+                },
+            }, user=self.player)
+            state = result["runtime"]
+            self.assertEqual(state["people"]["id"], people_id)
+            self.assertEqual(state["trait"], rule["trait"])
+            self.assertEqual(state["gift"], rule["gift"])
+            self.assertEqual(state["heritage"]["id"], heritage_id)
+            self.assertEqual(state["dissonance"], rule["dissonance"])
+        self.actor.refresh_from_db()
+        persisted = runtime.read(self.actor.data)
+        self.assertEqual(persisted["people"]["id"], "vitralios")
+        self.assertEqual(persisted["heritage"]["id"], "lapidador_de_si")
+
+        action = {
+            "action_label": "People authority",
+            "attribute": {"name": "Corpo", "value": 999},
+            "skill": {"name": "Combate", "value": 999},
+            "actor_id": str(self.actor.pk),
+            "people": {"id": "nomos", "trait": {"id": "fake"}},
+        }
+        entry = dice.roll(self.campaign.pk, self.player.pk, "2d10", uuid.uuid4(),
+                          system="kallistis", mode="action", action=action, difficulty=15)
+        bound = entry["roll"]["action"]
+        self.assertEqual(bound["people"]["id"], "vitralios")
+        self.assertEqual(bound["trait"], persisted["trait"])
+        with self.assertRaises(MapError):
+            self.command("runtime.initialize", {
+                "id": self.actor.pk, "people": {"id": "unknown", "heritage": "x"},
+            }, user=self.player, request_id=uuid.uuid4())
+        with self.assertRaises(MapError):
+            self.command("runtime.initialize", {
+                "id": self.actor.pk, "people": {"id": "aelvari", "heritage": "soberania"},
+            }, user=self.player, request_id=uuid.uuid4())
