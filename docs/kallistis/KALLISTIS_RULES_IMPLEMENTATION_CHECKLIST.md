@@ -102,33 +102,33 @@ Nenhum item autoriza inventar regra. Todas as referências apontam para seções
 ## RESOURCES
 
 - [ ] RESOURCES-01 — Vitalidade
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §9
-  - EVIDENCE=recurso existe no runtime; fórmula canônica precisa ser reconciliada.
+  - EVIDENCE=max=10+Corpo×3, current separado e limitado a 0..max; gasto, dano, recuperação, persistência e reload foram verificados.
 - [ ] RESOURCES-02 — Lucidez
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §9
-  - EVIDENCE=recurso existe no runtime; fórmula e consequências canônicas não estão completas.
+  - EVIDENCE=max=8+Vontade×3, current separado e limitado a 0..max; transição a zero preserva somente o marcador documentado para resolução posterior.
 - [ ] RESOURCES-03 — Fluxo
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §9
-  - EVIDENCE=recurso existe; integração com magia, Fendas e Evocação não está completa.
+  - EVIDENCE=max=3+Sintonia+ceil(Marco/2), current separado e limitado a 0..max; alteração de derivação não redefine current e Fraturado bloqueia Pausa Segura conforme runtime existente.
 - [ ] RESOURCES-04 — Guarda
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §9
-  - EVIDENCE=combate usa defesas, mas derivação completa de ficha não foi provada.
+  - EVIDENCE=combat.services.defenses resolve server-side Guarda=10+Agilidade+Proteção; fórmula e valor foram verificados com Actor runtime.
 - [ ] RESOURCES-05 — Fortitude
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §9
-  - EVIDENCE=combate referencia defesa; autoridade de personagem não está completa.
+  - EVIDENCE=combat.services.defenses resolve server-side Fortitude=10+Corpo+Vontade; fórmula foi verificada com Actor runtime.
 - [ ] RESOURCES-06 — Integridade
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §9
-  - EVIDENCE=combate referencia defesa; autoridade de personagem não está completa.
+  - EVIDENCE=combat.services.defenses resolve server-side Integridade=10+Vontade+Sintonia; fórmula foi verificada com Actor runtime.
 - [ ] RESOURCES-07 — Fôlego e Determinação
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §9
-  - EVIDENCE=recursos existem; todos os procedimentos canônicos ainda não estão no runtime.
+  - EVIDENCE=Fôlego max=3 e retorna na Pausa Segura; Determinação inicia em 1, teto normal 3 e é consumida uma vez no reroll persistido, sem alterar dados naturais de forma indevida.
 
 ## COMBAT
 

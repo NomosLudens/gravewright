@@ -52,6 +52,39 @@ class RuntimeTests(TransactionTestCase):
             self.command("runtime.resource", {"id": self.actor.pk, "resource": "flow", "operation": "spend", "amount": 99}, user=self.player)
         self.assertEqual(services.state(self.campaign.pk, self.player.pk)["actors"][0]["runtime"]["resources"]["flow"]["current"], 5)
 
+    def test_derived_maxima_change_without_resetting_current_resources(self):
+        initial = self.command("runtime.initialize", {
+            "id": self.actor.pk,
+            "attributes": {"corpo": 2, "vontade": 1, "sintonia": 2, "marco": 3},
+            "resources": {"vitality": {"current": 5}, "flow": {"current": 4}},
+        })
+        self.assertEqual(
+            {name: initial["runtime"]["resources"][name]["max"] for name in ("vitality", "lucidity", "flow")},
+            {"vitality": 16, "lucidity": 11, "flow": 7},
+        )
+        changed = self.command("runtime.initialize", {
+            "id": self.actor.pk,
+            "attributes": {"corpo": 1, "vontade": 2, "sintonia": 1, "marco": 1},
+        })
+        self.assertEqual(changed["runtime"]["resources"]["vitality"], {"current": 5, "max": 13})
+        self.assertEqual(changed["runtime"]["resources"]["lucidity"], {"current": 11, "max": 14})
+        self.assertEqual(changed["runtime"]["resources"]["flow"], {"current": 4, "max": 5})
+
+    def test_resource_commands_clamp_at_documented_minimum_and_maximum(self):
+        self.command("runtime.initialize", {
+            "id": self.actor.pk, "attributes": {"corpo": 1},
+            "resources": {"vitality": {"current": 1}},
+        })
+        lost = self.command("runtime.resource", {
+            "id": self.actor.pk, "resource": "vitality", "operation": "lose", "amount": 99,
+        }, user=self.player)
+        self.assertEqual(lost["after"], 0)
+        gained = self.command("runtime.resource", {
+            "id": self.actor.pk, "resource": "vitality", "operation": "gain", "amount": 99,
+        }, user=self.player)
+        self.assertEqual(gained["after"], gained["runtime"]["resources"]["vitality"]["max"])
+        self.assertEqual(services.state(self.campaign.pk, self.player.pk)["actors"][0]["runtime"]["resources"]["vitality"]["current"], 13)
+
     def test_kallistis_actor_runtime_persists_canonical_attributes_and_skills(self):
         attributes = {
             "corpo": 3, "agilidade": 2, "intelecto": 2,

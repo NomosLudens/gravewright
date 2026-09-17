@@ -152,6 +152,9 @@ def _actor(data, who, *, lock=False):
 def initialize(data, who):
     row = _actor(data, who, lock=True)
     state = read(row.data)
+    raw_runtime = row.data.get("runtime") if isinstance(row.data, dict) else None
+    raw_resources = raw_runtime.get("resources") if isinstance(raw_runtime, dict) else None
+    preserve_current = isinstance(raw_resources, dict) and all(name in raw_resources for name in RESOURCE_NAMES)
     supplied = data.get("attributes", {})
     if supplied:
         if not isinstance(supplied, dict):
@@ -180,7 +183,8 @@ def initialize(data, who):
         elif type(current) is int:
             current = _int(current, f"{name}.current", 0, maximum[name])
         else:
-            current = maximum[name] if name != "determination" else 1
+            default = maximum[name] if name != "determination" else 1
+            current = min(state["resources"][name]["current"], maximum[name]) if preserve_current else default
         state["resources"][name] = {"current": current, "max": maximum[name]}
     _write(row, state)
     return {"actorId": str(row.pk), "runtime": state}

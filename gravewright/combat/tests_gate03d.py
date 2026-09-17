@@ -51,6 +51,10 @@ class MinimumCombatTests(TransactionTestCase):
     def test_defenses_structured_resolutions_and_exposed_bonus(self):
         self.initialize(self.one, attributes={"corpo": 2, "agilidade": 3, "vontade": 1, "sintonia": 4}, protection=2)
         self.initialize(self.two, attributes={"corpo": 1, "agilidade": 1, "vontade": 2, "sintonia": 3})
+        self.one.refresh_from_db()
+        self.assertEqual(services.defenses(self.one), {
+            "GUARDA": 15, "FORTITUDE": 13, "INTEGRIDADE": 15, "protection": 2,
+        })
         self.start()
         first = self.command(
             "attack", actorId=str(self.one.pk), targetId=str(self.two.tokens.first().pk),
