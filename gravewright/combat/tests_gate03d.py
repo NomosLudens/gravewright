@@ -49,7 +49,7 @@ class MinimumCombatTests(TransactionTestCase):
         return self.command("start")
 
     def test_defenses_structured_resolutions_and_exposed_bonus(self):
-        self.initialize(self.one, attributes={"corpo": 2, "agilidade": 3, "vontade": 1, "sintonia": 4}, protection=2)
+        self.initialize(self.one, attributes={"corpo": 2, "agilidade": 3, "vontade": 1, "sintonia": 4}, skills={"combate": 4, "pontaria": 3, "magia": 2}, protection=2)
         self.initialize(self.two, attributes={"corpo": 1, "agilidade": 1, "vontade": 2, "sintonia": 3})
         self.one.refresh_from_db()
         self.assertEqual(services.defenses(self.one), {
@@ -65,6 +65,10 @@ class MinimumCombatTests(TransactionTestCase):
         )["resolution"]["result"]
         self.assertEqual(first["target_defense"], "GUARDA")
         self.assertEqual(first["target_defense_value"], 11)
+        self.assertEqual(first["attribute"]["value"], 2)
+        self.assertEqual(first["skill"]["value"], 4)
+        for key in ("light_die", "dark_die", "natural_total", "total", "margin", "grade", "predominance", "resonance", "critical"):
+            self.assertIn(key, first)
         runtime.condition({"id": self.two.pk, "conditionType": "EXPOSTO"}, self.who, "runtime.condition.apply")
         second = self.command(
             "resolve", actorId=str(self.one.pk), targetId=str(self.two.tokens.first().pk),
@@ -85,6 +89,25 @@ class MinimumCombatTests(TransactionTestCase):
         )["resolution"]["result"]
         self.assertEqual(environmental["target_defense"], "DIFFICULTY")
         self.assertEqual(environmental["target_defense_value"], 12)
+        ranged = self.command(
+            "attack", actorId=str(self.one.pk), targetId=str(self.two.tokens.first().pk),
+            targetDefense="GUARDA", action={
+                "action_label": "Ranged", "attribute": {"name": "agilidade", "value": 999},
+                "skill": {"name": "Pontaria", "value": 999},
+            },
+        )["resolution"]["result"]
+        self.assertEqual(ranged["attribute"]["value"], 3)
+        self.assertEqual(ranged["skill"]["value"], 3)
+        magic = self.command(
+            "resolve", actorId=str(self.one.pk), targetId=str(self.two.tokens.first().pk),
+            targetDefense="FORTITUDE", action={
+                "action_label": "Magic", "attribute": {"name": "sintonia", "value": 999},
+                "skill": {"name": "Magia", "value": 999},
+            },
+        )["resolution"]["result"]
+        self.assertEqual(magic["target_defense"], "FORTITUDE")
+        self.assertEqual(magic["attribute"]["value"], 4)
+        self.assertEqual(magic["skill"]["value"], 2)
 
     def test_damage_pipeline_and_idempotent_down_failure(self):
         self.initialize(self.one, attributes={"corpo": 1, "agilidade": 1, "vontade": 1, "sintonia": 1}, protection=2)
@@ -133,3 +156,24 @@ class MinimumCombatTests(TransactionTestCase):
                 "mapId": str(self.map.pk), "id": str(token.pk), "gridX": 1, "gridY": 0,
                 "expectedVersion": token.version,
             }, uuid.uuid4())
+
+    def test_roster_manual_order_turn_clock_and_end_state(self):
+        one = str(self.one.tokens.first().pk)
+        two = str(self.two.tokens.first().pk)
+        self.command("add", tokenId=one)
+        self.command("add", tokenId=two)
+        state = self.command("initiative", tokenId=two, value="second")
+        self.assertEqual(state["combatants"][1]["initiative"], "second")
+        state = self.command("start")
+        self.assertEqual((state["active"], state["round"], state["turn"]), (True, 1, 0))
+        state = self.command("next")
+        self.assertEqual((state["round"], state["turn"]), (1, 1))
+        state = self.command("previous")
+        self.assertEqual((state["round"], state["turn"]), (1, 0))
+        state = self.command("next-round")
+        self.assertEqual((state["round"], state["turn"]), (2, 0))
+        state = self.command("previous-round")
+        self.assertEqual((state["round"], state["turn"]), (1, 0))
+        self.command("remove", tokenId=one)
+        state = self.command("remove", tokenId=two)
+        self.assertEqual((state["active"], state["round"], state["turn"], state["combatants"]), (False, 0, 0, []))

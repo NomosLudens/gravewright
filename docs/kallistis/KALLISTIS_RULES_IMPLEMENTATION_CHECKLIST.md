@@ -133,17 +133,17 @@ Nenhum item autoriza inventar regra. Todas as referências apontam para seções
 ## COMBAT
 
 - [ ] COMBAT-01 — Ataque corpo a corpo
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §10
-  - EVIDENCE=combat resolve ação KALLISTIS, mas o contrato integral de ficha/defesa não está fechado.
+  - EVIDENCE=serviço de combate resolve 2d10+Corpo ou Agilidade+Combate contra Guarda, com valores server-side do Actor e resultado completo preservado.
 - [ ] COMBAT-02 — Ataque à distância
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §10
-  - EVIDENCE=estrutura de combate existe; cobertura completa não foi provada.
+  - EVIDENCE=serviço de combate reutiliza o pipeline estruturado para 2d10+Agilidade+Pontaria contra Guarda; valores forjados no payload foram substituídos pelo Actor.
 - [ ] COMBAT-03 — Ataque mágico contra Defesa
-  - STATUS=MISSING
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §10 e §16
-  - EVIDENCE=DSL genérico não equivale à magia KALLISTIS.
+  - EVIDENCE=serviço resolve 2d10+Sintonia+Magia contra Guarda, Fortitude ou Integridade, preservando dados, glifos, total, margem, grau, predominância, Ressonância e crítico.
 - [ ] COMBAT-04 — Testes opostos
   - STATUS=PARTIAL
   - REF=Guia §10
