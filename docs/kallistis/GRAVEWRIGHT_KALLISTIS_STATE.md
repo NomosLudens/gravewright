@@ -5,8 +5,8 @@
 Host: kallistiswright
 Repository: /home/nomosludens/gravewright
 Branch: master
-HEAD: d56221990e01435bc778586305cc85dcee08e970
-Origin master: d56221990e01435bc778586305cc85dcee08e970
+HEAD: 216e00f20c46bda6b6118f5289fc7bc56fa97883
+Origin master: 216e00f20c46bda6b6118f5289fc7bc56fa97883
 Worktree: CLEAN
 
 ## Runtime
@@ -19,8 +19,8 @@ HTTP /login: 200
 ## Test baseline
 
 Official suite:
-- total: 336
-- passed: 336
+- total: 338
+- passed: 338
 - failed: 0
 - errors: 0
 
@@ -39,6 +39,8 @@ Official suite:
 - CORE-09 — Intensidade da Predominância
 - CORE-10 — Ressonâncias 1–10 — nomes e openings canônicos verificados
 - CORE-11 — Classificação crítica por igualdade — critical/critical_type verificados
+- CORE-12 — Impulso — escala, limites e cancelamento verificados
+- CORE-13 — Pressão — escala, limites e cancelamento verificados
 
 ### Known blocker
 
@@ -50,8 +52,6 @@ Não alterar esta afirmação sem prova posterior.
 
 ### Pending
 
-- CORE-12 — Impulso
-- CORE-13 — Pressão
 - CHARACTER-01..07 — ficha canônica e autoridade server-side do actor
 - RESOURCES-01..07 — recursos e defesas
 - COMBAT-01..08 — regras completas de combate
@@ -127,11 +127,11 @@ Fake runtime data created: NO
 
 ## Last completed gate
 
-Gate: CORE-03 — CORE-10 + CORE-11
-Commit: d56221990e01435bc778586305cc85dcee08e970
-Date: 2026-09-17T12:29:51+00:00
+Gate: CORE-04 — CORE-12 + CORE-13
+Commit: 216e00f20c46bda6b6118f5289fc7bc56fa97883
+Date: 2026-09-17T13:11:48+00:00
 Verdict: PASS
 
 ## Next exact action
 
-Executar o próximo gate autorizado para CORE-12 e CORE-13 — Impulso e Pressão.
+Executar o próximo gate autorizado para CHARACTER-01 — Seis Atributos; CORE-04 permanece bloqueado até existir contrato canônico completo de personagem server-authoritative.
