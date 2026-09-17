@@ -87,6 +87,8 @@ class KallistisEngineTests(TestCase):
         self.assertEqual(result["margin"], 0)
         self.assertEqual(result["predominance"], "resonance")
         self.assertTrue(result["resonance"])
+        self.assertTrue(result["critical"])
+        self.assertEqual(result["critical_type"], "resonance")
         self.assertEqual(result["resonance_value"], 1)
         self.assertEqual(result["resonance_name"], "Ressonância Frágil")
         self.assertEqual(result["resonance_opening"], "algo pequeno sobrevive, começa ou recusa desaparecer")
@@ -98,6 +100,8 @@ class KallistisEngineTests(TestCase):
         self.assertFalse(result["success"])
         self.assertEqual(result["margin"], -1)
         self.assertTrue(result["resonance"])
+        self.assertTrue(result["critical"])
+        self.assertEqual(result["critical_type"], "resonance")
         self.assertEqual(result["resonance_value"], 10)
         self.assertEqual(result["resonance_name"], "Ressonância Plena")
 
@@ -148,6 +152,8 @@ class KallistisEngineTests(TestCase):
             with self.subTest(face=face):
                 result = evaluate(0, 100, random_source=source((face - 1) / 10, (face - 1) / 10))
                 self.assertTrue(result["resonance"])
+                self.assertTrue(result["critical"])
+                self.assertEqual(result["critical_type"], "resonance")
                 self.assertEqual(result["resonance_value"], face)
                 self.assertEqual(result["resonance_name"], resonance["name"])
                 self.assertEqual(result["resonance_opening"], resonance["opening"])
@@ -161,6 +167,12 @@ class KallistisEngineTests(TestCase):
         self.assertTrue(failure["resonance"])
         self.assertFalse(failure["success"])
         self.assertEqual(failure["grade"], "failure")
+
+    def test_non_resonance_is_not_critical(self):
+        result = evaluate(0, 100, random_source=source(0.7, 0.4))
+        self.assertFalse(result["resonance"])
+        self.assertFalse(result["critical"])
+        self.assertIsNone(result["critical_type"])
 
     def test_invalid_bounds(self):
         for modifier, difficulty in [(-1001, 15), (1001, 15), (0, 0), (0, 1001)]:

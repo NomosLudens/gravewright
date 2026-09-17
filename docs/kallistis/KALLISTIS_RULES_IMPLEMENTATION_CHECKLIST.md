@@ -52,13 +52,13 @@ Nenhum item autoriza inventar regra. Todas as referências apontam para seções
   - REF=Guia §5
   - EVIDENCE=predominance_delta e faixas 0, 1–2, 3–5, 6–8 e 9 estão cobertos em todos os boundaries, incluindo interação numérica dos glifos.
 - [ ] CORE-10 — Ressonâncias 1–10
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §6
-  - EVIDENCE=nomes e aberturas existem; efeitos específicos permanecem narrativos/UNSPECIFIED.
+  - EVIDENCE=valores 1–10 possuem nomes e openings canônicos; o resultado informa a abertura sem automatizar os efeitos narrativos ou mecânicos ainda UNSPECIFIED.
 - [ ] CORE-11 — Classificação crítica por igualdade
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §6
-  - EVIDENCE=igualdade registra resonance, mas ainda não registra critical.
+  - EVIDENCE=igualdade de light_die e dark_die registra critical=true e critical_type=resonance; não igualdade registra false/null, sem sucesso/falha automático ou efeito extra.
 - [ ] CORE-12 — Impulso
   - STATUS=PARTIAL
   - REF=Guia §8
