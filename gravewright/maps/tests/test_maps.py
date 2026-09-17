@@ -19,6 +19,7 @@ from gravewright.realtime.tests import test_sockets as fixtures
     GRAVEWRIGHT_HEARTBEAT_SECONDS=0.1,
     GRAVEWRIGHT_PRESENCE_TTL=3,
     ALLOWED_HOSTS=["testserver"],
+    GRAVEWRIGHT_PUBLIC_ORIGIN="http://testserver",
 )
 class MapTests(TransactionTestCase):
     socket = fixtures.SocketTests.socket

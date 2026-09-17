@@ -13,7 +13,8 @@ from . import test_journals as fixtures
 
 @override_settings(PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'],
  CHANNEL_LAYERS={'default':{'BACKEND':'channels.layers.InMemoryChannelLayer'}},
- GRAVEWRIGHT_HEARTBEAT_SECONDS=.1,GRAVEWRIGHT_PRESENCE_TTL=3,ALLOWED_HOSTS=['testserver'])
+ GRAVEWRIGHT_HEARTBEAT_SECONDS=.1,GRAVEWRIGHT_PRESENCE_TTL=3,ALLOWED_HOSTS=['testserver'],
+ GRAVEWRIGHT_PUBLIC_ORIGIN='http://testserver')
 class JournalTypeTests(TransactionTestCase):
     setUp = fixtures.JournalTests.setUp
     socket = fixtures.JournalTests.socket

@@ -11,7 +11,8 @@ from gravewright.realtime.tests import test_sockets as fixtures
 @override_settings(
     PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'],
     CHANNEL_LAYERS={'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}},
-    ALLOWED_HOSTS=['testserver'], GRAVEWRIGHT_HEARTBEAT_SECONDS=.1,
+    ALLOWED_HOSTS=['testserver'], GRAVEWRIGHT_PUBLIC_ORIGIN='http://testserver',
+    GRAVEWRIGHT_HEARTBEAT_SECONDS=.1,
 )
 class PublicApiSocketTests(TransactionTestCase):
     setUp = fixtures.SocketTests.setUp

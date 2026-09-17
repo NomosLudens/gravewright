@@ -9,7 +9,8 @@ from gravewright.accounts.services import AuthError
 
 @override_settings(PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'],
     CHANNEL_LAYERS={'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}},
-    ALLOWED_HOSTS=['testserver'], GRAVEWRIGHT_HEARTBEAT_SECONDS=.1)
+    ALLOWED_HOSTS=['testserver'], GRAVEWRIGHT_PUBLIC_ORIGIN='http://testserver',
+    GRAVEWRIGHT_HEARTBEAT_SECONDS=.1)
 class ModerationTests(TransactionTestCase):
     setUp = fixtures.SocketTests.setUp
     socket = fixtures.SocketTests.socket

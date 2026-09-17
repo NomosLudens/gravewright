@@ -20,6 +20,7 @@ from .models import Token
     PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"],
     CHANNEL_LAYERS={"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}},
     ALLOWED_HOSTS=["testserver"],
+    GRAVEWRIGHT_PUBLIC_ORIGIN="http://testserver",
     GRAVEWRIGHT_HEARTBEAT_SECONDS=0.1,
 )
 class TokenTests(TransactionTestCase):

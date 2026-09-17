@@ -12,7 +12,8 @@ from gravewright.dice.kallistis import evaluate as evaluate_kallistis
 # Reuse only the socket fixtures, not the parent test methods.
 @override_settings(PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'],
     CHANNEL_LAYERS={'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}},
-    GRAVEWRIGHT_HEARTBEAT_SECONDS=.1, GRAVEWRIGHT_PRESENCE_TTL=3, ALLOWED_HOSTS=['testserver'])
+    GRAVEWRIGHT_HEARTBEAT_SECONDS=.1, GRAVEWRIGHT_PRESENCE_TTL=3,
+    ALLOWED_HOSTS=['testserver'], GRAVEWRIGHT_PUBLIC_ORIGIN='http://testserver')
 class DiceTests(TransactionTestCase):
     setUp = fixtures.SocketTests.setUp
     socket = fixtures.SocketTests.socket

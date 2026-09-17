@@ -19,7 +19,8 @@ from gravewright.realtime.models import PresenceConnection
 @override_settings(PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'],
                    CHANNEL_LAYERS={'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}},
                    GRAVEWRIGHT_HEARTBEAT_SECONDS=.1, GRAVEWRIGHT_PRESENCE_TTL=2,
-                   ALLOWED_HOSTS=['testserver'])
+                   ALLOWED_HOSTS=['testserver'],
+                   GRAVEWRIGHT_PUBLIC_ORIGIN='http://testserver')
 class SocketTests(TransactionTestCase):
     def setUp(self):
         self.gm = User.objects.create_user('gm@example.test', 'password-12345', name='GM', role='owner')
