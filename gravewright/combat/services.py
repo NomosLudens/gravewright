@@ -12,6 +12,7 @@ from gravewright.table.domain import boolean, number, version
 from gravewright.tokens import services as tokens
 from gravewright.tokens.models import Token
 
+from .effects import advance as advance_effects
 from .models import Encounter
 
 
@@ -380,8 +381,16 @@ def command(who, action, p):
             row.combatants.append({**entry, "initiative": None, "defeated": False, "hidden": False, "movement_used": 0})
     elif action == "remove":
         _require_gm(who)
-        row.combatants = [c for c in row.combatants if identity(c) != str(p.get("tokenId", p.get("actorId")))]
-        row.turn = min(row.turn, max(0, len(row.combatants) - 1))
+        target_id = str(p.get("tokenId", p.get("actorId")))
+        removed_index = next((i for i, entry in enumerate(row.combatants) if identity(entry) == target_id), None)
+        if removed_index is not None:
+            row.combatants.pop(removed_index)
+            if not row.combatants:
+                row.active, row.round, row.turn = False, 0, 0
+            else:
+                if removed_index < row.turn:
+                    row.turn -= 1
+                row.turn = min(row.turn, len(row.combatants) - 1)
     elif action == "configure":
         _require_gm(who)
         formula = p.get("formula", "")
@@ -413,17 +422,30 @@ def command(who, action, p):
             row.turn = index
         else:
             target_index = max(0, min(len(row.combatants) - 1, index + (-1 if action == "order-up" else 1)))
-            row.combatants[index], row.combatants[target_index] = row.combatants[target_index], row.combatants[index]
+            if target_index != index:
+                if index == row.turn:
+                    row.turn = target_index
+                elif target_index == row.turn:
+                    row.turn = index
+                row.combatants[index], row.combatants[target_index] = row.combatants[target_index], row.combatants[index]
     elif action in ("next-round", "previous-round"):
         _require_gm(who)
         if not row.active:
             raise MapError("Combat has not started.")
         if row.combatants:
-            _end_turn(row, row.combatants[row.turn])
+            ending_entry = row.combatants[row.turn]
+            _end_turn(row, ending_entry)
         row.round = max(1, row.round + (-1 if action == "previous-round" else 1))
         row.turn = 0
         for entry in row.combatants:
             _reset_movement(entry)
+        if row.combatants:
+            advance_effects(
+                who.campaign_id,
+                ending_entry.get("tokenId") if ending_entry else None,
+                actor_id=ending_entry.get("actorId") if ending_entry else None,
+                new_round=action == "next-round",
+            )
         if row.combatants:
             _start_turn(row, row.combatants[row.turn])
     elif action == "start":
@@ -444,14 +466,27 @@ def command(who, action, p):
         if who.role != "gm" and (action != "next" or not _controlled(current, who)):
             raise MapError("It is not your turn.", "forbidden")
         if action == "previous":
-            raise MapError("Previous turn is not available in the minimum runtime.")
-        _end_turn(row, current)
-        for _ in row.combatants:
-            row.turn += 1
-            if row.turn >= len(row.combatants):
-                row.turn, row.round = 0, row.round + 1
-            if not row.combatants[row.turn].get("defeated"):
-                break
+            for _ in row.combatants:
+                row.turn -= 1
+                if row.turn < 0:
+                    row.turn, row.round = len(row.combatants) - 1, max(1, row.round - 1)
+                if not row.combatants[row.turn].get("defeated"):
+                    break
+        else:
+            previous_round = row.round
+            _end_turn(row, current)
+            for _ in row.combatants:
+                row.turn += 1
+                if row.turn >= len(row.combatants):
+                    row.turn, row.round = 0, row.round + 1
+                if not row.combatants[row.turn].get("defeated"):
+                    break
+            advance_effects(
+                who.campaign_id,
+                current.get("tokenId"),
+                actor_id=current.get("actorId"),
+                new_round=row.round != previous_round,
+            )
         for entry in row.combatants:
             _reset_movement(entry)
         _start_turn(row, row.combatants[row.turn])

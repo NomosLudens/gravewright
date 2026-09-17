@@ -74,16 +74,15 @@ class TableModuleTests(TestCase):
         fog('enable',{'initial':'reveal_all','expected_version':1})
         with self.assertRaises(MapError):fog('reset',{'to':'hide_all','expected_version':1})
         self.assertEqual(SceneState.objects.get(scene=self.scene).fog['baseline'],'reveal_all')
-    def test_combat_initiative_uses_native_dice_result(self):
+    def test_combat_initiative_requires_canonical_confirmation(self):
         base={'sceneId':str(self.scene.pk)}
         self.command('combat','add',{**base,'tokenId':str(self.token.pk)})
         self.command('combat','configure',{**base,'version':self.state('combat')['version'],'formula':'1d6'})
-        rolled=self.command('combat','roll',{**base,'version':self.state('combat')['version'],'scope':'one','tokenId':str(self.token.pk)})
-        value=rolled['combatants'][0]['initiative']
-        self.assertTrue(1<=value<=6)
-        self.command('combat','initiative',{**base,'version':rolled['version'],'tokenId':str(self.token.pk),'value':99})
-        rolled=self.command('combat','roll',{**base,'version':self.state('combat')['version'],'scope':'missing'})
-        self.assertEqual(rolled['combatants'][0]['initiative'],99)
+        with self.assertRaisesRegex(MapError, 'Initiative formula is blocked pending canonical confirmation.'):
+            self.command('combat','roll',{**base,'version':self.state('combat')['version'],'scope':'one','tokenId':str(self.token.pk)})
+        state=self.state('combat')
+        self.assertEqual(state['config']['formula'], '1d6')
+        self.assertEqual(state['initiative_formula_status'], 'BLOCKED_CANONICAL_CONFIRMATION')
     def test_documents_reject_nonfinite_numbers(self):
         with self.assertRaises(MapError):domain.document({'value':float('nan')})
     def test_audio_timeline_overlap_pause_and_permission(self):
