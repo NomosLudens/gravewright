@@ -5,8 +5,8 @@
 Host: kallistiswright
 Repository: /home/nomosludens/gravewright
 Branch: master
-HEAD: 216e00f20c46bda6b6118f5289fc7bc56fa97883
-Origin master: 216e00f20c46bda6b6118f5289fc7bc56fa97883
+HEAD: c5e20236921087710384a950ff97260e0aa7dadb
+Origin master: c5e20236921087710384a950ff97260e0aa7dadb
 Worktree: CLEAN
 
 ## Runtime
@@ -19,8 +19,8 @@ HTTP /login: 200
 ## Test baseline
 
 Official suite:
-- total: 338
-- passed: 338
+- total: 341
+- passed: 341
 - failed: 0
 - errors: 0
 
@@ -41,18 +41,22 @@ Official suite:
 - CORE-11 — Classificação crítica por igualdade — critical/critical_type verificados
 - CORE-12 — Impulso — escala, limites e cancelamento verificados
 - CORE-13 — Pressão — escala, limites e cancelamento verificados
+- CHARACTER-01 — Seis Atributos — runtime canônico verificado
+- CHARACTER-02 — Perícias 0–5 — runtime canônico verificado
+- CHARACTER-07 — Autoridade server-side do actor — rolagem vinculada verificada
 
-### Known blocker
+### Known blockers
 
-CORE-04:
-Atributo/Perícia ainda não são integralmente server-authoritative enquanto
-Actor.data/runtime não possuir o contrato canônico completo de personagem.
+Não há blocker de autoridade para Atributo/Perícia em rolagens KALLISTIS
+vinculadas a Actor: Actor.data/runtime é a fonte server-side provada.
 
-Não alterar esta afirmação sem prova posterior.
+O contrato completo de personagem (Povo, Ofício, Origem e vínculos) permanece
+fora deste Gate A. Iniciativa continua sem fórmula canônica automática e será
+tratada somente no Gate C, se o GUIDE a definir.
 
 ### Pending
 
-- CHARACTER-01..07 — ficha canônica e autoridade server-side do actor
+- CHARACTER-03..06 — ficha canônica ainda não modelada
 - RESOURCES-01..07 — recursos e defesas
 - COMBAT-01..08 — regras completas de combate
 - CONDITIONS-01..05 — condições, queda, morte e Sombra
@@ -127,11 +131,11 @@ Fake runtime data created: NO
 
 ## Last completed gate
 
-Gate: CORE-04 — CORE-12 + CORE-13
-Commit: 216e00f20c46bda6b6118f5289fc7bc56fa97883
-Date: 2026-09-17T13:11:48+00:00
+Gate: A — CHARACTER-01 + CHARACTER-02 + CHARACTER-07 + CORE-04 authority
+Commit: c5e20236921087710384a950ff97260e0aa7dadb
+Date: 2026-09-17T13:42:48+00:00
 Verdict: PASS
 
 ## Next exact action
 
-Executar o próximo gate autorizado para CHARACTER-01 — Seis Atributos; CORE-04 permanece bloqueado até existir contrato canônico completo de personagem server-authoritative.
+Executar o próximo gate autorizado para RESOURCES-01 — Vitalidade.
