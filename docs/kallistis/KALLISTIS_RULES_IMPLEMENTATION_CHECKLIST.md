@@ -16,17 +16,17 @@ Nenhum item autoriza inventar regra. Todas as referências apontam para seções
 ## CORE
 
 - [ ] CORE-01 — Dado da Luz
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §3
-  - EVIDENCE=valor numérico existe; face com Glifo da Luz ainda não existe.
+  - EVIDENCE=light_die permanece numérico 1..10 e light_face identifica as faces 10/1 como Glifo da Luz/Glifo da Escuridão.
 - [ ] CORE-02 — Dado da Escuridão
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §3
-  - EVIDENCE=valor numérico existe; face com Glifo da Escuridão ainda não existe.
+  - EVIDENCE=dark_die permanece numérico 1..10 e dark_face identifica as faces 10/1 como Glifo da Escuridão/Glifo da Luz.
 - [ ] CORE-03 — Glifos invertidos
-  - STATUS=MISSING
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §3
-  - EVIDENCE=não há representação de glifo nem orientação invertida no engine atual.
+  - EVIDENCE=metadata de face preserva a identidade do glifo por dado, sem derivar valor globalmente; UI renderiza a identidade textual quando aplicável.
 - [ ] CORE-04 — Atributo + Perícia
   - STATUS=PARTIAL
   - REF=Guia §4 e §9
@@ -383,9 +383,9 @@ Nenhum item autoriza inventar regra. Todas as referências apontam para seções
   - REF=Guia §3 e §7
   - EVIDENCE=template exibe ambos os valores e leituras.
 - [ ] UI-03 — Exibir glifos e valores matemáticos
-  - STATUS=MISSING
+  - STATUS=PARTIAL
   - REF=Guia §3 e §13
-  - EVIDENCE=template atual exibe apenas números.
+  - EVIDENCE=template exibe a identidade textual do glifo junto do valor matemático; assets visuais reais permanecem indisponíveis.
 - [ ] UI-04 — Exibir classificação crítica sem sucesso automático
   - STATUS=MISSING
   - REF=Guia §6 e §13
@@ -404,7 +404,7 @@ Nenhum item autoriza inventar regra. Todas as referências apontam para seções
 - [ ] PERSISTENCE-02 — Resultado JSON em Message.roll
   - STATUS=PARTIAL
   - REF=Guia §13 e §14
-  - EVIDENCE=estrutura suporta resultado; glifo e critical ainda não são persistidos.
+  - EVIDENCE=Message.roll continua sendo JSON e absorve light_face/dark_face; prova de produto ficou bloqueada pelo handshake realtime.
 - [ ] PERSISTENCE-03 — Idempotência por request_id
   - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §13
@@ -429,9 +429,9 @@ Nenhum item autoriza inventar regra. Todas as referências apontam para seções
   - REF=Guia §13
   - EVIDENCE=dispatch usa transaction.on_commit.
 - [ ] REALTIME-04 — Transmitir glifo e critical sem perda de dados
-  - STATUS=MISSING
+  - STATUS=PARTIAL
   - REF=Guia §3, §6 e §13
-  - EVIDENCE=o pipeline transporta JSON, mas esses campos ainda não existem no resultado.
+  - EVIDENCE=o pipeline reutiliza o JSON do resultado para light_face/dark_face; teste de transporte ficou bloqueado pelo handshake realtime.
 
 ## Ordem sugerida de execução
 

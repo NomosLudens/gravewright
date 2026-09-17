@@ -347,6 +347,20 @@ def _die(random_source):
     return int(sample * 10) + 1
 
 
+def _face(die, value):
+    """Describe the visual face without changing the die's numeric value."""
+    glyph = None
+    if die == "light":
+        glyph = "light" if value == 10 else "dark" if value == 1 else None
+    else:
+        glyph = "dark" if value == 10 else "light" if value == 1 else None
+    return {
+        "value": value,
+        "kind": "glyph" if glyph else "number",
+        "glyph": glyph,
+    }
+
+
 def _degree(margin):
     if margin <= -5:
         return "failure_severe"
@@ -362,6 +376,8 @@ def _degree(margin):
 def _one(modifier, difficulty, random_source):
     light_die = _die(random_source)
     dark_die = _die(random_source)
+    light_face = _face("light", light_die)
+    dark_face = _face("dark", dark_die)
     natural_total = light_die + dark_die
     total = natural_total + modifier
     margin = total - difficulty
@@ -376,10 +392,12 @@ def _one(modifier, difficulty, random_source):
         "system": "kallistis",
         "version": 2,
         "light_die": light_die,
+        "light_face": light_face,
         "light_principle": light["key"],
         "light_principle_label": light["label"],
         "light_reading": _reading(light),
         "dark_die": dark_die,
+        "dark_face": dark_face,
         "dark_principle": dark["key"],
         "dark_principle_label": dark["label"],
         "dark_reading": _reading(dark),

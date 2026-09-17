@@ -58,8 +58,8 @@ class DiceTests(TransactionTestCase):
             message = (await self.event(socket, 'dice.ack'))['message']
             result = message['roll']['result']
             self.assertEqual(message['roll']['system'], 'kallistis')
-            self.assertEqual(set(('system', 'version', 'light_die', 'light_principle',
-                                  'light_principle_label', 'light_reading', 'dark_die',
+            self.assertEqual(set(('system', 'version', 'light_die', 'light_face', 'light_principle',
+                                  'light_principle_label', 'light_reading', 'dark_die', 'dark_face',
                                   'dark_principle', 'dark_principle_label', 'dark_reading',
                                   'natural_total', 'modifier', 'total', 'difficulty',
                                   'margin', 'success', 'degree', 'grade', 'predominance',
@@ -71,6 +71,8 @@ class DiceTests(TransactionTestCase):
             self.assertLessEqual(result['light_die'], 10)
             self.assertGreaterEqual(result['dark_die'], 1)
             self.assertLessEqual(result['dark_die'], 10)
+            self.assertEqual(result['light_face']['value'], result['light_die'])
+            self.assertEqual(result['dark_face']['value'], result['dark_die'])
             self.assertEqual(result['natural_total'], result['light_die'] + result['dark_die'])
             self.assertEqual(result['modifier'], 2)
             self.assertEqual(result['total'], result['natural_total'] + 2)

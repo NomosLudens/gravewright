@@ -17,6 +17,39 @@ def source(*values):
 
 
 class KallistisEngineTests(TestCase):
+    def test_light_and_dark_faces_preserve_values_and_invert_glyphs(self):
+        expected = {
+            "light": {1: "dark", 10: "light"},
+            "dark": {1: "light", 10: "dark"},
+        }
+        for die in ("light", "dark"):
+            for value in range(1, 11):
+                samples = ((value - 1) / 10, 0) if die == "light" else (0, (value - 1) / 10)
+                with self.subTest(die=die, value=value):
+                    result = evaluate(0, 100, random_source=source(*samples))
+                    face = result[f"{die}_face"]
+                    self.assertEqual(result[f"{die}_die"], value)
+                    self.assertEqual(face["value"], value)
+                    if value in expected[die]:
+                        self.assertEqual(face["kind"], "glyph")
+                        self.assertEqual(face["glyph"], expected[die][value])
+                    else:
+                        self.assertEqual(face, {"value": value, "kind": "number", "glyph": None})
+
+    def test_crossed_glyphs_keep_die_identity_and_numeric_values(self):
+        for light, dark, light_glyph, dark_glyph in [
+            (10, 10, "light", "dark"),
+            (1, 1, "dark", "light"),
+            (10, 1, "light", "light"),
+            (1, 10, "dark", "dark"),
+        ]:
+            with self.subTest(light=light, dark=dark):
+                result = evaluate(0, 100, random_source=source((light - 1) / 10, (dark - 1) / 10))
+                self.assertEqual((result["light_die"], result["dark_die"]), (light, dark))
+                self.assertEqual(result["light_face"]["glyph"], light_glyph)
+                self.assertEqual(result["dark_face"]["glyph"], dark_glyph)
+                self.assertEqual(result["natural_total"], light + dark)
+
     def test_light_predominance_success_and_positive_margin(self):
         result = evaluate(1, 10, random_source=source(0.7, 0.4))
         self.assertEqual(result["light_die"], 8)
