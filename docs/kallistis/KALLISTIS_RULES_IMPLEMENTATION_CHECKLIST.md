@@ -30,27 +30,27 @@ Nenhum item autoriza inventar regra. Todas as referências apontam para seções
 - [ ] CORE-04 — Atributo + Perícia
   - STATUS=PARTIAL
   - REF=Guia §4 e §9
-  - EVIDENCE=ação calcula valores recebidos; actor ainda não é a autoridade completa.
+  - EVIDENCE=prepare_action calcula base_modifier como atributo + perícia e o teste determinístico cobre a fórmula; autoridade server-side do actor permanece BLOCKED_BY_CHARACTER_CONTRACT porque Actor.data.runtime não possui contrato canônico completo de perícias.
 - [ ] CORE-05 — Dificuldade
   - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §4
-  - EVIDENCE=validação, presets e persistência de dificuldade existem.
+  - EVIDENCE=validação aceita dificuldade numérica e DIFFICULTY_PRESETS cobre 10, 12, 15, 18, 21, 24, 27 e 30; valor customizado acima de 30 também é coberto deterministicamente.
 - [ ] CORE-06 — Margem
   - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §4
-  - EVIDENCE=margem é calculada como total menos dificuldade e persiste no resultado.
+  - EVIDENCE=margem é total - dificuldade, sem arredondamento, com boundaries -6, -5, -4, -1, 0, 4, 5, 9, 10 e 11 cobertos deterministicamente.
 - [ ] CORE-07 — Grau de resultado
   - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §4
-  - EVIDENCE=faixas de falha/sucesso existem em kallistis.py.
+  - EVIDENCE=faixa de grau e grade são verificadas nos cinco intervalos canônicos, incluindo todos os boundaries do guia; success permanece margin >= 0.
 - [ ] CORE-08 — Predominância
   - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §5
-  - EVIDENCE=light/dark/resonance e comparação dos dados existem.
+  - EVIDENCE=predominância compara exclusivamente light_die e dark_die; casos Luz, Escuridão e igualdade estão cobertos deterministicamente.
 - [ ] CORE-09 — Intensidade da Predominância
   - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §5
-  - EVIDENCE=delta e faixas Sutil/Clara/Intensa/Absoluta existem.
+  - EVIDENCE=predominance_delta e faixas 0, 1–2, 3–5, 6–8 e 9 estão cobertos em todos os boundaries, incluindo interação numérica dos glifos.
 - [ ] CORE-10 — Ressonâncias 1–10
   - STATUS=PARTIAL
   - REF=Guia §6

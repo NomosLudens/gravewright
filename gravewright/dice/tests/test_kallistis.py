@@ -205,3 +205,48 @@ class KallistisEngineTests(TestCase):
         self.assertEqual(list(DIFFICULTY_PRESETS), [10, 12, 15, 18, 21, 24, 27, 30])
         self.assertEqual(DIFFICULTY_PRESETS[15], "incerta")
         self.assertEqual(evaluate(0, 31, random_source=source(0, 0))["difficulty"], 31)
+
+    def test_margin_degree_and_success_boundaries_are_canonical(self):
+        expected = {
+            -6: ("failure_severe", False), -5: ("failure_severe", False),
+            -4: ("failure", False), -1: ("failure", False),
+            0: ("success", True), 4: ("success", True),
+            5: ("success_strong", True), 9: ("success_strong", True),
+            10: ("success_extraordinary", True), 11: ("success_extraordinary", True),
+        }
+        for margin, (degree, success) in expected.items():
+            with self.subTest(margin=margin):
+                result = evaluate(margin - 5, 15, random_source=source(0.999, 0.999))
+                self.assertEqual(result["margin"], margin)
+                self.assertEqual(result["degree"], degree)
+                self.assertEqual(result["grade"], degree)
+                self.assertEqual(result["success"], success)
+
+    def test_predominance_uses_only_natural_dice_and_all_intensity_boundaries(self):
+        cases = [
+            (5, 5, "resonance", 0, "resonance"),
+            (6, 5, "light", 1, "subtle"), (7, 5, "light", 2, "subtle"),
+            (8, 5, "light", 3, "clear"), (10, 5, "light", 5, "clear"),
+            (10, 4, "light", 6, "intense"), (10, 2, "light", 8, "intense"),
+            (10, 1, "light", 9, "absolute"),
+            (5, 6, "dark", 1, "subtle"), (5, 10, "dark", 5, "clear"),
+        ]
+        for light, dark, predominance, delta, intensity in cases:
+            with self.subTest(light=light, dark=dark):
+                result = evaluate(100, 1, random_source=source((light - 1) / 10, (dark - 1) / 10))
+                self.assertEqual(result["predominance"], predominance)
+                self.assertEqual(result["predominance_delta"], delta)
+                self.assertEqual(result["predominance_intensity"], intensity)
+
+        glyph_cases = [
+            (10, 9, "light", 1, "subtle"),
+            (1, 10, "dark", 9, "absolute"),
+            (10, 10, "resonance", 0, "resonance"),
+        ]
+        for light, dark, predominance, delta, intensity in glyph_cases:
+            with self.subTest(glyph_light=light, glyph_dark=dark):
+                result = evaluate(0, 100, random_source=source((light - 1) / 10, (dark - 1) / 10))
+                self.assertEqual(result["predominance"], predominance)
+                self.assertEqual(result["predominance_delta"], delta)
+                self.assertEqual(result["predominance_intensity"], intensity)
+                self.assertEqual(result["natural_total"], light + dark)
