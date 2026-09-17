@@ -5,8 +5,8 @@
 Host: kallistiswright
 Repository: /home/nomosludens/gravewright
 Branch: master
-HEAD: a44602ca6105822a485c3317b709d97c033bfa96
-Origin master: a44602ca6105822a485c3317b709d97c033bfa96
+HEAD: 3e47700280c53a4f99e865b6d4f4a2e743acd000
+Origin master: 3e47700280c53a4f99e865b6d4f4a2e743acd000
 Worktree: CLEAN
 
 ## Runtime
@@ -19,8 +19,8 @@ HTTP /login: 200
 ## Test baseline
 
 Official suite:
-- total: 344
-- passed: 344
+- total: 345
+- passed: 345
 - failed: 0
 - errors: 0
 
@@ -43,6 +43,7 @@ Official suite:
 - CORE-13 — Pressão — escala, limites e cancelamento verificados
 - CHARACTER-01 — Seis Atributos — runtime canônico verificado
 - CHARACTER-02 — Perícias 0–5 — runtime canônico verificado
+- CHARACTER-03 — Povo: Traço, Dom, Herança e Dissonância — contrato canônico recuperado e runtime verificado
 - CHARACTER-07 — Autoridade server-side do actor — rolagem vinculada verificada
 - RESOURCES-01..07 — recursos, reservas e Defesas — fórmulas, limites e persistência verificadas
 - COMBAT-01..03 — ataques corpo a corpo, distância e magia — resolução server-side verificada
@@ -51,16 +52,12 @@ Official suite:
 
 Não há blocker de autoridade para Atributo/Perícia em rolagens KALLISTIS
 vinculadas a Actor: Actor.data/runtime é a fonte server-side provada.
-
-O contrato completo de personagem (Povo, Ofício, Origem e vínculos) permanece
-fora deste Gate A. Iniciativa continua sem fórmula canônica automática e será
-tratada como ordem manual enquanto o GUIDE não definir fórmula. Dano completo,
-ataque de área e procedimento de cena permanecem fora do núcleo fechado deste
-pacote.
+O contrato de Povo foi recuperado do Livro III e CHARACTER-03 foi fechado no runtime. Ofício, Origem e vínculos permanecem pendentes.
+Iniciativa continua sem fórmula canônica automática e será tratada como ordem manual enquanto o GUIDE não definir fórmula. Dano completo,
+ataque de área e procedimento de cena permanecem fora do núcleo fechado deste pacote.
 
 ### Pending
-
-- CHARACTER-03..06 — ficha canônica ainda não modelada
+- CHARACTER-04..06 — ficha canônica ainda não modelada
 - COMBAT-04..08 — empate contextual, dano completo, cobertura, área e procedimento de combate
 - CONDITIONS-01..05 — condições, queda, morte e Sombra
 - MAGIC-01..06 — magia
@@ -134,11 +131,11 @@ Fake runtime data created: NO
 
 ## Last completed gate
 
-Gate: C — COMBAT-01..03 + roster/turno/movimento
-Commit: a44602ca6105822a485c3317b709d97c033bfa96
-Date: 2026-09-17T14:18:43+00:00
+Gate: D — CHARACTER-03 — Povo, Traço, Dom, Herança e Dissonância
+Commit: 3e47700280c53a4f99e865b6d4f4a2e743acd000
+Date: 2026-09-17T16:44:08+00:00
 Verdict: PASS
 
 ## Next exact action
 
-Executar o próximo gate autorizado para CHARACTER-03 — Povo: Traço, Dom, Herança e Dissonância.
+Executar o próximo gate autorizado para CHARACTER-04 — Ofício, Papel, Trilha e Chave.

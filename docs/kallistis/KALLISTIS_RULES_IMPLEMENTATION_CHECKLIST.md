@@ -79,9 +79,9 @@ Nenhum item autoriza inventar regra. Todas as referências apontam para seções
   - REF=Guia §9
   - EVIDENCE=Actor.data.runtime persiste as 15 Perícias canônicas com validação server-side de 0 a 5; todos os identificadores, zero e máximo 5 foram cobertos.
 - [ ] CHARACTER-03 — Povo: Traço, Dom, Herança e Dissonância
-  - STATUS=MISSING
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §9 e §16
-  - EVIDENCE=não há contrato canônico KALLISTIS equivalente no actor runtime.
+  - EVIDENCE=Actor.data.runtime persiste Povo, Traço, Dom, Herança e Dissonância em estrutura própria; os nove Povos e as Heranças válidas são validados server-side, os campos derivados ignoram payload fraudulento e a projeção sobrevive a reload.
 - [ ] CHARACTER-04 — Ofício, Papel, Trilha e Chave
   - STATUS=MISSING
   - REF=Guia §16
