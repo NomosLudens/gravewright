@@ -208,10 +208,55 @@ class KallistisEngineTests(TestCase):
             {"helpers": [{}, {}, {}]},
             {"impulse": {"level": 3}},
             {"pressure": {"level": -1}},
+            {"pressure": {"level": 3}},
         ]:
             with self.subTest(invalid=invalid):
                 with self.assertRaises(RollError):
                     prepare_action({**base, **invalid})
+
+    def test_impulse_and_pressure_follow_canonical_scale_and_cancel(self):
+        base = {"action_label": "Ação", "attribute": {"name": "corpo", "value": 1},
+                "skill": {"name": "atletismo", "value": 1}}
+        cases = [
+            (0, 0, 0, 0, 0),
+            (1, 0, 2, 0, 2),
+            (2, 0, 4, 0, 4),
+            (0, 1, 0, -2, -2),
+            (0, 2, 0, -4, -4),
+            (1, 1, 2, -2, 0),
+            (2, 1, 4, -2, 2),
+            (1, 2, 2, -4, -2),
+            (2, 2, 4, -4, 0),
+        ]
+        for impulse, pressure, impulse_bonus, pressure_penalty, circumstance in cases:
+            with self.subTest(impulse=impulse, pressure=pressure):
+                action = prepare_action({
+                    **base,
+                    "impulse": {"level": impulse},
+                    "pressure": {"level": pressure},
+                })
+                self.assertEqual(action["impulse"]["bonus"], impulse_bonus)
+                self.assertEqual(action["pressure"]["penalty"], pressure_penalty)
+                self.assertEqual(action["circumstance_modifier"], circumstance)
+                self.assertEqual(action["modifier_total"], 2 + circumstance)
+
+    def test_impulse_and_pressure_do_not_change_natural_resolution(self):
+        base = {"action_label": "Ação", "attribute": {"name": "corpo", "value": 1},
+                "skill": {"name": "atletismo", "value": 1}}
+        impulse = prepare_action({**base, "impulse": {"level": 1}})
+        pressure = prepare_action({**base, "pressure": {"level": 1}})
+        for action, expected_total in [(impulse, 14), (pressure, 10)]:
+            with self.subTest(modifier=action["modifier_total"]):
+                result = evaluate(action["modifier_total"], 15, random_source=source(0.4, 0.4))
+                self.assertEqual((result["light_die"], result["dark_die"]), (5, 5))
+                self.assertEqual(result["natural_total"], 10)
+                self.assertEqual(result["total"], expected_total)
+                self.assertTrue(result["resonance"])
+                self.assertTrue(result["critical"])
+                self.assertEqual(result["critical_type"], "resonance")
+                self.assertEqual(result["resonance_value"], 5)
+                self.assertEqual(result["predominance"], "resonance")
+                self.assertEqual(result["predominance_delta"], 0)
 
     def test_difficulty_presets_leave_custom_values_open(self):
         self.assertEqual(list(DIFFICULTY_PRESETS), [10, 12, 15, 18, 21, 24, 27, 30])

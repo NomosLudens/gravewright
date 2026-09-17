@@ -60,13 +60,13 @@ Nenhum item autoriza inventar regra. Todas as referências apontam para seções
   - REF=Guia §6
   - EVIDENCE=igualdade de light_die e dark_die registra critical=true e critical_type=resonance; não igualdade registra false/null, sem sucesso/falha automático ou efeito extra.
 - [ ] CORE-12 — Impulso
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §8
-  - EVIDENCE=cálculo existe em action; cobertura universal e autoridade de ficha não estão completas.
+  - EVIDENCE=prepare_action valida o nível contextual 0..2, aplica +2 por ponto, limita o bônus normal a +4 e preserva o valor auditável no JSON da action; a matriz 0/0, 1/0, 2/0, 0/1, 0/2, 1/1, 2/1, 1/2 e 2/2 é determinística. SOURCE=VALIDATED_CLIENT_INPUT; Impulso é contexto da ação, não valor de ficha.
 - [ ] CORE-13 — Pressão
-  - STATUS=PARTIAL
+  - STATUS=ALREADY_IMPLEMENTED
   - REF=Guia §8
-  - EVIDENCE=penalidade de action existe; cobertura universal e autoridade de ficha não estão completas.
+  - EVIDENCE=prepare_action valida o nível contextual 0..2, aplica -2 por ponto, limita a penalidade normal a -4 e preserva o valor auditável no JSON da action; a matriz determinística cobre cancelamento com Impulso e os limites normais. SOURCE=VALIDATED_CLIENT_INPUT; Pressão é contexto da ação, não valor de ficha.
 
 ## CHARACTER
 
