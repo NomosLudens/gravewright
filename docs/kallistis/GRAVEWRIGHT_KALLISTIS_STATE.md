@@ -5,8 +5,8 @@
 Host: kallistiswright
 Repository: /home/nomosludens/gravewright
 Branch: master
-HEAD: 6382b772e72240190a68bdd6fc36e7743a6c61a6
-Origin master: 6382b772e72240190a68bdd6fc36e7743a6c61a6
+HEAD: a44602ca6105822a485c3317b709d97c033bfa96
+Origin master: a44602ca6105822a485c3317b709d97c033bfa96
 Worktree: CLEAN
 
 ## Runtime
@@ -19,8 +19,8 @@ HTTP /login: 200
 ## Test baseline
 
 Official suite:
-- total: 343
-- passed: 343
+- total: 344
+- passed: 344
 - failed: 0
 - errors: 0
 
@@ -45,6 +45,7 @@ Official suite:
 - CHARACTER-02 — Perícias 0–5 — runtime canônico verificado
 - CHARACTER-07 — Autoridade server-side do actor — rolagem vinculada verificada
 - RESOURCES-01..07 — recursos, reservas e Defesas — fórmulas, limites e persistência verificadas
+- COMBAT-01..03 — ataques corpo a corpo, distância e magia — resolução server-side verificada
 
 ### Known blockers
 
@@ -53,12 +54,14 @@ vinculadas a Actor: Actor.data/runtime é a fonte server-side provada.
 
 O contrato completo de personagem (Povo, Ofício, Origem e vínculos) permanece
 fora deste Gate A. Iniciativa continua sem fórmula canônica automática e será
-tratada somente no Gate C, se o GUIDE a definir.
+tratada como ordem manual enquanto o GUIDE não definir fórmula. Dano completo,
+ataque de área e procedimento de cena permanecem fora do núcleo fechado deste
+pacote.
 
 ### Pending
 
 - CHARACTER-03..06 — ficha canônica ainda não modelada
-- COMBAT-01..08 — regras completas de combate
+- COMBAT-04..08 — empate contextual, dano completo, cobertura, área e procedimento de combate
 - CONDITIONS-01..05 — condições, queda, morte e Sombra
 - MAGIC-01..06 — magia
 - WEAVER-01..03 — Tecelão
@@ -131,11 +134,11 @@ Fake runtime data created: NO
 
 ## Last completed gate
 
-Gate: B — RESOURCES-01..07
-Commit: 6382b772e72240190a68bdd6fc36e7743a6c61a6
-Date: 2026-09-17T14:01:37+00:00
+Gate: C — COMBAT-01..03 + roster/turno/movimento
+Commit: a44602ca6105822a485c3317b709d97c033bfa96
+Date: 2026-09-17T14:18:43+00:00
 Verdict: PASS
 
 ## Next exact action
 
-Executar o próximo gate autorizado para COMBAT-01 — Ataque corpo a corpo.
+Executar o próximo gate autorizado para CHARACTER-03 — Povo: Traço, Dom, Herança e Dissonância.
