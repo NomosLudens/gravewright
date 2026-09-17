@@ -5,8 +5,8 @@
 Host: kallistiswright
 Repository: /home/nomosludens/gravewright
 Branch: master
-HEAD: c5e20236921087710384a950ff97260e0aa7dadb
-Origin master: c5e20236921087710384a950ff97260e0aa7dadb
+HEAD: 6382b772e72240190a68bdd6fc36e7743a6c61a6
+Origin master: 6382b772e72240190a68bdd6fc36e7743a6c61a6
 Worktree: CLEAN
 
 ## Runtime
@@ -19,8 +19,8 @@ HTTP /login: 200
 ## Test baseline
 
 Official suite:
-- total: 341
-- passed: 341
+- total: 343
+- passed: 343
 - failed: 0
 - errors: 0
 
@@ -44,6 +44,7 @@ Official suite:
 - CHARACTER-01 — Seis Atributos — runtime canônico verificado
 - CHARACTER-02 — Perícias 0–5 — runtime canônico verificado
 - CHARACTER-07 — Autoridade server-side do actor — rolagem vinculada verificada
+- RESOURCES-01..07 — recursos, reservas e Defesas — fórmulas, limites e persistência verificadas
 
 ### Known blockers
 
@@ -57,7 +58,6 @@ tratada somente no Gate C, se o GUIDE a definir.
 ### Pending
 
 - CHARACTER-03..06 — ficha canônica ainda não modelada
-- RESOURCES-01..07 — recursos e defesas
 - COMBAT-01..08 — regras completas de combate
 - CONDITIONS-01..05 — condições, queda, morte e Sombra
 - MAGIC-01..06 — magia
@@ -131,11 +131,11 @@ Fake runtime data created: NO
 
 ## Last completed gate
 
-Gate: A — CHARACTER-01 + CHARACTER-02 + CHARACTER-07 + CORE-04 authority
-Commit: c5e20236921087710384a950ff97260e0aa7dadb
-Date: 2026-09-17T13:42:48+00:00
+Gate: B — RESOURCES-01..07
+Commit: 6382b772e72240190a68bdd6fc36e7743a6c61a6
+Date: 2026-09-17T14:01:37+00:00
 Verdict: PASS
 
 ## Next exact action
 
-Executar o próximo gate autorizado para RESOURCES-01 — Vitalidade.
+Executar o próximo gate autorizado para COMBAT-01 — Ataque corpo a corpo.
