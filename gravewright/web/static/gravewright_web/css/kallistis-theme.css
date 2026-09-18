@@ -43,7 +43,8 @@ body::before {
 
 .gw-mark {
     border: 0;
-    background: url("/static/gravewright_web/assets/kallistis/cristal.png") center / contain no-repeat;
+    background: url("/static/gravewright_web/assets/kallistis/cristal.png") center / 135% auto no-repeat;
+    mix-blend-mode: screen;
     filter: drop-shadow(0 0 8px rgb(169 128 244 / 24%));
 }
 .gw-mark--bullet { background: url("/static/gravewright_web/assets/kallistis/cristal.png") center / 220% no-repeat; }
@@ -70,13 +71,23 @@ body::before {
     width: min(987px, calc(100vw - 34px));
     min-height: 610px;
     grid-template-columns: minmax(0, 1fr) minmax(233px, .8fr);
-    background: linear-gradient(90deg, rgb(15 13 21 / 96%) 0%, rgb(15 13 21 / 86%) 52%, rgb(15 13 21 / 54%) 100%), url("/static/gravewright_web/assets/kallistis/logo.png") 88% 54% / 46% auto no-repeat, var(--surface);
+    background: linear-gradient(90deg, rgb(15 13 21 / 96%) 0%, rgb(15 13 21 / 86%) 52%, rgb(15 13 21 / 54%) 100%), var(--surface);
     border-color: rgb(169 128 244 / 38%);
     box-shadow: 0 24px 80px rgb(0 0 0 / 64%), 0 0 89px rgb(169 128 244 / 10%);
 }
+.gw-gate__shell::before {
+    content: "";
+    position: absolute;
+    z-index: 0;
+    inset: 0;
+    pointer-events: none;
+    background: url("/static/gravewright_web/assets/kallistis/cristal.png") 88% 54% / 34% auto no-repeat;
+    mix-blend-mode: screen;
+    opacity: .86;
+}
 .gw-gate__header { grid-column: 1 / -1; background: rgb(0 0 0 / 30%); border-color: rgb(169 128 244 / 22%); }
 .gw-gate__panel { grid-column: 1; max-width: 560px; }
-.gw-gate__brand .gw-mark { width: var(--fib-10); height: var(--fib-10); background-image: url("/static/gravewright_web/assets/kallistis/logo.png"); filter: drop-shadow(0 0 21px rgb(169 128 244 / 28%)); }
+.gw-gate__brand .gw-mark { width: var(--fib-10); height: var(--fib-10); background-image: url("/static/gravewright_web/assets/kallistis/cristal.png"); filter: drop-shadow(0 0 21px rgb(169 128 244 / 28%)); }
 .gw-gate__eyebrow, .gw-gate__tab--active, .gw-gate__links button, .gw-field__help { color: var(--accent-hover); }
 .gw-gate__title { letter-spacing: .02em; text-shadow: 0 0 34px rgb(169 128 244 / 18%); }
 .gw-gate__tab--active { background: rgb(169 128 244 / 13%); box-shadow: 0 1px 3px rgb(0 0 0 / 40%), inset 0 0 0 1px rgb(169 128 244 / 28%); }
@@ -115,7 +126,8 @@ body::before {
 .game-board { background: rgb(9 8 13 / 22%); }
 
 @media (max-width: 700px) {
-    .gw-gate__shell { grid-template-columns: 1fr; background: linear-gradient(rgb(15 13 21 / 93%), rgb(15 13 21 / 96%)), url("/static/gravewright_web/assets/kallistis/logo.png") center 88% / 55% auto no-repeat, var(--surface); }
+    .gw-gate__shell { grid-template-columns: 1fr; background: linear-gradient(rgb(15 13 21 / 93%), rgb(15 13 21 / 96%)), var(--surface); }
+    .gw-gate__shell::before { background-position: center 88%; background-size: 55% auto; }
     .gw-gate__panel { grid-column: 1; }
 }
 
