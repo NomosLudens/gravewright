@@ -1,0 +1,122 @@
+/* KALLISTIS visual layer — Gate 04V. Visual-only: no JS, route, data or
+ * realtime changes. Loaded last so the working table contracts remain intact. */
+
+:root {
+    --bg: #09080d;
+    --surface: #15131c;
+    --surface-raised: #201c2a;
+    --surface-raised-2: #2b2538;
+    --surface-field: #100e16;
+    --surface-sunken: rgb(0 0 0 / 38%);
+    --border: #3a3348;
+    --border-strong: #685c79;
+    --border-control: #817491;
+    --layer-accent-rgb: 169, 128, 244;
+    --border-accent: rgb(169 128 244 / 34%);
+    --border-accent-strong: rgb(195 164 255 / 68%);
+    --text-bright: #f5f1fa;
+    --text: #ddd7e7;
+    --text-muted: #aaa2b6;
+    --text-faint: #787083;
+    --text-on-accent: #0d0915;
+    --accent: #a980f4;
+    --accent-hover: #c5aaff;
+    --accent-bright: #e4d8ff;
+    --accent-dark: #704eae;
+    --accent-glow: rgb(169 128 244 / 14%);
+    --focus-ring: #d0b8ff;
+    --shadow-dock: 0 0 0 1px rgb(169 128 244 / 12%), 0 18px 48px rgb(0 0 0 / 66%);
+    --shadow-window: 0 21px 55px rgb(0 0 0 / 58%), inset 0 1px rgb(255 255 255 / 4%);
+}
+
+html, body { background-color: var(--bg); }
+
+body::before {
+    content: "";
+    position: fixed;
+    z-index: -1;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(rgb(9 8 13 / 82%), rgb(9 8 13 / 92%)), url("/static/gravewright_web/assets/kallistis/fundolindo.png") center / cover no-repeat;
+    opacity: .9;
+}
+
+.gw-mark {
+    border: 0;
+    background: url("/static/gravewright_web/assets/kallistis/cristal.png") center / contain no-repeat;
+    filter: drop-shadow(0 0 8px rgb(169 128 244 / 24%));
+}
+.gw-mark--bullet { background: url("/static/gravewright_web/assets/kallistis/cristal.png") center / 220% no-repeat; }
+
+.gw-nav__brand-text::before,
+.game-menubar__brand::before {
+    content: "";
+    display: block;
+    flex: 0 0 auto;
+    background: url("/static/gravewright_web/assets/kallistis/WORDMARK.png") center / contain no-repeat;
+    filter: drop-shadow(0 0 8px rgb(169 128 244 / 18%));
+}
+.gw-nav__brand-text::before { width: var(--fib-11); height: var(--fib-8); margin-bottom: var(--fib-2); background-size: 100% 100%; }
+.game-menubar__brand::before { width: var(--fib-10); height: var(--fib-8); background-size: 100% 100%; }
+.gw-nav__brand-text, .game-menubar__brand { min-width: 0; }
+
+/* Login / access gate. The seal is the single hero; the form stays readable. */
+.gw-gate {
+    background: linear-gradient(rgb(9 8 13 / 72%), rgb(9 8 13 / 88%)), url("/static/gravewright_web/assets/kallistis/fundolindo.png") center / cover no-repeat;
+}
+.gw-gate::before { background-image: url("/static/gravewright_web/assets/kallistis/fundolindo.png"); background-position: center; background-size: cover; opacity: .24; }
+.gw-gate::after { background: radial-gradient(ellipse at 78% 48%, rgb(169 128 244 / 18%), transparent 34%), radial-gradient(120% 110% at 50% 45%, transparent 28%, rgb(0 0 0 / 84%) 100%); }
+.gw-gate__shell {
+    width: min(987px, calc(100vw - 34px));
+    min-height: 610px;
+    grid-template-columns: minmax(0, 1fr) minmax(233px, .8fr);
+    background: linear-gradient(90deg, rgb(15 13 21 / 96%) 0%, rgb(15 13 21 / 86%) 52%, rgb(15 13 21 / 54%) 100%), url("/static/gravewright_web/assets/kallistis/logo.png") 88% 54% / 46% auto no-repeat, var(--surface);
+    border-color: rgb(169 128 244 / 38%);
+    box-shadow: 0 24px 80px rgb(0 0 0 / 64%), 0 0 89px rgb(169 128 244 / 10%);
+}
+.gw-gate__header { grid-column: 1 / -1; background: rgb(0 0 0 / 30%); border-color: rgb(169 128 244 / 22%); }
+.gw-gate__panel { grid-column: 1; max-width: 560px; }
+.gw-gate__brand .gw-mark { width: var(--fib-10); height: var(--fib-10); background-image: url("/static/gravewright_web/assets/kallistis/logo.png"); filter: drop-shadow(0 0 21px rgb(169 128 244 / 28%)); }
+.gw-gate__eyebrow, .gw-gate__tab--active, .gw-gate__links button, .gw-field__help { color: var(--accent-hover); }
+.gw-gate__title { letter-spacing: .02em; text-shadow: 0 0 34px rgb(169 128 244 / 18%); }
+.gw-gate__tab--active { background: rgb(169 128 244 / 13%); box-shadow: 0 1px 3px rgb(0 0 0 / 40%), inset 0 0 0 1px rgb(169 128 244 / 28%); }
+.gw-button--primary, .gw-gate__submit { border-color: var(--accent-hover); background: linear-gradient(135deg, var(--accent), var(--accent-dark)); color: var(--text-on-accent); box-shadow: 0 8px 21px rgb(169 128 244 / 18%); }
+.gw-button--primary:hover, .gw-gate__submit:hover { background: linear-gradient(135deg, var(--accent-hover), var(--accent)); color: var(--text-on-accent); }
+
+/* Library shell. The texture sits behind the chrome and never competes with copy. */
+.gw-shell, .player-home { background: linear-gradient(90deg, rgb(9 8 13 / 96%), rgb(9 8 13 / 86%)), url("/static/gravewright_web/assets/kallistis/fundolindo.png") center / cover fixed; }
+.gw-nav { background: linear-gradient(rgb(12 10 17 / 94%), rgb(12 10 17 / 98%)); border-right-color: rgb(169 128 244 / 22%); }
+.gw-nav__brand, .gw-shell__topbar { border-color: rgb(169 128 244 / 22%); }
+.gw-nav__brand-name, .gw-nav__brand-text strong, .campaign-hub__heading h1, .player-home__brand strong { color: var(--text-bright); font-family: var(--font-display); letter-spacing: .08em; }
+.gw-nav__icon, .gw-nav__item--active, .gw-nav__item--active:hover, .campaign-hub__eyebrow, .campaign-empty__eyebrow { color: var(--accent-hover); }
+.gw-nav__item--active, .gw-nav__item--active:hover { border-color: rgb(169 128 244 / 42%); background: linear-gradient(90deg, rgb(169 128 244 / 15%), transparent); }
+.gw-shell__topbar { background: linear-gradient(90deg, rgb(9 8 13 / 94%), rgb(20 17 29 / 78%)); }
+.gw-campaign, .player-settings__section, .gw-shell__content .administration__card { border-color: rgb(169 128 244 / 22%); background: linear-gradient(145deg, rgb(32 28 42 / 92%), rgb(18 15 25 / 96%)); box-shadow: 0 13px 34px rgb(0 0 0 / 24%); }
+
+/* Table chrome. The board remains the protagonist. */
+.game-table { --layer-accent-rgb: 169, 128, 244; background: linear-gradient(rgb(9 8 13 / 78%), rgb(9 8 13 / 88%)), url("/static/gravewright_web/assets/kallistis/fundolindo.png") center / cover fixed; color: var(--text); }
+[data-table-layer="game"] { --layer-accent-rgb: 169, 128, 244; }
+[data-table-layer="gm"] { --layer-accent-rgb: 215, 124, 169; }
+[data-table-layer="composition"] { --layer-accent-rgb: 136, 165, 244; }
+[data-table-layer="audio"] { --layer-accent-rgb: 111, 199, 179; }
+[data-table-layer="effects"] { --layer-accent-rgb: 190, 139, 244; }
+[data-table-layer="walls"] { --layer-accent-rgb: 213, 143, 180; }
+[data-table-layer="lighting"] { --layer-accent-rgb: 122, 203, 219; }
+.game-menubar { background: linear-gradient(90deg, rgb(10 8 15 / 96%), rgb(20 16 29 / 86%)), url("/static/gravewright_web/assets/kallistis/fundolindo.png") center / cover; border-bottom-color: rgb(169 128 244 / 34%); }
+.game-menubar__logo:hover, .game-menubar__roster .game-menubar__roster-open { background: rgb(169 128 244 / 14%); }
+.game-dock, .game-panel, .journal-window, .upload-library, .directory-dialog, .dice-tray[data-v-gwdice] { border-color: rgb(169 128 244 / 32%); background: linear-gradient(145deg, rgb(24 20 33 / 97%), rgb(12 10 17 / 98%)); box-shadow: var(--shadow-window); }
+.game-dock { background: linear-gradient(145deg, rgb(20 16 29 / 96%), rgb(9 8 13 / 98%)); }
+.game-dock__item--on, .game-dock__item--on:hover, .game-menubar__layer--on, .game-menubar__layer--on:hover { background: rgb(var(--layer-accent-rgb)); color: #0d0915; box-shadow: 0 0 0 1px rgb(var(--layer-accent-rgb) / 56%), 0 0 21px rgb(var(--layer-accent-rgb) / 30%); }
+.game-directory__scene, .game-directory__actions button, .game-directory > label, .game-panel__chat textarea, .dice-tray button[data-v-gwdice], .dice-tray input[data-v-gwdice]:not([type="checkbox"]), .dice-tray select[data-v-gwdice] { border-color: rgb(169 128 244 / 24%); background: rgb(10 8 15 / 72%); color: var(--text); }
+.game-directory__scene:hover, .game-directory__actions button:hover, .dice-tray button[data-v-gwdice]:hover { border-color: var(--accent-hover); background: rgb(169 128 244 / 10%); }
+.game-panel__placeholder > svg, .game-panel__log article b, .game-dice-tray > button, .dice-tray__palette svg[data-v-gwdice] { color: var(--accent-hover); }
+.game-dice-tray { background: rgb(10 8 15 / 90%); border-top-color: rgb(169 128 244 / 28%); }
+.game-scene-editor__submit, .game-scene-settings__actions .game-scene-settings__save { border-color: var(--accent-hover); background: linear-gradient(135deg, var(--accent), var(--accent-dark)); color: var(--text-on-accent); }
+.game-board { background: rgb(9 8 13 / 22%); }
+
+@media (max-width: 700px) {
+    .gw-gate__shell { grid-template-columns: 1fr; background: linear-gradient(rgb(15 13 21 / 93%), rgb(15 13 21 / 96%)), url("/static/gravewright_web/assets/kallistis/logo.png") center 88% / 55% auto no-repeat, var(--surface); }
+    .gw-gate__panel { grid-column: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) { .game-dock .game-dock__guide { animation: none; } }
