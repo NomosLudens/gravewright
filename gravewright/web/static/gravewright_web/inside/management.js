@@ -310,7 +310,7 @@ function privacySettings(root) {
   };
 }
 function administration(root) {
-  let report, preview, release, automatic = {}, pollTimer;
+  let report, preview, release, automatic = {}, pollTimer, backupRunning = false;
   const language = document.documentElement.lang;
   const ui = (en, pt, es) => language === 'pt-BR' ? pt : language === 'es' ? es : en;
   const normalize = value => String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -325,7 +325,8 @@ function administration(root) {
     'campaign.import':ui('Table imported','Mesa importada','Mesa importada'),
     'campaign.export':ui('Table exported','Mesa exportada','Mesa exportada'),
     'snapshot.create':ui('Backup created','Backup criado','Copia de seguridad creada'),
-    'snapshot.restore':ui('Backup restored','Backup restaurado','Copia de seguridad restaurada')
+    'snapshot.restore':ui('Backup restored','Backup restaurado','Copia de seguridad restaurada'),
+    'backup.post_session':ui('Post-session backup created','Backup pós-sessão criado','Copia pos sesión creada')
   };
   function updates(value) {
     release = value;
@@ -454,6 +455,24 @@ function administration(root) {
   });
   root.addEventListener("click", (event) => {
     const action = event.target.closest("[data-action]")?.dataset.action;
+    if (action === "post-session-backup") void run(root, async () => {
+      if (backupRunning) return;
+      backupRunning = true;
+      const button = root.querySelector("[data-action=post-session-backup]");
+      const status = root.querySelector("[data-backup-status]");
+      if (status) status.textContent = ui("Preparing backup…", "Preparando backup…", "Preparando copia…");
+      show(root, "[data-backup-status]", true);
+      try {
+        await http.post("/api/admin/backups/post-session", {}, {timeoutMs:null});
+        if (status) status.textContent = ui("Backup complete.", "Backup concluído.", "Copia completada.");
+      } catch (error) {
+        if (status) status.textContent = ui("Backup failed. Check the operational log.", "Falha no backup. Consulte o registro operacional.", "Falló la copia. Consulta el registro operativo.");
+        throw error;
+      } finally {
+        backupRunning = false;
+        if (button) button.disabled = false;
+      }
+    });
     if (action === "refresh") void run(root, async () => { await refresh(); if (!root.querySelector('[data-content=diagnostics]').hidden) await diagnostics(); });
     if (action === "diagnostics") void run(root, diagnostics);
     if (action === 'apply-update') void run(root, async () => {

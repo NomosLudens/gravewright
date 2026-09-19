@@ -8,6 +8,7 @@ urlpatterns = [
     path("api/privacy", views.public_privacy),
     path("api/admin/status", views.status),
     path("api/admin/diagnostics", views.diagnostics),
+    path("api/admin/backups/post-session", views.post_session_backup),
     path("api/admin/updates/<str:action>", views.updates),
     path("api/admin/campaigns/import", views.import_campaign),
     path("api/admin/campaigns/<uuid:campaign_id>/clone/<str:action>", views.clone),

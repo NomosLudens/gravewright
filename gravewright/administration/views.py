@@ -1,5 +1,6 @@
 import hashlib
 import io
+import logging
 from datetime import timedelta
 from django.conf import settings
 from django.utils import timezone
@@ -17,7 +18,11 @@ from gravewright.campaigns.views import authenticated
 
 from . import archives, automatic_updates
 from .models import AuditEvent, HostSettings, Snapshot
+from .post_session_backup import BackupBusy, BackupError, create_post_session_backup
 from .updates import CoreUpdateService
+
+
+logger = logging.getLogger(__name__)
 
 
 def owner(view):
@@ -71,6 +76,22 @@ def diagnostics(request):
         },
         headers={"Cache-Control": "no-store"},
     )
+
+
+@require_POST
+@owner
+def post_session_backup(request):
+    try:
+        result = create_post_session_backup()
+    except BackupBusy:
+        return JsonResponse({"error": "backup_in_progress"}, status=409)
+    except BackupError as error:
+        logger.warning("post-session backup failed: %s", error)
+        return JsonResponse({"error": "backup_failed"}, status=502)
+    except Exception:
+        logger.exception("post-session backup crashed")
+        return JsonResponse({"error": "backup_failed"}, status=502)
+    return JsonResponse(result)
 
 
 @require_POST
