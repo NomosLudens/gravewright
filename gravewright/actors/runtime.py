@@ -14,6 +14,7 @@ from django.utils import timezone
 from .models import Actor
 from .services import access
 from gravewright.maps.services import MapError
+from gravewright.rules import kallistis_runtime as rules
 
 
 ATTRIBUTE_NAMES = (
@@ -85,6 +86,7 @@ def empty():
             "grave_wound": False,
         },
         "lucidity_zero_pending_resolution": False,
+        "rules": rules.new_session_state(attributes=attributes, skills={name: 0 for name in SKILL_NAMES}),
     }
 
 
@@ -137,11 +139,52 @@ def read(data):
     if isinstance(conditions, list):
         result["conditions"] = [deepcopy(c) for c in conditions if isinstance(c, dict) and c.get("type") in CONDITION_TYPES]
     result["lucidity_zero_pending_resolution"] = bool(raw.get("lucidity_zero_pending_resolution"))
+    rules_state = raw.get("rules")
+    if isinstance(rules_state, dict):
+        result["rules"] = rules.normalize_state(rules_state)
+    else:
+        result["rules"] = rules.new_session_state(
+            attributes=result["attributes"], skills=result["skills"], protection=result["protection"]
+        )
+    result["rules"]["attributes"] = deepcopy(result["attributes"])
+    result["rules"]["skills"] = deepcopy(result["skills"])
+    result["rules"]["protection"] = result["protection"]
+    result["rules"]["resources"] = deepcopy(result["resources"])
+    result["rules"]["conditions"] = deepcopy(result["conditions"])
     return result
 def _write(row, state):
+    state["rules"] = _rules_for(state)
     row.data = {**(row.data if isinstance(row.data, dict) else {}), "runtime": state}
     row.version += 1
     row.save(update_fields=["data", "version", "updated_at"])
+
+
+def _rules_for(state):
+    """Keep the generic legacy projection and the canonical rule state aligned."""
+    current = state.get("rules") if isinstance(state, dict) else None
+    if not isinstance(current, dict):
+        current = rules.new_session_state(
+            attributes=state.get("attributes", {}),
+            skills=state.get("skills", {}),
+            protection=state.get("protection", 0),
+        )
+    current = rules.normalize_state(current)
+    current["attributes"] = deepcopy(state.get("attributes", current.get("attributes", {})))
+    current["skills"] = deepcopy(state.get("skills", current.get("skills", {})))
+    current["protection"] = state.get("protection", current.get("protection", 0))
+    current["resources"] = deepcopy(state.get("resources", current.get("resources", {})))
+    current["conditions"] = deepcopy(state.get("conditions", current.get("conditions", [])))
+    return current
+
+
+def _sync_from_rules(state, rules_state):
+    state["rules"] = rules_state
+    state["resources"] = deepcopy(rules_state.get("resources", state["resources"]))
+    state["conditions"] = deepcopy(rules_state.get("conditions", state["conditions"]))
+    state["combat"] = deepcopy(rules_state.get("combat", state["combat"]))
+    state["fulgor"] = rules_state.get("fulgor", state.get("fulgor", 0))
+    state["sombra"] = rules_state.get("sombra", state.get("sombra", 0))
+    state["coro"] = deepcopy(rules_state.get("coro", state.get("coro", {})))
 
 
 def _actor(data, who, *, lock=False):
@@ -345,6 +388,98 @@ def rest(data, who, full=False):
             "flow_blocked": not full and not restored, "runtime": state}
 
 
+def rules_command(data, who):
+    """Execute a canonical session rule through the actor command channel."""
+    row = _actor(data, who, lock=True)
+    state = read(row.data)
+    operation = data.get("operation")
+    rules_state = _rules_for(state)
+    result = None
+    if operation == "test":
+        attribute = data.get("attribute", {})
+        skill = data.get("skill", {})
+        attribute_name = attribute.get("name") if isinstance(attribute, dict) else attribute
+        skill_name = skill.get("name") if isinstance(skill, dict) else skill
+        if attribute_name not in ATTRIBUTE_NAMES or skill_name not in SKILL_NAMES:
+            raise MapError("Invalid runtime test attribute or skill.")
+        result = rules.roll_test(
+            attribute=state["attributes"][attribute_name],
+            skill=state["skills"][skill_name],
+            difficulty=data.get("difficulty", 15),
+            impulse_sources=data.get("impulseSources", ()),
+            pressure_sources=data.get("pressureSources", ()),
+            helpers=data.get("helpers", ()),
+            fixed_modifier=data.get("fixedModifier", 0),
+        )
+    elif operation == "damage":
+        result = rules.apply_damage(
+            rules_state, data.get("amount", 0), protection=data.get("protection"),
+            fortitude=10 + state["attributes"].get("corpo", 0) + state["attributes"].get("vontade", 0),
+            damage_event=data.get("eventId", "runtime"), true_damage=data.get("trueDamage") is True,
+        )
+        _sync_from_rules(state, result["state"])
+    elif operation == "permanence":
+        result = rules.permanence(rules_state)
+        _sync_from_rules(state, result["state"])
+    elif operation == "lucidity_zero":
+        result = rules.lucidity_zero(rules_state, data.get("choice"))
+        _sync_from_rules(state, result["state"])
+    elif operation == "round.begin":
+        result = {"state": rules.begin_round(rules_state, movement_mode=data.get("movementMode", "GRID"))}
+        _sync_from_rules(state, result["state"])
+    elif operation == "action.spend":
+        result = {"state": rules.spend_action(rules_state, data.get("kind", "action"))}
+        _sync_from_rules(state, result["state"])
+    elif operation == "movement":
+        result = rules.run_movement(rules_state, data.get("points", ()), terrain=data.get("terrain", "NORMAL"), forced=data.get("forced") is True, teleport=data.get("teleport") is True)
+        _sync_from_rules(state, result["state"])
+    elif operation == "technique":
+        result = rules.technique(marco=state["attributes"].get("marco", 0), minimum_marco=data.get("minimumMarco", 1), action=data.get("action", "action"), cost=data.get("cost"), scene_key=data.get("sceneKey"), used_keys=state.get("scene_uses", {}).keys())
+    elif operation == "magic":
+        result = rules.magic(grade=data.get("grade"), marco=state["attributes"].get("marco", 0), action=data.get("action", "action"), cost=data.get("cost"), concentration=data.get("concentration") is True, current_concentration=rules_state.get("concentration"))
+        if result.get("cost", 0):
+            spent = rules.change_resource(rules_state, "flow", result["cost"], operation="spend")
+            _sync_from_rules(state, spent["state"])
+    elif operation == "concentration":
+        result = rules.concentration_check(rules_state, data.get("damage", 0))
+        _sync_from_rules(state, result["state"])
+    elif operation == "evocation":
+        result = rules.evocation(kind=data.get("kind", "minor"), tuning=state["attributes"].get("sintonia", 0), evocation_skill=state["skills"].get("evocacao", 0), unstable=data.get("unstable") is True, source=data.get("source"), flow_available=state["resources"]["flow"]["current"])
+        spent = rules.change_resource(rules_state, "flow", result["profile"]["cost"], operation="spend")
+        _sync_from_rules(state, spent["state"])
+    elif operation == "merge":
+        result = rules.merge(mode=data.get("mode", "voluntary_union"), consent=data.get("consent") is True, tuning=state["attributes"].get("sintonia", 0), skill=state["skills"].get(data.get("skill", "empatia"), 0), flow_available=state["resources"]["flow"]["current"], active=rules_state.get("merge"), benefits=data.get("benefits", ()))
+        spent = rules.change_resource(rules_state, "flow", result["cost_each"], operation="spend")
+        rules_state = spent["state"]; rules_state["merge"] = result; _sync_from_rules(state, rules_state)
+    elif operation == "coro.add":
+        result = rules.add_coro_pulse(rules_state, eligible=data.get("eligible", True) is True)
+        _sync_from_rules(state, result["state"])
+    elif operation == "coro.spend":
+        result = rules.spend_coro(rules_state, data.get("role", "vanguarda"), data.get("level", 1))
+        _sync_from_rules(state, result["state"])
+    elif operation == "shadow":
+        result = rules.change_shadow(rules_state, data.get("delta", 0), reason=data.get("reason", "runtime"))
+        _sync_from_rules(state, result["state"])
+    elif operation == "fulgor":
+        result = rules.fulgor_gain(rules_state, data.get("amount", 1))
+        _sync_from_rules(state, result["state"])
+    elif operation == "artifact":
+        result = rules.artifact_use(rules_state, data.get("artifact"), frequency=data.get("frequency", "scene"), use_key=data.get("useKey"))
+        _sync_from_rules(state, result["state"])
+    elif operation == "safe_pause":
+        result = rules.safe_pause(rules_state)
+        _sync_from_rules(state, result["state"])
+    elif operation == "full_rest":
+        result = rules.full_rest(rules_state)
+        _sync_from_rules(state, result["state"])
+    elif operation == "fissure":
+        result = rules.fissure_traversal(state_name=data.get("stateName", "RESSONANTE"), contributions=data.get("contributions", []), has_destination=data.get("hasDestination", True) is True, has_anchor=data.get("hasAnchor", True) is True, cost_accepted=data.get("costAccepted", True) is True)
+    else:
+        raise MapError("Unknown KALLISTIS runtime operation.")
+    _write(row, state)
+    return {"actorId": str(row.pk), "operation": operation, "result": result, "runtime": state}
+
+
 def command(data, who, action):
     if action == "runtime.initialize":
         return initialize(data, who)
@@ -356,6 +491,8 @@ def command(data, who, action):
         return rest(data, who)
     if action == "runtime.full_rest":
         return rest(data, who, full=True)
+    if action == "runtime.rules":
+        return rules_command(data, who)
     raise MapError("Unknown runtime command.")
 
 

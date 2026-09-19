@@ -40,6 +40,8 @@ class SocketTests(TransactionTestCase):
             self.cookies[user.pk] = f'{settings.SESSION_COOKIE_NAME}={client.cookies[settings.SESSION_COOKIE_NAME].value}'.encode()
         self.sockets = []
 
+        self.socket_heartbeat_sockets = []
+
     def socket(self, user=None, campaign=None, origin=b'http://testserver'):
         headers = [(b'host', b'testserver')]
         if origin is not None:
@@ -51,6 +53,12 @@ class SocketTests(TransactionTestCase):
         return socket
 
     async def event(self, socket, kind, predicate=lambda p: True):
+        for keepalive in tuple(self.socket_heartbeat_sockets):
+            if keepalive is socket or keepalive not in self.sockets:
+                continue
+            await keepalive.send_json_to({'type': 'session.pong'})
+        if socket not in self.socket_heartbeat_sockets:
+            self.socket_heartbeat_sockets.append(socket)
         for _ in range(100):
             result = await socket.receive_json_from(timeout=3)
             if result['type'] == 'session.ping':

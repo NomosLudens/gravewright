@@ -72,7 +72,17 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
         if getattr(self, "closing", False):
             return
         self.closing = True
+        await self.release_presence(broadcast=True)
         await super().close(code=code, reason=reason)
+
+    async def release_presence(self, broadcast=False):
+        connection_id = getattr(self, "connection_id", None)
+        self.connection_id = None
+        if not connection_id:
+            return
+        await db(services.depart)(connection_id)
+        if broadcast and getattr(self, "joined_group", False):
+            await self.publish_presence()
 
     async def authorized(self):
         if getattr(self, "closing", False):
@@ -98,10 +108,6 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
         self.command_tokens = min(float(settings.WS_BURST_COMMANDS),
             self.command_tokens + (now - self.command_sample) * settings.WS_COMMANDS_PER_SECOND)
         self.command_sample = now
-        if self.command_tokens < 1:
-            await self.close(code=4429)
-            return
-        self.command_tokens -= 1
         try:
             message = json.loads(text_data)
         except ValueError, RecursionError:
@@ -115,6 +121,11 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
         if not await self.authorized():
             return
         kind, payload = message.get("type"), message.get("payload", {})
+        if kind != "session.pong":
+            if self.command_tokens < 1:
+                await self.close(code=4429)
+                return
+            self.command_tokens -= 1
         if self.member.role == 'streamer' and kind not in {
             'session.pong','api.watch','resources.sync','lobby.sync','table.search','actors.sync','tokens.sync',
             'scene.viewport','scene.viewport.stop','maps.layers','maps.sync','journals.sync','chat.sync'
@@ -715,12 +726,11 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
     async def disconnect(self, code):
         await self.stop_stream()
         await self.end_drag("cancel")
-        if self.heartbeat_task:
+        if getattr(self, "heartbeat_task", None):
             self.heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.heartbeat_task
-        if self.joined_group:
+        if getattr(self, "joined_group", False):
             await self.channel_layer.group_discard(self.group, self.channel_name)
-        if self.connection_id:
-            await db(services.depart)(self.connection_id)
-            await self.publish_presence()
+            self.joined_group = False
+        await self.release_presence()

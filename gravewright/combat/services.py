@@ -11,6 +11,7 @@ from gravewright.maps.services import MapError, scene
 from gravewright.table.domain import boolean, number, version
 from gravewright.tokens import services as tokens
 from gravewright.tokens.models import Token
+from gravewright.rules import kallistis_runtime as rules
 
 from .effects import advance as advance_effects
 from .models import Encounter
@@ -300,23 +301,27 @@ def _damage(row, who, payload):
     protection = payload.get("protectionValue", state.get("protection", 0))
     protection = number(protection, 0, 100000)
     post = max(0, raw - protection)
-    vitality = state["resources"]["vitality"]
-    before = vitality["current"]
-    vitality["current"] = max(0, before - post)
-    excess = max(0, post - before)
-    if vitality["current"] == 0:
+    before = state["resources"]["vitality"]["current"]
+    damage_result = rules.apply_damage(
+        state, raw, protection=protection,
+        fortitude=defenses(actor)["FORTITUDE"], damage_event=event_id,
+    )
+    post = damage_result["post_protection"]
+    excess = damage_result["excess"]
+    state = damage_result["state"]
+    if state["resources"]["vitality"]["current"] == 0:
         _ensure_down(state)
     combat = state.setdefault("combat", {})
     down = bool(_condition(state, "CAIDO"))
     if was_down and post > 0:
-        combat["permanence_failures"] = combat.get("permanence_failures", 0) + 1
+        combat["permanence_failures"] = min(3, combat.get("permanence_failures", 0) + 1)
         if combat["permanence_failures"] >= 3:
             combat["permanence_outcome"] = "TERMINAL"
     candidate = excess >= defenses(actor)["FORTITUDE"]
     result = {
         "event_id": event_id, "raw_damage": raw, "protection_value": protection,
         "post_protection_damage": post, "vitality_before": before,
-        "vitality_after": vitality["current"], "excess_damage": excess,
+        "vitality_after": state["resources"]["vitality"]["current"], "excess_damage": excess,
         "fortitude": defenses(actor)["FORTITUDE"], "grave_wound_candidate": candidate,
         "grave_wound_requires_gm_confirmation": candidate, "caido": down,
         "permanence_failures": combat.get("permanence_failures", 0),

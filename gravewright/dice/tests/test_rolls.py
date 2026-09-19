@@ -82,8 +82,8 @@ class DiceTests(TransactionTestCase):
             self.assertEqual(result['margin'], result['total'] - 15)
             self.assertEqual(result['success'], result['total'] >= 15)
             self.assertEqual(result['resonance'], result['light_die'] == result['dark_die'])
-            self.assertEqual(result['critical'], result['light_die'] == result['dark_die'])
-            self.assertEqual(result['critical_type'], 'resonance' if result['resonance'] else None)
+            self.assertFalse(result['critical'])
+            self.assertIsNone(result['critical_type'])
             self.assertEqual(
                 result['predominance'],
                 'resonance' if result['resonance'] else

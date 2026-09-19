@@ -257,7 +257,10 @@ function runtime(actor) {
     p.textContent = message;
     show(p, true);
   };
-  const run = (action, data = {}) => command(action, { id: actor.id, ...data }).catch(cause => showError(cause.message));
+  const run = (action, data = {}) => command(action, { id: actor.id, ...data }).then(result => {
+    if (result?.runtime) render({ runtime: result.runtime });
+    return result;
+  }).catch(cause => showError(cause.message));
   const render = current => {
     const state = current.runtime || {};
     const resources = state.resources || {};
@@ -280,6 +283,11 @@ function runtime(actor) {
       gain.onclick = () => run("runtime.resource", { resource: name, operation: "recover", amount: 1 });
       row.append(label, spend, gain); box.append(row);
     }
+    const rulesBox = el.querySelector("[data-runtime-rules]");
+    const canonical = state.rules || {};
+    const economy = canonical.action_economy || {};
+    const coro = canonical.coro || {};
+    rulesBox.textContent = `Fulgor ${canonical.fulgor ?? 0}/5 · Sombra ${canonical.sombra ?? 0}/6 · Coro ${coro.pulses ?? 0}/${(coro.maximum_bars ?? 1) * 4} · Ação ${economy.action ?? 0} · Movimento ${economy.movement ?? 0} · Reação ${economy.reaction ?? 0}`;
     for (const input of el.querySelectorAll("fieldset input")) input.value = state.attributes?.[input.name] ?? 0;
     const skillsBox = el.querySelector("[data-runtime-skills]");
     skillsBox.replaceChildren();
@@ -306,6 +314,13 @@ function runtime(actor) {
   el.querySelector('[name="condition_type"]').replaceChildren(...["ABALADO", "EXPOSTO", "IMOBILIZADO", "LENTO", "SANGRANDO", "SILENCIADO", "DISSONANTE", "FRATURADO", "CORROMPIDO", "CAIDO"].map(type => new Option(type, type)));
   el.querySelector('[data-runtime-action="safe_pause"]').onclick = () => run("runtime.safe_pause");
   el.querySelector('[data-runtime-action="full_rest"]').onclick = () => run("runtime.full_rest");
+  el.querySelectorAll('[data-runtime-rule]').forEach(button => {
+    button.onclick = () => {
+      const operation = button.dataset.runtimeRule;
+      const data = operation === "fulgor" ? { amount: 1 } : operation === "coro.add" ? { eligible: true } : {};
+      run("runtime.rules", { operation, ...data });
+    };
+  });
   el.querySelector('[data-runtime-action="condition.apply"]').onclick = () => run("runtime.condition.apply", { conditionType: el.elements.condition_type.value });
   el.querySelector('[data-runtime-action="initialize"]').onclick = () => run("runtime.initialize", {
     attributes: Object.fromEntries([...el.querySelectorAll("[data-runtime-attribute]"), el.elements.marco].map(input => [input.name, Number(input.value)])),

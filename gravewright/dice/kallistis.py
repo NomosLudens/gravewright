@@ -414,8 +414,11 @@ def _one(modifier, difficulty, random_source):
         "predominance_intensity": intensity["key"],
         "predominance_intensity_label": intensity["label"],
         "resonance": resonance,
-        "critical": resonance,
-        "critical_type": "resonance" if resonance else None,
+        # Current canon names this event Ressonância, not a critical hit.
+        # Keep the explicit false field for transport compatibility while
+        # preventing clients from treating equality as an attack critical.
+        "critical": False,
+        "critical_type": None,
         "resonance_value": light_die if resonance else None,
         "resonance_name": resonance_data["name"] if resonance_data else None,
         "resonance_opening": resonance_data["opening"] if resonance_data else None,
