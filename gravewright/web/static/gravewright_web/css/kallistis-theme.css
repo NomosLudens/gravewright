@@ -43,22 +43,16 @@ body::before {
 
 .gw-mark {
     border: 0;
-    background: url("/static/gravewright_web/assets/kallistis/cristal.png") center / 135% auto no-repeat;
+    background: url("/static/gravewright_web/assets/kallistis/hero-logo.png") center / contain no-repeat;
     mix-blend-mode: screen;
-    filter: drop-shadow(0 0 8px rgb(169 128 244 / 24%));
+    filter: drop-shadow(0 0 13px rgb(169 128 244 / 32%));
 }
-.gw-mark--bullet { background: url("/static/gravewright_web/assets/kallistis/cristal.png") center / 220% no-repeat; }
+.gw-mark--bullet { background: url("/static/gravewright_web/assets/kallistis/hero-logo.png") center / contain no-repeat; }
 
 .gw-nav__brand-text::before,
 .game-menubar__brand::before {
-    content: "";
-    display: block;
-    flex: 0 0 auto;
-    background: url("/static/gravewright_web/assets/kallistis/WORDMARK.png") center / contain no-repeat;
-    filter: drop-shadow(0 0 8px rgb(169 128 244 / 18%));
+    display: none;
 }
-.gw-nav__brand-text::before { width: var(--fib-11); height: var(--fib-8); margin-bottom: var(--fib-2); background-size: 100% 100%; }
-.game-menubar__brand::before { width: var(--fib-10); height: var(--fib-8); background-size: 100% 100%; }
 .gw-nav__brand-text, .game-menubar__brand { min-width: 0; }
 
 /* Login / access gate. The seal is the single hero; the form stays readable. */
@@ -81,13 +75,13 @@ body::before {
     z-index: 0;
     inset: 0;
     pointer-events: none;
-    background: url("/static/gravewright_web/assets/kallistis/cristal.png") 88% 54% / 34% auto no-repeat;
+    background: url("/static/gravewright_web/assets/kallistis/hero-logo.png") 88% 54% / 34% auto no-repeat;
     mix-blend-mode: screen;
     opacity: .86;
 }
 .gw-gate__header { grid-column: 1 / -1; background: rgb(0 0 0 / 30%); border-color: rgb(169 128 244 / 22%); }
 .gw-gate__panel { grid-column: 1; max-width: 560px; }
-.gw-gate__brand .gw-mark { width: var(--fib-10); height: var(--fib-10); background-image: url("/static/gravewright_web/assets/kallistis/cristal.png"); filter: drop-shadow(0 0 21px rgb(169 128 244 / 28%)); }
+.gw-gate__brand .gw-mark { width: var(--fib-10); height: var(--fib-10); background-image: url("/static/gravewright_web/assets/kallistis/hero-logo.png"); filter: drop-shadow(0 0 21px rgb(169 128 244 / 34%)); }
 .gw-gate__eyebrow, .gw-gate__tab--active, .gw-gate__links button, .gw-field__help { color: var(--accent-hover); }
 .gw-gate__title { letter-spacing: .02em; text-shadow: 0 0 34px rgb(169 128 244 / 18%); }
 .gw-gate__tab--active { background: rgb(169 128 244 / 13%); box-shadow: 0 1px 3px rgb(0 0 0 / 40%), inset 0 0 0 1px rgb(169 128 244 / 28%); }

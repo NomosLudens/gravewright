@@ -4,8 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#11151a" />
+    <link rel="icon" type="image/png" href="{{ static('gravewright_web/assets/kallistis/hero-logo.png') }}" />
+    <link rel="apple-touch-icon" href="{{ static('gravewright_web/assets/kallistis/hero-logo.png') }}" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="{{ app_name }} VTT" />
+    <meta property="og:image" content="https://gravewright.kallistis.app/static/gravewright_web/assets/kallistis/hero-logo.png" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:image" content="https://gravewright.kallistis.app/static/gravewright_web/assets/kallistis/hero-logo.png" />
     <title>{{ app_name }} VTT · {{ release_label }}</title>
-    {% block styles %}<link rel="stylesheet" href="{{ static('gravewright_web/css/index.css') }}?v=20260917-gate04v3" />{% endblock %}
+    {% block styles %}<link rel="stylesheet" href="{{ static('gravewright_web/css/index.css') }}?v=20260920-hero" />{% endblock %}
     {% block before_scripts %}{% endblock %}
     <script type="module" src="{{ static('gravewright_web/vendor/datastar-1.0.3.js') }}"></script>
     <script type="module" src="{{ static('gravewright_modules/frontend-api.js') }}"></script>

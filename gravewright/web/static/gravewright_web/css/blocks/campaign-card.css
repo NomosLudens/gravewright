@@ -88,6 +88,12 @@
     object-position: center;
 }
 
+.gw-campaign__cover img.gw-campaign__default-logo {
+    object-fit: contain;
+    padding: var(--step-13);
+    filter: drop-shadow(0 0 var(--step-21) rgb(169 128 244 / 26%));
+}
+
 .gw-campaign--umber { --plate-a: #3b3122; --plate-b: #171b20; }
 .gw-campaign--blue { --plate-a: #243747; --plate-b: #171d23; }
 .gw-campaign--green { --plate-a: #243528; --plate-b: #171d1a; }

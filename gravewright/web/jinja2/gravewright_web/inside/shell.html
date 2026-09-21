@@ -2,7 +2,7 @@
 <main id="inside-shell" class="{{ 'gw-shell' if owner else 'player-home' }}" data-signals__ifmissing="{_compact:false,_view:'grid',_menu:'',_pending:false,_search:{{ search|tojson|forceescape }},_system:{{ system_filter|tojson|forceescape }}}" {% if owner %}data-class="{'gw-shell--compact':$_compact}"{% endif %}>
 {% if owner %}
 <aside class="gw-nav">
-  <div class="gw-nav__brand"><span class="gw-mark" aria-hidden="true"></span><div class="gw-nav__brand-text"><strong>Gravewright</strong><span>Virtual Tabletop</span></div><button class="gw-nav__collapse" type="button" aria-label="{{ campaigns.toggleNavigation }}" data-on:click="$_compact=!$_compact">{{ icon('CaretLeft','bold') }}</button></div>
+  <div class="gw-nav__brand"><span class="gw-mark" role="img" aria-label="KALLISTIS"></span><div class="gw-nav__brand-text"><strong>Gravewright</strong><span>Virtual Tabletop</span></div><button class="gw-nav__collapse" type="button" aria-label="{{ campaigns.toggleNavigation }}" data-on:click="$_compact=!$_compact">{{ icon('CaretLeft','bold') }}</button></div>
   <nav class="gw-nav__list" aria-label="{{ campaigns.navigation }}">
   {% for key, glyph in [('campaigns','Stack'),('systems','GridFour'),('addons','PuzzlePiece')] %}
     <button class="gw-nav__item{{ ' gw-nav__item--active' if section==key else '' }}" type="button" {% if key in ['campaigns','systems','addons','marketplace'] %}data-on:click="@get(window.gravewrightInside.location('/inside?section={{ key }}', $_search, $_system), {retry:'never'})"{% else %}aria-disabled="true"{% endif %}>{{ icon(glyph,css='gw-nav__icon') }}<span class="gw-nav__label">{{ tr('Modules') if key=='addons' else campaigns.nav[key] }}</span></button>
@@ -28,7 +28,7 @@
 </section>
 {% else %}
 <header class="player-home__header">
-  <div class="player-home__brand"><span class="gw-mark" aria-hidden="true"></span><div><strong>Gravewright</strong><small>Virtual Tabletop</small></div></div>
+  <div class="player-home__brand"><span class="gw-mark" role="img" aria-label="KALLISTIS"></span><div><strong>Gravewright</strong><small>Virtual Tabletop</small></div></div>
   <nav aria-label="{{ campaigns.navigation }}">{% for key,label in [('campaigns',campaigns.nav.campaigns),('settings',campaigns.nav.playerSettings)] %}<button type="button" class="{{ 'player-home__nav-active' if section==key else '' }}" data-on:click="@get(window.gravewrightInside.location('/inside?section={{ key }}', $_search, $_system), {retry:'never'})">{{ label }}</button>{% endfor %}</nav>
   <div class="player-home__account"><span class="gw-avatar">{{ user.name[:1]|upper }}</span><span><strong>{{ user.name }}</strong></span><button type="submit" form="logout-form" data-attr:disabled="$_pending">{{ auth.signOut }}</button></div>
 </header>
