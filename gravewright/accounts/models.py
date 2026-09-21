@@ -66,7 +66,7 @@ class KallistisIdentity(models.Model):
 
 
 class KallistisPlayerAccess(models.Model):
-    """Phrase credential bound to one recovered KALLISTIS player slot.
+    """Phrase credential bound to one recovered KALLISTIS access slot.
 
     The phrase is never stored in clear text. ``phrase_lookup_digest`` finds
     the candidate row and ``phrase_hash`` verifies the supplied phrase.
@@ -85,7 +85,10 @@ class KallistisPlayerAccess(models.Model):
     class Meta:
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(player_code__startswith="JOGADOR-"),
+                condition=(
+                    models.Q(player_code__startswith="JOGADOR-")
+                    | models.Q(player_code__startswith="ADMIN-")
+                ),
                 name="accounts_player_access_code_prefix",
             ),
         ]

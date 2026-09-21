@@ -53,6 +53,22 @@ class KallistisPlayerAccessTests(TestCase):
         self.assertEqual(self.client.get("/api/home/player").status_code, 200)
         self.assertEqual(self.client.get("/api/home/gm").status_code, 403)
 
+    def test_phrase_login_starts_owner_session_without_email_flow(self):
+        admin_phrase = "admin-unit-test-phrase"
+        KallistisPlayerAccess.objects.create(
+            user=self.owner,
+            player_code="ADMIN-TEST",
+            phrase_lookup_digest=kallistis_phrase_digest(admin_phrase),
+            phrase_hash=make_password(admin_phrase),
+        )
+
+        response = self.post_phrase(admin_phrase)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["account"]["role"], "owner")
+        self.assertEqual(self.client.get("/api/home/gm").status_code, 200)
+        self.assertEqual(self.client.get("/api/home/player").status_code, 403)
+
     def test_invalid_and_revoked_phrases_are_uniformly_rejected(self):
         response = self.post_phrase("mi-not-the-phrase")
         self.assertEqual(response.status_code, 401)
