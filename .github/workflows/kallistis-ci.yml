@@ -1,0 +1,62 @@
+name: KALLISTIS CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['master']
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+  pull_request:
+    branches: ['master']
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+
+env:
+  PYTHONUTF8: '1'
+  GRAVEWRIGHT_DATABASE: ':memory:'
+
+permissions:
+  contents: read
+
+jobs:
+  kallistis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+        with:
+          version: '0.12.13'
+          python-version: '3.14'
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: Django system check
+        run: uv run python manage.py check
+
+      - name: Migration drift check
+        run: uv run python manage.py makemigrations --check --dry-run
+
+      - name: KALLISTIS targeted tests
+        run: >
+          uv run python manage.py test
+          gravewright.rules.tests.test_kallistis_runtime
+          gravewright.dice.tests.test_kallistis
+          gravewright.actors.tests_runtime
+          gravewright.actors.test_kallistis_import
+          gravewright.accounts.tests.test_kallistis_player_access
+          gravewright.accounts.tests.test_kallistis_campaign_mapping
+          gravewright.accounts.tests.test_kallistis_character_read
+          gravewright.accounts.tests.test_kallistis_provision_signature
+          gravewright.combat.tests_gate03d
+          --noinput
+
+      - name: Full Django test suite
+        run: uv run python manage.py test --noinput
