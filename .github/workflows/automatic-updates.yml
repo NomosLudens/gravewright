@@ -2,7 +2,7 @@ name: Automatic updates
 on:
   workflow_dispatch:
   push:
-    branches: ['main']
+    branches: ['master']
   pull_request:
     paths:
       - 'scripts/**'
