@@ -11,11 +11,12 @@ from threading import BoundedSemaphore
 from gravewright.accounts.client_ip import client_ip
 from django.conf import settings
 from django.contrib.auth import authenticate, login, update_session_auth_hash
+from django.contrib.auth.hashers import check_password
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
 
-from .models import AuthAttempt, User
+from .models import AuthAttempt, KallistisPlayerAccess, User
 
 
 class AuthError(Exception):
@@ -107,6 +108,43 @@ def sign_in(request, data):
     with transaction.atomic():
         start_session(request, user)
     return user
+
+
+def normalize_kallistis_phrase(value):
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().casefold()
+    return normalized if normalized and len(normalized) <= 128 else None
+
+
+def kallistis_phrase_digest(phrase):
+    normalized = normalize_kallistis_phrase(phrase)
+    if normalized is None:
+        return None
+    return salted_hmac(
+        "gravewright.kallistis.player-phrase", normalized, algorithm="sha256"
+    ).hexdigest()
+
+
+def sign_in_kallistis_phrase(request, phrase):
+    normalized = normalize_kallistis_phrase(phrase)
+    digest = kallistis_phrase_digest(normalized)
+    access = (
+        KallistisPlayerAccess.objects.select_related("user")
+        .filter(
+            phrase_lookup_digest=digest,
+            revoked_at__isnull=True,
+            user__is_active=True,
+        )
+        .first()
+        if digest
+        else None
+    )
+    if access is None or not check_password(normalized, access.phrase_hash):
+        raise AuthError("invalid_credentials", 401)
+    with transaction.atomic():
+        start_session(request, access.user)
+    return access.user
 
 
 def update_account(request, data, *, change_password=False):

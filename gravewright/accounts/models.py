@@ -64,6 +64,33 @@ class KallistisIdentity(models.Model):
             models.UniqueConstraint(fields=["source_system", "source_user_id"], name="accounts_kallistis_source_identity"),
         ]
 
+
+class KallistisPlayerAccess(models.Model):
+    """Phrase credential bound to one recovered KALLISTIS player slot.
+
+    The phrase is never stored in clear text. ``phrase_lookup_digest`` finds
+    the candidate row and ``phrase_hash`` verifies the supplied phrase.
+    """
+
+    user = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name="kallistis_player_access"
+    )
+    player_code = models.CharField(max_length=16, unique=True)
+    phrase_lookup_digest = models.CharField(max_length=64, unique=True, editable=False)
+    phrase_hash = models.CharField(max_length=256, editable=False)
+    revoked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(player_code__startswith="JOGADOR-"),
+                name="accounts_player_access_code_prefix",
+            ),
+        ]
+
+
 class AuthAttempt(models.Model):
     """Shared, database-backed attempt window; contains no raw IP addresses."""
 

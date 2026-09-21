@@ -32,6 +32,18 @@ class Actor(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
 
+class KallistisCharacterLink(models.Model):
+    """Stable identity link for a manually imported KALLISTIS character."""
+
+    kallistis_character_id = models.CharField(max_length=128, unique=True)
+    actor = models.OneToOneField(
+        Actor, on_delete=models.CASCADE, related_name="kallistis_link"
+    )
+    source_schema_version = models.PositiveIntegerField(default=1)
+    source_state = models.CharField(max_length=32)
+    canonical = models.BooleanField(default=False)
+    imported_at = models.DateTimeField(auto_now_add=True)
+
 class Asset(models.Model):
     """Campaign PDF template or actor portrait/token image served after authorization."""
     folder = models.ForeignKey("gravewright_maps.AssetFolder", null=True, blank=True, on_delete=models.SET_NULL)

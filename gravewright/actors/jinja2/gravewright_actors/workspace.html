@@ -40,6 +40,14 @@
             hidden
             data-template-upload
           />
+          <button data-v-gwtoolbar type="button" data-actor-panel="import-kallistis">
+            {{ icon('UploadSimple') }}Importar ficha KALLISTIS</button
+          ><input
+            type="file"
+            accept="application/json,.json"
+            hidden
+            data-kallistis-import
+          />
         </div>
         {% endif %}<label class="directory-toolbar__search" data-v-gwtoolbar
           >{{ icon('MagnifyingGlass',scope='data-v-gwtoolbar') }}<input
@@ -73,6 +81,26 @@
   </button></template
 >
 <template id="actor-form"
+<template id="kallistis-import-dialog"><form class="directory-dialog kallistis-import-dialog" data-v-gwdialog role="dialog">
+  <header class="directory-dialog__header" data-v-gwdialog><strong data-v-gwdialog>Importar ficha KALLISTIS</strong><button type="button" aria-label="Fechar">×</button></header>
+  <fieldset class="directory-dialog__fields" data-v-gwdialog>
+    <p data-import-status role="alert" hidden></p>
+    <dl class="kallistis-import-dialog__facts">
+      <div><dt>Personagem</dt><dd data-import-character></dd></div>
+      <div><dt>Estado KALLISTIS</dt><dd data-import-state></dd></div>
+      <div><dt>Modo</dt><dd data-import-mode></dd></div>
+      <div><dt>Canônica</dt><dd data-import-canonical></dd></div>
+      <div><dt>Mesa de origem</dt><dd data-import-mesa></dd></div>
+      <div><dt>Email</dt><dd data-import-email></dd></div>
+      <div><dt>ID KALLISTIS</dt><dd data-import-id></dd></div>
+    </dl>
+    <p class="kallistis-import-dialog__label">Grupos da ficha</p>
+    <div data-import-groups></div>
+    <label><span>Campanha Gravewright existente</span><select name="campaign" required></select></label>
+    <label><span>Jogador da campanha</span><select name="membership" required></select></label>
+    <button class="gw-folder-editor__primary" type="submit">Confirmar importação</button>
+  </fieldset>
+</form></template>
   ><form class="directory-dialog" data-v-gwdialog role="dialog">
     <header class="directory-dialog__header" data-v-gwdialog>
       <strong data-v-gwdialog>{{ game.newActor }}</strong

@@ -8,6 +8,8 @@ from .models import KallistisIdentity, User
 
 
 PROVISION_SCHEMA = "kallistis.gravewright.mesa-provision.v1"
+CAMPAIGN_LIST_SCHEMA = "kallistis.gravewright.campaign-list.v1"
+CAMPAIGN_LINK_SCHEMA = "kallistis.gravewright.campaign-link.v1"
 TECHNICAL_OWNER_EMAIL = "kallistis-system@shadow.gravewright.invalid"
 
 
@@ -167,4 +169,65 @@ def provision(payload):
         "members_created": members_created,
         "members_updated": members_updated,
         "members_removed": members_removed,
+    }
+
+
+def parse_campaign_list_payload(payload):
+    if payload != {"schema": CAMPAIGN_LIST_SCHEMA, "source_system": "kallistis"}:
+        raise KallistisProvisionError("invalid_campaign_list_payload")
+
+
+def list_linkable_campaigns():
+    return list(
+        Campaign.objects.filter(kallistis_link__isnull=True)
+        .order_by("name", "id")
+        .values("id", "name")
+    )
+
+
+def parse_campaign_link_payload(payload):
+    if not isinstance(payload, dict) or set(payload) != {
+        "schema", "source_system", "source_mesa_id", "campaign_id"
+    } or payload.get("schema") != CAMPAIGN_LINK_SCHEMA:
+        raise KallistisProvisionError("invalid_campaign_link_payload")
+    if payload.get("source_system") != "kallistis":
+        raise KallistisProvisionError("invalid_source_system")
+    mesa_id = _uuid(payload.get("source_mesa_id"), "invalid_mesa_id")
+    campaign_id = _uuid(payload.get("campaign_id"), "invalid_campaign_id")
+    return mesa_id, campaign_id
+
+
+@transaction.atomic
+def link_existing_campaign(payload):
+    mesa_id, campaign_id = parse_campaign_link_payload(payload)
+    campaign = Campaign.objects.select_for_update().filter(pk=campaign_id).first()
+    if campaign is None:
+        raise KallistisProvisionError("vtt_campaign_not_found", 404)
+    mesa_link = KallistisCampaignLink.objects.select_for_update().filter(
+        source_system="kallistis", source_mesa_id=mesa_id
+    ).first()
+    if mesa_link is not None:
+        if mesa_link.campaign_id != campaign_id:
+            raise KallistisProvisionError("vtt_mapping_conflict", 409)
+        return {
+            "valid": True,
+            "source_mesa_id": str(mesa_id),
+            "campaign_id": str(campaign_id),
+            "campaign_name": campaign.name,
+            "mapping_created": False,
+        }
+    campaign_link = KallistisCampaignLink.objects.select_for_update().filter(
+        campaign_id=campaign_id
+    ).first()
+    if campaign_link is not None:
+        raise KallistisProvisionError("vtt_campaign_already_mapped", 409)
+    KallistisCampaignLink.objects.create(
+        source_system="kallistis", source_mesa_id=mesa_id, campaign=campaign
+    )
+    return {
+        "valid": True,
+        "source_mesa_id": str(mesa_id),
+        "campaign_id": str(campaign_id),
+        "campaign_name": campaign.name,
+        "mapping_created": True,
     }

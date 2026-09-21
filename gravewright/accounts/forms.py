@@ -23,6 +23,10 @@ class LoginForm(forms.Form):
         return User.objects.normalize_email(self.cleaned_data["email"])
 
 
+class KallistisPlayerPhraseForm(forms.Form):
+    phrase = forms.CharField(max_length=128, strip=False, widget=forms.PasswordInput)
+
+
 class AccountUpdateForm(forms.Form):
     name = forms.CharField(min_length=2, max_length=80)
     email = forms.EmailField(max_length=254, required=False)

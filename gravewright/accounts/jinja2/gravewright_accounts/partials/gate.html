@@ -1,5 +1,6 @@
 {% set setup = mode == 'setup' %}
 {% set registration = mode == 'register' %}
+{% set player_login = mode == 'player' %}
 <main id="auth-gate" class="gw-gate" data-signals="{_panel: 'access', _pending: false, _networkError: false}">
   <section class="gw-gate__shell">
     {% if privacy_policy.enabled %}

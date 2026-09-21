@@ -17,6 +17,12 @@ class KallistisHandoffError(Exception):
     pass
 
 
+class KallistisCharacterReadError(Exception):
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
 def _remote_handoff(code):
     if not settings.KALLISTIS_VTT_CONSUME_URL or not settings.KALLISTIS_VTT_SERVICE_SECRET:
         raise KallistisHandoffError
@@ -94,3 +100,73 @@ def consume_handoff(request, code):
         services.start_session(request, user)
     return link.campaign_id
 
+
+def read_kallistis_character(user, character_id):
+    """Read the user's KALLISTIS character projection without local storage."""
+    if not settings.KALLISTIS_VTT_CHARACTER_READ_URL:
+        raise KallistisCharacterReadError("character_read_not_configured")
+    if not settings.KALLISTIS_VTT_SERVICE_SECRET:
+        raise KallistisCharacterReadError("character_read_not_configured")
+
+    identity = KallistisIdentity.objects.filter(
+        user=user, source_system="kallistis"
+    ).first()
+    if identity is None:
+        raise KallistisCharacterReadError("kallistis_identity_required")
+
+    request = Request(
+        settings.KALLISTIS_VTT_CHARACTER_READ_URL,
+        data=json.dumps({
+            "source_user_id": identity.source_user_id,
+            "characterId": character_id,
+        }).encode("utf-8"),
+        headers={
+            "Authorization": "Bearer " + settings.KALLISTIS_VTT_SERVICE_SECRET,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "Gravewright-KALLISTIS-Bridge/1",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=5) as response:
+            payload = json.loads(response.read(64 * 1024))
+    except HTTPError as error:
+        if error.code == 404:
+            raise KallistisCharacterReadError("character_not_found") from None
+        raise KallistisCharacterReadError("character_read_unavailable") from None
+    except (URLError, TimeoutError, ValueError, OSError, UnicodeDecodeError):
+        raise KallistisCharacterReadError("character_read_failure") from None
+
+    if not isinstance(payload, dict):
+        raise KallistisCharacterReadError("character_read_failure")
+    try:
+        remote_character = payload["character"]
+        remote_kallistis = remote_character["kallistis"]
+        character = {
+            "id": remote_character["id"],
+            "kallistis": {
+                "manifestacao_pessoal": remote_kallistis["manifestacao_pessoal"],
+                "fulgor_current": remote_kallistis["fulgor_current"],
+                "capability_manifestation_descriptions": (
+                    remote_kallistis["capability_manifestation_descriptions"]
+                ),
+            },
+        }
+    except (KeyError, TypeError):
+        raise KallistisCharacterReadError("character_read_failure") from None
+
+    if payload.get("valid") is not True:
+        raise KallistisCharacterReadError("character_read_failure")
+    if not isinstance(character["id"], str) or not character["id"]:
+        raise KallistisCharacterReadError("character_read_failure")
+    if not isinstance(character["kallistis"]["manifestacao_pessoal"], str):
+        raise KallistisCharacterReadError("character_read_failure")
+    if (isinstance(character["kallistis"]["fulgor_current"], bool) or
+            not isinstance(character["kallistis"]["fulgor_current"], int)):
+        raise KallistisCharacterReadError("character_read_failure")
+    if not isinstance(
+        character["kallistis"]["capability_manifestation_descriptions"], dict
+    ):
+        raise KallistisCharacterReadError("character_read_failure")
+    return {"character": character}

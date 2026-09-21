@@ -18,9 +18,25 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from gravewright.web.responses import navigate
 
 from . import services
-from .kallistis import KallistisHandoffError, consume_handoff
-from .provisioning import KallistisProvisionError, provision
-from .forms import AccountUpdateForm, LoginForm, RegistrationForm
+from .kallistis import (
+    KallistisCharacterReadError,
+    KallistisHandoffError,
+    consume_handoff,
+    read_kallistis_character,
+)
+from .provisioning import (
+    KallistisProvisionError,
+    list_linkable_campaigns,
+    link_existing_campaign,
+    parse_campaign_list_payload,
+    provision,
+)
+from .forms import (
+    AccountUpdateForm,
+    KallistisPlayerPhraseForm,
+    LoginForm,
+    RegistrationForm,
+)
 
 
 MESSAGES = json.loads(Path(__file__).with_name('messages.json').read_text())
@@ -31,7 +47,7 @@ def is_datastar(request):
 
 
 def gate_response(request, *, mode=None, form=None, error=None):
-    if request.user.is_authenticated and (mode is None or mode == 'authenticated'):
+    if request.user.is_authenticated:
         return navigate(request, '/inside')
     if mode is None:
         mode = ('authenticated' if request.user.is_authenticated else
@@ -74,17 +90,32 @@ def api_error(error):
 def validated_form(mode, data):
     if not isinstance(data, dict):
         raise services.AuthError('invalid_input')
-    fields = ('email', 'password') if mode == 'login' else ('name', 'email', 'password')
+    fields = {
+        'login': ('email', 'password'),
+        'player': ('phrase',),
+        'register': ('name', 'email', 'password'),
+        'setup': ('name', 'email', 'password'),
+    }[mode]
     # Django CharField coerces other types to strings; the HTTP contract does not.
     for field in fields:
         if not isinstance(data.get(field), str):
-            raise services.AuthError('invalid_credentials' if mode == 'login' else f'invalid_{field}',
-                                     401 if mode == 'login' else 400)
-    form = (LoginForm if mode == 'login' else RegistrationForm)(data)
+            raise services.AuthError(
+                'invalid_credentials' if mode in ('login', 'player') else f'invalid_{field}',
+                401 if mode in ('login', 'player') else 400,
+            )
+    form_class = {
+        'login': LoginForm,
+        'player': KallistisPlayerPhraseForm,
+        'register': RegistrationForm,
+        'setup': RegistrationForm,
+    }[mode]
+    form = form_class(data)
     if not form.is_valid():
         field = next(iter(form.errors))
-        raise services.AuthError('invalid_credentials' if mode == 'login' else f'invalid_{field}',
-                                 401 if mode == 'login' else 400)
+        raise services.AuthError(
+            'invalid_credentials' if mode in ('login', 'player') else f'invalid_{field}',
+            401 if mode in ('login', 'player') else 400,
+        )
     return form
 
 
@@ -93,6 +124,8 @@ def authenticate_submission(request, mode, data):
     form = validated_form(mode, data)
     if mode == 'login':
         return services.sign_in(request, form.cleaned_data)
+    if mode == 'player':
+        return services.sign_in_kallistis_phrase(request, form.cleaned_data['phrase'])
     return services.register(request, form.cleaned_data, owner=mode == 'setup')
 
 
@@ -117,6 +150,24 @@ def kallistis_handoff(request):
             path=settings.SESSION_COOKIE_PATH,
         )
     return response
+
+
+@require_GET
+def kallistis_character_read(request, character_id):
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "authentication_required"}, status=401)
+    try:
+        projection = read_kallistis_character(request.user, character_id)
+    except KallistisCharacterReadError as error:
+        status = {
+            "kallistis_identity_required": 403,
+            "character_not_found": 404,
+            "character_read_not_configured": 503,
+            "character_read_unavailable": 503,
+            "character_read_failure": 502,
+        }.get(error.code, 502)
+        return JsonResponse({"error": error.code}, status=status)
+    return JsonResponse(projection, status=200)
 
 
 PROVISION_SIGNATURE_MAX_AGE_SECONDS = 60
@@ -161,6 +212,48 @@ def kallistis_provision(request):
         return JsonResponse({"valid": False, "error": error.code}, status=error.status)
     return JsonResponse(result, status=200)
 
+
+def _kallistis_internal_payload(request):
+    signature_error = verify_kallistis_provision_signature(request)
+    if signature_error is not None:
+        return None, signature_error
+    if len(request.body) > 16 * 1024:
+        return None, JsonResponse({"valid": False, "error": "request_too_large"}, status=413)
+    try:
+        return json.loads(request.body), None
+    except (ValueError, UnicodeDecodeError):
+        return None, JsonResponse({"valid": False, "error": "invalid_json"}, status=400)
+
+
+@csrf_exempt
+@require_POST
+def kallistis_campaign_list(request):
+    payload, error = _kallistis_internal_payload(request)
+    if error is not None:
+        return error
+    try:
+        parse_campaign_list_payload(payload)
+        campaigns = list_linkable_campaigns()
+    except KallistisProvisionError as exception:
+        return JsonResponse({"valid": False, "error": exception.code}, status=exception.status)
+    return JsonResponse({
+        "valid": True,
+        "campaigns": [{"id": str(row["id"]), "name": row["name"]} for row in campaigns],
+    }, status=200)
+
+
+@csrf_exempt
+@require_POST
+def kallistis_campaign_link(request):
+    payload, error = _kallistis_internal_payload(request)
+    if error is not None:
+        return error
+    try:
+        result = link_existing_campaign(payload)
+    except KallistisProvisionError as exception:
+        return JsonResponse({"valid": False, "error": exception.code}, status=exception.status)
+    return JsonResponse(result, status=200)
+
 @require_GET
 def gate(request):
     return gate_response(request)
@@ -186,7 +279,13 @@ def access(request, mode):
             mode = 'login'
         elif error.code == 'setup_required':
             mode = 'setup'
-        return gate_response(request, mode=mode, form=RegistrationForm(data), error=error)
+        error_form = {
+            'login': LoginForm,
+            'player': KallistisPlayerPhraseForm,
+            'register': RegistrationForm,
+            'setup': RegistrationForm,
+        }[mode](data)
+        return gate_response(request, mode=mode, form=error_form, error=error)
     return navigate(request, '/inside')
 
 
@@ -226,14 +325,17 @@ def read_json(request):
     return data
 
 
-@sensitive_post_parameters('password', 'currentPassword', 'newPassword')
+@sensitive_post_parameters('password', 'phrase', 'currentPassword', 'newPassword')
 @require_POST
 def api_access(request, mode):
     try:
         user = authenticate_submission(request, mode, read_json(request))
     except services.AuthError as error:
         return api_error(error)
-    return JsonResponse({'account': services.public_account(user)}, status=200 if mode == 'login' else 201)
+    return JsonResponse(
+        {'account': services.public_account(user)},
+        status=200 if mode in ('login', 'player') else 201,
+    )
 
 
 @require_POST
@@ -285,5 +387,5 @@ def csrf_failure(request, reason=''):
     error = services.AuthError('invalid_csrf_token', 403)
     if request.path.startswith('/api/'):
         return api_error(error)
-    mode = request.path.strip('/')
-    return gate_response(request, mode=mode if mode in ('login', 'register', 'setup') else None, error=error)
+    mode = 'player' if request.path.strip('/') == 'login/player' else request.path.strip('/')
+    return gate_response(request, mode=mode if mode in ('login', 'player', 'register', 'setup') else None, error=error)

@@ -1,5 +1,6 @@
 import uuid
 from io import BytesIO
+import json
 from pathlib import Path
 
 from asgiref.sync import async_to_sync
@@ -10,11 +11,20 @@ from django.http import FileResponse, Http404, JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from gravewright.campaigns.models import Campaign
 from gravewright.journals.services import JournalError
 from gravewright.maps.services import MapError
 
 from . import services
 from .models import Asset
+from .kallistis_import import (
+    KallistisImportError,
+    MAX_IMPORT_BYTES,
+    import_character,
+    options_for_user,
+    parse_uploaded_json,
+    preview,
+)
 
 
 def publish(campaign):
@@ -160,3 +170,52 @@ def asset(request, asset_id):
         return response
     except Asset.DoesNotExist, JournalError, FileNotFoundError:
         raise Http404 from None
+@require_GET
+def kallistis_import_options(request):
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "authentication_required"}, status=401)
+    return JsonResponse({"campaigns": options_for_user(request.user.pk)})
+
+
+@require_POST
+def kallistis_import_preview(request):
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "authentication_required"}, status=401)
+    campaign_id = request.POST.get("campaign_id")
+    try:
+        who = services.member(campaign_id, request.user.pk)
+        services.manage(who)
+    except (JournalError, MapError):
+        return JsonResponse({"error": "unauthorized"}, status=403)
+    incoming = request.FILES.get("file")
+    if incoming is None:
+        return JsonResponse({"error": "file_required"}, status=400)
+    if incoming.size > MAX_IMPORT_BYTES:
+        return JsonResponse({"error": "request_too_large"}, status=413)
+    try:
+        parsed = parse_uploaded_json(incoming.read(MAX_IMPORT_BYTES + 1))
+        return JsonResponse({"valid": True, "preview": preview(parsed)})
+    except KallistisImportError as error:
+        return JsonResponse({"valid": False, "error": error.code}, status=error.status)
+
+
+@require_POST
+def kallistis_import_confirm(request):
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "authentication_required"}, status=401)
+    if len(request.body) > MAX_IMPORT_BYTES + 32_768:
+        return JsonResponse({"error": "request_too_large"}, status=413)
+    try:
+        data = json.loads(request.body)
+        result = import_character(
+            request.user.pk,
+            data["campaign_id"],
+            data["membership_id"],
+            data["payload"],
+        )
+    except (ValueError, TypeError, KeyError, UnicodeDecodeError):
+        return JsonResponse({"error": "invalid_json"}, status=400)
+    except KallistisImportError as error:
+        return JsonResponse({"error": error.code}, status=error.status)
+    publish(Campaign.objects.get(pk=result["campaign_id"]))
+    return JsonResponse({"valid": True, **result}, status=201)

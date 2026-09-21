@@ -110,9 +110,126 @@ let state = {
   dialog,
   runtimeDialog,
   deletedTemplate,
-  popup;
+  popup,
+  kallistisImportDialog,
+  kallistisImportPayload;
 const command = (action, data) =>
   window.gravewrightRealtime.resourceCommand("actors", action, data);
+async function startKallistisImport(file) {
+  const raw = await file.text();
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    throw Error("O arquivo não contém JSON válido.");
+  }
+  const data = new FormData();
+  data.set("campaign_id", campaign);
+  data.set("file", file);
+  const response = await fetch("/api/kallistis/import/preview", {
+    method: "POST",
+    body: data,
+    headers: { "X-CSRF-Token": csrfToken() },
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.valid) throw Error(result.error || "Ficha KALLISTIS rejeitada.");
+  const optionsResponse = await fetch("/api/kallistis/import/options", {
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+  const options = await optionsResponse.json().catch(() => ({}));
+  if (!optionsResponse.ok) throw Error(options.error || "Não foi possível listar campanhas.");
+  openKallistisImport(result.preview, payload, options.campaigns || []);
+}
+
+function csrfToken() {
+  return decodeURIComponent(
+    document.cookie.match(/(?:^|; )gravewright-csrf=([^;]*)/)?.[1] || "",
+  );
+}
+
+function openKallistisImport(previewData, payload, campaigns) {
+  kallistisImportDialog?.remove();
+  const el = clone("kallistis-import-dialog");
+  kallistisImportDialog = el;
+  kallistisImportPayload = payload;
+  const set = (name, value) => {
+    el.querySelector("[data-import-" + name + "]").textContent = value;
+  };
+  set("character", previewData.character_name);
+  set("state", previewData.source_state);
+  set("mode", previewData.export_mode);
+  set("canonical", previewData.canonical ? "sim" : "não");
+  set("mesa", previewData.mesa?.name || "Não atribuída");
+  set("email", previewData.player.email_present ? "presente" : "ausente");
+  set("id", previewData.kallistis_character_id);
+  const groups = el.querySelector("[data-import-groups]");
+  groups.replaceChildren();
+  for (const [label, values] of [
+    ["Importados", previewData.mapping.imported],
+    ["Preservados como metadados de origem", previewData.mapping.preserved_as_source_metadata],
+    ["Não representados", previewData.mapping.unsupported],
+  ]) {
+    const row = document.createElement("p");
+    row.textContent = label + ": " + (values.length ? values.join(", ") : "nenhum");
+    groups.append(row);
+  }
+  const campaignSelect = el.elements.campaign;
+  const membershipSelect = el.elements.membership;
+  for (const row of campaigns) campaignSelect.append(new Option(row.name, row.id));
+  if (campaigns.some((row) => row.id === campaign)) campaignSelect.value = campaign;
+  const renderMemberships = () => {
+    const selected = campaigns.find((row) => row.id === campaignSelect.value);
+    membershipSelect.replaceChildren();
+    for (const member of selected?.memberships || [])
+      membershipSelect.append(new Option(member.name, member.id));
+    membershipSelect.disabled = !(selected?.memberships?.length);
+    el.querySelector("[type=submit]").disabled = membershipSelect.disabled;
+  };
+  campaignSelect.onchange = renderMemberships;
+  renderMemberships();
+  el.querySelector("header button").onclick = () => {
+    el.remove();
+    kallistisImportDialog = undefined;
+    kallistisImportPayload = undefined;
+  };
+  el.onsubmit = async (event) => {
+    event.preventDefault();
+    const submit = el.querySelector("[type=submit]");
+    const status = el.querySelector("[data-import-status]");
+    submit.disabled = true;
+    status.hidden = true;
+    try {
+      const response = await fetch("/api/kallistis/import/confirm", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrfToken(),
+        },
+        body: JSON.stringify({
+          campaign_id: campaignSelect.value,
+          membership_id: membershipSelect.value,
+          payload: kallistisImportPayload,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.valid) throw Error(result.error || "Importação rejeitada.");
+      el.remove();
+      kallistisImportDialog = undefined;
+      kallistisImportPayload = undefined;
+      window.gravewrightRealtime?.actorsSubscribe();
+    } catch (cause) {
+      status.textContent = cause.message;
+      status.hidden = false;
+      submit.disabled = false;
+    }
+  };
+  const r = panel.getBoundingClientRect();
+  el.style.left = Math.max(13, r.left - 258) + "px";
+  el.style.top = Math.max(13, r.top + 51) + "px";
+  document.body.append(el);
+}
 function error(message) {
   if (!panel) return;
   const el = panel.querySelector("[role=alert]");
@@ -587,6 +704,10 @@ if (panel) {
     const a = e.target.closest("[data-actor-panel]")?.dataset.actorPanel;
     if (a === "close") mergePatch({ _actorsOpen: false });
     if (a === "minimize") panel.classList.toggle("game-panel--minimized");
+    if (a === "import-kallistis") {
+      panel.querySelector("[data-kallistis-import]")?.click();
+      return;
+    }
     if (a === "detach") {
       if (popup && !popup.closed) {
         popup.focus();
@@ -632,6 +753,18 @@ if (panel) {
         if (!r.ok) throw Error((await r.json()).message);
       } catch (e) {
         error(e.message);
+      }
+    };
+  const importInput = panel.querySelector("[data-kallistis-import]");
+  if (importInput)
+    importInput.onchange = async () => {
+      const file = importInput.files[0];
+      importInput.value = "";
+      if (!file) return;
+      try {
+        await startKallistisImport(file);
+      } catch (cause) {
+        error(cause.message);
       }
     };
   panel.ondragover = (e) => {
