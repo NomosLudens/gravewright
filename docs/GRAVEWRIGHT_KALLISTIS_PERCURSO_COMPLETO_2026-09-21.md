@@ -13,12 +13,12 @@ O trabalho não partiu da ideia de substituir ou reescrever o Gravewright. A est
 
 - O upstream oficial continua sendo a referência estrutural do VTT.
 - O KALLISTIS é a autoridade de cânone, personagem, identidade e progressão; o Gravewright é o runtime de campanha, cena, mapa, token, chat, rolagens, recursos, combate e realtime.
-- O fork atual no GitHub está 43 commits à frente da tag oficial v0.1.1 e 0 commits atrás dela; a tag upstream atual é ancestral direta do nosso master.
+- O fork atual no GitHub está 44 commits à frente da tag oficial v0.1.1 e 0 commits atrás dela; a tag upstream atual é ancestral direta do nosso master. O 44º commit é exclusivamente documental.
 - As regras centrais do KALLISTIS foram implementadas server-side, testadas, persistidas e validadas em realtime.
 - O acesso por frase KALLISTIS está em produção no Gravewright com 25 jogadores e 1 acesso administrativo, sem armazenar frases em texto claro.
 - O importador de ficha KALLISTIS já existe no repositório, com preview, confirmação transacional, vínculo de personagem e prevenção de duplicatas.
 - O fluxo E2E de importação está hoje bloqueado somente no transporte CSRF executado pelo navegador público; o banco permanece intacto e nenhum Actor KALLISTIS foi criado durante as tentativas bloqueadas.
-- Existe neste momento um patch CSRF local na Mini ainda não commitado nem enviado ao GitHub; o master público permanece em 79c301d.
+- Existe neste momento um patch CSRF local na Mini ainda não commitado nem enviado ao GitHub. O baseline de código imediatamente anterior a este documento era 79c301d; o commit documental que adiciona este percurso não altera o runtime.
 ## 2. Repositórios e relação com o upstream
 
 A política adotada desde cedo foi tratar o Gravewright oficial como upstream e o fork KALLISTIS como uma extensão controlada. Atualizações do upstream não são aplicadas diretamente em produção: primeiro são comparadas, testadas e só então convergidas para o master do fork.
@@ -26,8 +26,8 @@ A política adotada desde cedo foi tratar o Gravewright oficial como upstream e 
 - Upstream oficial: Gravewright/gravewright, branch principal main.
 - Fork KALLISTIS: NomosLudens/gravewright, branch de produção master.
 - Tag upstream v0.1.1 atual: commit 04a1b666119dc42db755126c61a764097ad5fc24.
-- Master KALLISTIS no GitHub: commit 79c301d07caf7307948dd0f49894e01e199cd1c6.
-- Comparação verificada: ahead_by=43, behind_by=0, merge base=04a1b666.
+- Baseline de código KALLISTIS antes deste documento: commit 79c301d07caf7307948dd0f49894e01e199cd1c6.
+- Comparação verificada após adicionar este documento: ahead_by=44, behind_by=0, merge base=04a1b666.
 - A release v0.1.1 foi republicada pelo projeto oficial sem mudança do número de versão; nosso histórico já contém exatamente o commit atualmente apontado pela tag.
 Essa relação é importante porque o fork não está solto nem baseado em uma fotografia antiga: ele continua assentado sobre o mesmo commit que hoje define a release oficial v0.1.1, com as customizações KALLISTIS empilhadas depois dele.
 
@@ -223,7 +223,7 @@ O percurso teve mudanças de estratégia importantes. Elas não são dívida esc
 
 A release oficial v0.1.1 merece destaque porque foi republicada mantendo o mesmo número de versão. A tag atual aponta para 04a1b666 e inclui, entre outras mudanças, sheets de sistemas integradas à janela nativa, ativação do sistema da mesa, suporte explícito a apps Django externos confiáveis, correções ASGI e controles independentes de textos traduzidos.
 
-Nosso master contém esse commit como ancestral direto. Portanto não há uma atualização v0.1.1 faltando para instalar. Pelo contrário: o fork atual está 43 commits à frente dessa base. Por isso o atualizador interno do Gravewright não deve ser usado cegamente no runtime KALLISTIS; qualquer nova release upstream deve seguir o fluxo controlado de comparação, testes, prova real e merge.
+Nosso master contém esse commit como ancestral direto. Portanto não há uma atualização v0.1.1 faltando para instalar. Pelo contrário: o fork atual está 44 commits à frente dessa base, sendo o último commit apenas documental. Por isso o atualizador interno do Gravewright não deve ser usado cegamente no runtime KALLISTIS; qualquer nova release upstream deve seguir o fluxo controlado de comparação, testes, prova real e merge.
 
 Um ponto interessante para o futuro é GRAVEWRIGHT_SERVER_APPS / GRAVEWRIGHT_SERVER_APP_PATHS. O upstream agora oferece uma extensão server-side oficial para apps Django confiáveis. Isso abre uma rota possível para isolar partes da ponte KALLISTIS do core em uma refatoração futura, sem necessidade de fazer isso durante o fechamento do E2E atual.
 
@@ -242,7 +242,7 @@ Um ponto interessante para o futuro é GRAVEWRIGHT_SERVER_APPS / GRAVEWRIGHT_SER
 
 ### Fechado / provado
 
-- Fork alinhado à release upstream v0.1.1 atual e 43 commits à frente.
+- Fork alinhado à release upstream v0.1.1 atual e 44 commits à frente, contando este documento.
 - Runtime Gravewright funcional na Mini e superfície pública respondendo.
 - Ruleset KALLISTIS convergido e suíte completa fechada no respectivo gate.
 - Autenticação por frase de jogadores e administrador.
@@ -291,6 +291,6 @@ Para entender rapidamente a extensão do trabalho sem ler o histórico inteiro, 
 
 O ponto principal deste percurso é que a integração deixou de ser uma prova conceitual. Existe um fork real, derivado do upstream atual, com regras server-side, realtime, identidade por frase, UI KALLISTIS, contratos de importação e documentação de gates. Também existe um histórico explícito das abordagens que não valeram o custo operacional e foram conscientemente retiradas do caminho crítico.
 
-O único fechamento imediato ainda pendente é provar, em navegador limpo, o caminho CSRF já corrigido no código e então concluir o E2E frase → jogador → ficha → Actor → controle → persistência. Até esse ponto passar, a correção permanece local e o master público continua estável em 79c301d.
+O único fechamento imediato ainda pendente é provar, em navegador limpo, o caminho CSRF já corrigido no código e então concluir o E2E frase → jogador → ficha → Actor → controle → persistência. Até esse ponto passar, a correção permanece local; 79c301d continua sendo o baseline de código, com este documento versionado em commit posterior sem mudança de runtime.
 
 A intenção deste documento é permitir que Ricardo veja tanto o resultado quanto o processo: onde o Gravewright oficial foi preservado, onde o KALLISTIS precisou estendê-lo, quais decisões foram revertidas e quais partes hoje já são produto funcional.
