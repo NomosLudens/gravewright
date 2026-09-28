@@ -356,7 +356,7 @@ function open(actor, token) {
   sheet?.close();
   sheet = openSheet(campaign, actor.id, token, state.is_gm, () => {
     sheet = undefined;
-  });
+  }, actor.kallistisCharacterId);
 }
 function runtime(actor) {
   runtimeDialog?.remove();

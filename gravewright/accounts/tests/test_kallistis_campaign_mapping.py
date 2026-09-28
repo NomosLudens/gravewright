@@ -62,6 +62,7 @@ class KallistisCampaignMappingTests(TestCase):
             "schema": "kallistis.gravewright.campaign-link.v1",
             "source_system": "kallistis",
             "source_mesa_id": MESA_ID,
+            "source_mesa_name": "Amigos Online",
             "campaign_id": str(self.available.pk),
         }
         first = kallistis_campaign_link(self.post("/api/internal/kallistis/campaigns/link", payload))
@@ -71,6 +72,10 @@ class KallistisCampaignMappingTests(TestCase):
         self.assertTrue(json.loads(first.content)["mapping_created"])
         self.assertFalse(json.loads(second.content)["mapping_created"])
         self.assertEqual(KallistisCampaignLink.objects.count(), 2)
+        self.assertEqual(
+            KallistisCampaignLink.objects.get(source_mesa_id=MESA_ID).source_mesa_name,
+            "Amigos Online",
+        )
         self.assertEqual(Membership.objects.count(), 1)
 
     def test_link_rejects_campaign_already_linked_elsewhere(self):

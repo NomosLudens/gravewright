@@ -5,7 +5,7 @@ import {
   Link,
 } from "/static/gravewright_journals/vendor/editor.js";
 const show = (el, on) => el.toggleAttribute("hidden", !on);
-export function openSheet(campaign, actorId, token, gm, onClose = () => {}) {
+export function openSheet(campaign, actorId, token, gm, onClose = () => {}, kallistisCharacterId = null) {
   const el = document
     .getElementById("pdf-sheet-window")
     .content.firstElementChild.cloneNode(true);
@@ -30,7 +30,9 @@ export function openSheet(campaign, actorId, token, gm, onClose = () => {}) {
     tab = "ficha",
     fieldsKey = "",
     sourcesKey = "",
-    barsKey = "";
+    barsKey = "",
+    kallistisProjection = null,
+    kallistisProjectionError = "";
   const render = () => {
     if (closed || queued) return;
     queued = true;
@@ -119,8 +121,21 @@ export function openSheet(campaign, actorId, token, gm, onClose = () => {}) {
         data: value.data,
         version: value.version,
         sheetVersion: value.sheetVersion,
-      }),
+    }),
   });
+  if (kallistisCharacterId && !token) {
+    fetch(`/api/kallistis/characters/${encodeURIComponent(kallistisCharacterId)}`, {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    }).then(async response => {
+      const value = await response.json().catch(() => null);
+      if (!response.ok || value?.character?.id !== kallistisCharacterId || !value.character.kallistis)
+        throw new Error("A leitura canônica do personagem no KALLISTIS não está disponível para esta conta.");
+      kallistisProjection = value.character;
+    }).catch(error => {
+      kallistisProjectionError = error.message;
+    }).finally(render);
+  }
   async function extensionLifecycle(name) {
     const tasks = [];
     el.dispatchEvent(new CustomEvent(name, { detail: { waitUntil: task => tasks.push(task) } }));
@@ -316,6 +331,35 @@ export function openSheet(campaign, actorId, token, gm, onClose = () => {}) {
       input.disabled = !a.canEdit || snapshot;
     for (const action of el.querySelectorAll("[data-image-action]"))
       show(action, a.canEdit && !snapshot);
+    const manifestationHost = el.querySelector("[data-kallistis-manifestations]");
+    const kallistis = kallistisProjection?.kallistis || null;
+    manifestationHost.replaceChildren();
+    const personalHost = el.querySelector("[data-kallistis-manifestation]");
+    personalHost.textContent = kallistis?.manifestacao_pessoal || "—";
+    const fulgor = Number.isInteger(kallistis?.fulgor_current)
+      ? kallistis.fulgor_current
+      : null;
+    el.querySelector("[data-kallistis-fulgor]").textContent =
+      fulgor === null ? "—" : fulgor === 5 ? "5 / 5 · FULGOR PLENO" : fulgor + " / 5";
+    const descriptions = kallistis?.capability_manifestation_descriptions;
+    for (const [capability, description] of Object.entries(descriptions || {})) {
+      const row = document.createElement("div");
+      const name = document.createElement("strong");
+      const text = document.createElement("p");
+      name.textContent = capability;
+      text.textContent = description;
+      row.append(name, text);
+      manifestationHost.append(row);
+    }
+    const projectionStatus = el.querySelector("[data-kallistis-status]");
+    projectionStatus.textContent = kallistisProjectionError || (kallistisCharacterId && !kallistisProjection
+      ? "Consultando KALLISTIS…"
+      : kallistis ? "Leitura canônica atual do KALLISTIS." : "");
+    show(projectionStatus, !!kallistisCharacterId);
+    show(
+      el.querySelector("[data-kallistis-manifestations-group]"),
+      !!kallistisCharacterId,
+    );
     show(el.querySelector("[data-no-fields]"), !v.openFieldNames.length);
     show(el.querySelector("[data-bar-choices]"), !!v.openFieldNames.length);
     const bkey = JSON.stringify(v.openFieldNames);

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 
+from django.conf import settings
 from datastar_py.django import DatastarResponse, ServerSentEventGenerator as SSE
 from gravewright.accounts.client_ip import client_ip
 from django.http import JsonResponse
@@ -43,6 +44,7 @@ def inside_response(request, *, section='campaigns', dialog='', campaign=None, f
     visible = [row for row in rows if (not system or row['system'] == system) and
                query.strip().lower() in f"{row['name']} {row['description']}".lower()]
     selected = campaigns.public_campaign(campaign) if campaign else None
+    kallistis_link = getattr(campaign, 'kallistis_link', None) if campaign else None
     rulesets = list_rulesets()
     dialog_rulesets = list(rulesets)
     if campaign and campaign.system and campaign.system not in {row['systemId'] for row in rulesets}:
@@ -62,6 +64,13 @@ def inside_response(request, *, section='campaigns', dialog='', campaign=None, f
         'system_titles': {r['systemId']: r['title'] for r in rulesets},
         'search': query, 'system_filter': system,
         'dialog': dialog, 'selected': selected, 'fields': fields,
+        'campaign_manager': dialog == 'edit' and campaign is not None,
+        'kallistis_origin': settings.KALLISTIS_ORIGIN,
+        'kallistis_link': ({
+            'mesa_id': str(kallistis_link.source_mesa_id),
+            'mesa_name': kallistis_link.source_mesa_name,
+            'linked_at': kallistis_link.created_at.isoformat(),
+        } if kallistis_link else None),
         'error': error, 'notice': notice, 'temporary_code': temporary_code,
         'joining': joining, 'ping_color': UserPreference.objects.filter(user=request.user).values_list('ping_color', flat=True).first() or '#f2c679',
     }

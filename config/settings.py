@@ -264,3 +264,4 @@ KALLISTIS_VTT_SERVICE_SECRET = os.environ.get("KALLISTIS_VTT_SERVICE_SECRET", ""
 KALLISTIS_VTT_CHARACTER_READ_URL = os.environ.get(
     "KALLISTIS_VTT_CHARACTER_READ_URL", ""
 ).strip()
+KALLISTIS_ORIGIN = os.environ.get("KALLISTIS_ORIGIN", "https://kallistis.app").strip().rstrip("/")

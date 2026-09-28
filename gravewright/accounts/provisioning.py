@@ -186,20 +186,24 @@ def list_linkable_campaigns():
 
 
 def parse_campaign_link_payload(payload):
-    if not isinstance(payload, dict) or set(payload) != {
-        "schema", "source_system", "source_mesa_id", "campaign_id"
+    expected = {"schema", "source_system", "source_mesa_id", "campaign_id", "source_mesa_name"}
+    if not isinstance(payload, dict) or frozenset(payload) not in {
+        frozenset(expected), frozenset(expected - {"source_mesa_name"})
     } or payload.get("schema") != CAMPAIGN_LINK_SCHEMA:
         raise KallistisProvisionError("invalid_campaign_link_payload")
     if payload.get("source_system") != "kallistis":
         raise KallistisProvisionError("invalid_source_system")
     mesa_id = _uuid(payload.get("source_mesa_id"), "invalid_mesa_id")
     campaign_id = _uuid(payload.get("campaign_id"), "invalid_campaign_id")
-    return mesa_id, campaign_id
+    mesa_name = payload.get("source_mesa_name", "")
+    if mesa_name:
+        mesa_name = _text(mesa_name, "invalid_mesa_name", 1, 120)
+    return mesa_id, campaign_id, mesa_name
 
 
 @transaction.atomic
 def link_existing_campaign(payload):
-    mesa_id, campaign_id = parse_campaign_link_payload(payload)
+    mesa_id, campaign_id, mesa_name = parse_campaign_link_payload(payload)
     campaign = Campaign.objects.select_for_update().filter(pk=campaign_id).first()
     if campaign is None:
         raise KallistisProvisionError("vtt_campaign_not_found", 404)
@@ -209,9 +213,13 @@ def link_existing_campaign(payload):
     if mesa_link is not None:
         if mesa_link.campaign_id != campaign_id:
             raise KallistisProvisionError("vtt_mapping_conflict", 409)
+        if mesa_name and mesa_link.source_mesa_name != mesa_name:
+            mesa_link.source_mesa_name = mesa_name
+            mesa_link.save(update_fields=["source_mesa_name"])
         return {
             "valid": True,
             "source_mesa_id": str(mesa_id),
+            "source_mesa_name": mesa_link.source_mesa_name,
             "campaign_id": str(campaign_id),
             "campaign_name": campaign.name,
             "mapping_created": False,
@@ -222,11 +230,13 @@ def link_existing_campaign(payload):
     if campaign_link is not None:
         raise KallistisProvisionError("vtt_campaign_already_mapped", 409)
     KallistisCampaignLink.objects.create(
-        source_system="kallistis", source_mesa_id=mesa_id, campaign=campaign
+        source_system="kallistis", source_mesa_id=mesa_id,
+        source_mesa_name=mesa_name, campaign=campaign
     )
     return {
         "valid": True,
         "source_mesa_id": str(mesa_id),
+        "source_mesa_name": mesa_name,
         "campaign_id": str(campaign_id),
         "campaign_name": campaign.name,
         "mapping_created": True,

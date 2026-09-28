@@ -15,7 +15,7 @@ from gravewright.realtime.tests import test_sockets as fixtures
 from gravewright.tokens.models import Token
 
 from . import services
-from .models import Actor, Asset, Folder
+from .models import Actor, Asset, Folder, KallistisCharacterLink
 
 
 @override_settings(
@@ -105,6 +105,17 @@ class ActorTests(TransactionTestCase):
                 normalize(bad)
         self.actor.refresh_from_db()
         self.assertEqual(self.actor.name, "Changed")
+
+    def test_linked_character_exposes_only_the_canonical_source_id(self):
+        KallistisCharacterLink.objects.create(
+            actor=self.actor,
+            kallistis_character_id="kallistis-character-123",
+            source_state="approved",
+            canonical=True,
+        )
+        sheet = services.sheet(self.campaign.pk, self.gm.pk, self.actor.pk)
+        self.assertEqual(sheet["kallistisCharacterId"], "kallistis-character-123")
+        self.assertNotIn("kallistis", sheet["data"])
 
     def test_upload_csrf_private_images_and_file_cleanup(self):
         client = Client(enforce_csrf_checks=True)

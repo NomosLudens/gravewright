@@ -49,6 +49,7 @@ class KallistisCampaignLink(models.Model):
     """Explicit Mesa-to-campaign mapping; never inferred by name."""
     source_system = models.CharField(max_length=32, default="kallistis")
     source_mesa_id = models.UUIDField(unique=True)
+    source_mesa_name = models.CharField(max_length=120, blank=True, default="")
     campaign = models.OneToOneField(Campaign, on_delete=models.CASCADE, related_name="kallistis_link")
     created_at = models.DateTimeField(default=timezone.now)
 

@@ -622,3 +622,88 @@ function openBackups(id, name) {
   };
   void run(root, refresh);
 }
+
+const kallistisText = (en, pt, es) => document.documentElement.lang === 'pt-BR' ? pt : document.documentElement.lang === 'es' ? es : en;
+function kallistisStatus(panel, message, visible = true) {
+  const status = panel.querySelector('[data-kallistis-status]');
+  if (!status) return;
+  status.textContent = message;
+  status.hidden = !visible;
+}
+document.addEventListener('click', async event => {
+  const loadButton = event.target.closest('[data-kallistis-load]');
+  const confirmButton = event.target.closest('[data-kallistis-confirm]');
+  const retryButton = event.target.closest('[data-kallistis-retry]');
+  if (!loadButton && !confirmButton && !retryButton) return;
+  const panel = event.target.closest('[data-kallistis-link]');
+  if (!panel) return;
+  const origin = panel.dataset.origin;
+  const setBusy = value => panel.querySelectorAll('button,select').forEach(control => control.disabled = value);
+  setBusy(true);
+  try {
+    if (loadButton) {
+      kallistisStatus(panel, kallistisText('Loading mesas from KALLISTIS…', 'Carregando mesas do KALLISTIS…', 'Cargando mesas de KALLISTIS…'));
+      const response = await fetch(origin + '/api/chat/campaigns?scope=master', {
+        credentials: 'include', cache: 'no-store', headers: {Accept: 'application/json'},
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(response.status === 401 ? 'kallistis_session_required' : result?.error || 'kallistis_campaigns_unavailable');
+      const mesas = Array.isArray(result?.mesas) ? result.mesas.filter(mesa =>
+        typeof mesa?.id === 'string' && typeof mesa?.name === 'string' && mesa.memberRole === 'mestre'
+      ) : [];
+      const select = panel.querySelector('[data-kallistis-mesa]');
+      select.replaceChildren(new Option(kallistisText('Choose an authorized Mesa', 'Escolha uma Mesa autorizada', 'Elija una Mesa autorizada'), ''));
+      for (const mesa of mesas) select.append(new Option(mesa.name, mesa.id));
+      panel.querySelector('[data-kallistis-picker]').hidden = false;
+      panel.querySelector('[data-kallistis-confirm]').hidden = !mesas.length;
+      panel.querySelector('[data-kallistis-load]').hidden = true;
+      kallistisStatus(panel, mesas.length ? kallistisText(`${mesas.length} authorized Mesa(s) loaded.`, `${mesas.length} Mesa(s) autorizada(s) carregada(s).`, `${mesas.length} Mesa(s) autorizada(s) cargada(s).`) : kallistisText('No Mesa you can manage was returned.', 'Nenhuma Mesa que você possa administrar foi retornada.', 'No se devolvió ninguna Mesa que pueda administrar.'));
+    } else {
+      const mesaId = retryButton ? panel.dataset.mesaId : panel.querySelector('[data-kallistis-mesa]').value;
+      if (!mesaId) throw new Error('choose_a_mesa');
+      kallistisStatus(panel, kallistisText('Linking Mesa and provisioning its members…', 'Vinculando a Mesa e provisionando seus jogadores…', 'Vinculando la Mesa y provisionando sus jugadores…'));
+      const response = await fetch(origin + '/api/chat/campaigns', {
+        method: 'POST', credentials: 'include', cache: 'no-store',
+        headers: {'Content-Type': 'application/json', Accept: 'application/json'},
+        body: JSON.stringify({action: 'link_gravewright_campaign', mesaId, campaignId: panel.dataset.campaignId}),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok && response.status !== 202) throw new Error(result?.error || 'kallistis_link_failed');
+      const mesa = result?.mesa;
+      if (!mesa || typeof mesa.id !== 'string' || typeof mesa.name !== 'string') throw new Error('kallistis_invalid_link_response');
+      panel.replaceChildren();
+      panel.dataset.mesaId = mesa.id;
+      const title = document.createElement('p'), strong = document.createElement('strong'), id = document.createElement('small');
+      strong.textContent = 'KALLISTIS: ';
+      title.append(strong, document.createTextNode(mesa.name));
+      id.textContent = mesa.id;
+      panel.append(title, id);
+      const status = document.createElement('p');
+      status.setAttribute('role', 'status');
+      status.setAttribute('aria-live', 'polite');
+      status.textContent = result.provisioning?.status === 'ready'
+        ? kallistisText('Mesa linked; KALLISTIS members are provisioned.', 'Mesa vinculada; jogadores do KALLISTIS provisionados.', 'Mesa vinculada; jugadores de KALLISTIS provisionados.')
+        : kallistisText('Mesa linked; member provisioning is pending. Retry by reopening this panel.', 'Mesa vinculada; o provisionamento dos jogadores está pendente. Reabra este painel para tentar novamente.', 'Mesa vinculada; el aprovisionamiento de jugadores está pendiente. Vuelva a abrir este panel para reintentar.');
+      panel.append(status);
+      if (result.provisioning?.status !== 'ready') {
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'gw-button';
+        retry.dataset.kallistisRetry = '';
+        retry.textContent = kallistisText('Retry member sync', 'Tentar sincronização dos jogadores novamente', 'Reintentar sincronización de jugadores');
+        panel.append(retry);
+      }
+    }
+  } catch (error) {
+    const messages = {
+      kallistis_session_required: kallistisText('Sign in to KALLISTIS in this browser, then retry.', 'Entre no KALLISTIS neste navegador e tente novamente.', 'Inicie sesión en KALLISTIS en este navegador e inténtelo de nuevo.'),
+      choose_a_mesa: kallistisText('Choose a Mesa first.', 'Escolha uma Mesa primeiro.', 'Elija una Mesa primero.'),
+      mesa_forbidden: kallistisText('This KALLISTIS account cannot manage that Mesa.', 'Esta conta KALLISTIS não pode administrar essa Mesa.', 'Esta cuenta KALLISTIS no puede administrar esa Mesa.'),
+      vtt_mapping_conflict: kallistisText('That Mesa is already linked to another Gravewright campaign.', 'Essa Mesa já está vinculada a outra campanha Gravewright.', 'Esa Mesa ya está vinculada a otra campaña de Gravewright.'),
+      vtt_campaign_already_mapped: kallistisText('This Gravewright campaign is already linked.', 'Esta campanha Gravewright já está vinculada.', 'Esta campaña de Gravewright ya está vinculada.'),
+    };
+    kallistisStatus(panel, messages[error?.message] || kallistisText('KALLISTIS could not complete the request. Retry or check the connection.', 'O KALLISTIS não concluiu a solicitação. Tente novamente ou verifique a conexão.', 'KALLISTIS no pudo completar la solicitud. Reintente o revise la conexión.'));
+  } finally {
+    if (panel.isConnected) setBusy(false);
+  }
+});

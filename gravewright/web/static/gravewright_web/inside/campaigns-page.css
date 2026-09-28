@@ -73,6 +73,10 @@
 /* The create and edit form inside the table modal. Rebuilt on gw-field after the
    original rules were lost; measurements follow the panel, not the old file. */
 .campaign-dialog__form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--step-21); }
+.campaign-dialog__kallistis { display: grid; gap: var(--step-8); margin-top: var(--step-21); padding-top: var(--step-13); border-top: var(--border-hairline); }
+.campaign-dialog__kallistis [data-kallistis-picker] { display: grid; gap: var(--step-8); }
+.campaign-dialog__kallistis select { width: 100%; min-height: var(--control-height-md); padding: var(--step-8) var(--step-13); border: var(--border-hairline); border-radius: var(--radius-sm); background: var(--surface-field); color: var(--text-bright); font: inherit; }
+.campaign-dialog__kallistis [role=status] { margin: 0; color: var(--text-faint); }
 .campaign-dialog__column { display: grid; align-content: start; gap: var(--step-13); }
 .campaign-dialog__column > label { display: grid; gap: var(--step-8); }
 .campaign-dialog__column > label > span { color: var(--text-faint); font-size: var(--text-md); font-weight: var(--weight-bold); letter-spacing: var(--tracking-caps); text-transform: uppercase; }

@@ -36,7 +36,7 @@ def access(actor, who, edit=False):
 def get(value, who, edit=False):
     row = Actor.objects.filter(
         pk=identifier(value), campaign_id=who.campaign_id
-    ).first()
+    ).select_related("kallistis_link").first()
     if row is None or not access(row, who, edit):
         raise MapError("Character not found or access denied.", "not_found")
     return row
@@ -62,6 +62,10 @@ def project(row, who):
 
     return dict(
         id=str(row.pk),
+        kallistisCharacterId=(
+            row.kallistis_link.kallistis_character_id
+            if hasattr(row, "kallistis_link") else None
+        ),
         containerId=str(row.campaign_id),
         name=row.name,
         actorType=row.type,
@@ -82,6 +86,7 @@ def state(campaign, user):
     visible = [
         a
         for a in Actor.objects.filter(campaign_id=campaign)
+        .select_related("kallistis_link")
         .prefetch_related("assets")
         .order_by("name")
         if access(a, who)
