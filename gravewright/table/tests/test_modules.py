@@ -27,6 +27,9 @@ class TableModuleTests(TestCase):
         self.actor=Actor.objects.create(campaign=self.campaign,name='Hero',data=normalize({}),permissions={str(self.player.pk):'owner'})
         self.token=Token.objects.create(scene=self.scene,actor=self.actor)
     def command(self,module,action,data,user=None):
+        if module=='combat' and 'version' not in data:
+            state=domain.state(self.campaign.pk,(user or self.gm).pk,module,data.get('sceneId'))
+            data={**data,'version':state['version']}
         return domain.command(self.campaign.pk,(user or self.gm).pk,module,action,data,uuid.uuid4())
     def state(self,module,user=None):
         return domain.state(self.campaign.pk,(user or self.gm).pk,module,str(self.scene.pk))
@@ -48,11 +51,19 @@ class TableModuleTests(TestCase):
         self.assertEqual(len(self.state('cards',self.player)['hand']),1)
         self.assertEqual(self.state('cards')['decks'][0]['draw_count'],1)
     def test_combat_turn_and_player_authorization(self):
-        self.command('combat','add',{'sceneId':str(self.scene.pk),'tokenId':str(self.token.pk)})
-        state=self.state('combat')
-        self.command('combat','start',{'sceneId':str(self.scene.pk),'version':state['version']})
+        hostile=Actor.objects.create(campaign=self.campaign,name='Hostile',data=normalize({}))
+        hostile_token=Token.objects.create(scene=self.scene,actor=hostile)
+        base={'sceneId':str(self.scene.pk)}
+        self.command('combat','add',{**base,'tokenId':str(self.token.pk)})
+        self.command('combat','add',{**base,'tokenId':str(hostile_token.pk)})
+        self.command('combat','side',{**base,'tokenId':str(self.token.pk),'side':'friendly'})
+        self.command('combat','side',{**base,'tokenId':str(hostile_token.pk),'side':'hostile'})
+        state=self.command('combat','roll-initiative',{**base,'friendlyRepresentative':str(self.token.pk),'hostileRepresentative':str(hostile_token.pk)})
+        state=self.command('combat','choose-first-side',{**base,'side':'friendly'})
+        self.command('combat','start',{**base,'version':state['version']})
         state=self.state('combat')
         self.command('combat','next',{'sceneId':str(self.scene.pk),'version':state['version']},self.player)
+        self.command('combat','next',{'sceneId':str(self.scene.pk),'version':self.state('combat')['version']})
         self.assertEqual(self.state('combat')['round'],2)
         with self.assertRaises(MapError):self.command('combat','stop',{'sceneId':str(self.scene.pk),'version':self.state('combat')['version']},self.player)
     def test_compendium_import_and_visibility(self):
@@ -74,15 +85,21 @@ class TableModuleTests(TestCase):
         fog('enable',{'initial':'reveal_all','expected_version':1})
         with self.assertRaises(MapError):fog('reset',{'to':'hide_all','expected_version':1})
         self.assertEqual(SceneState.objects.get(scene=self.scene).fog['baseline'],'reveal_all')
-    def test_combat_initiative_requires_canonical_confirmation(self):
+    def test_combat_uses_canonical_side_initiative(self):
         base={'sceneId':str(self.scene.pk)}
+        hostile=Actor.objects.create(campaign=self.campaign,name='Hostile',data=normalize({}))
+        hostile_token=Token.objects.create(scene=self.scene,actor=hostile)
         self.command('combat','add',{**base,'tokenId':str(self.token.pk)})
-        self.command('combat','configure',{**base,'version':self.state('combat')['version'],'formula':'1d6'})
-        with self.assertRaisesRegex(MapError, 'Initiative formula is blocked pending canonical confirmation.'):
-            self.command('combat','roll',{**base,'version':self.state('combat')['version'],'scope':'one','tokenId':str(self.token.pk)})
-        state=self.state('combat')
-        self.assertEqual(state['config']['formula'], '1d6')
-        self.assertEqual(state['initiative_formula_status'], 'BLOCKED_CANONICAL_CONFIRMATION')
+        self.command('combat','add',{**base,'tokenId':str(hostile_token.pk)})
+        self.command('combat','side',{**base,'tokenId':str(self.token.pk),'side':'friendly'})
+        self.command('combat','side',{**base,'tokenId':str(hostile_token.pk),'side':'hostile'})
+        state=self.command('combat','roll-initiative',{**base,'friendlyRepresentative':str(self.token.pk),'hostileRepresentative':str(hostile_token.pk)})
+        result=state['config']['side_initiative']
+        self.assertIn(result['winner'],{'friendly','hostile'})
+        self.assertNotEqual(result['totals']['friendly'],result['totals']['hostile'])
+        state=self.command('combat','choose-first-side',{**base,'side':'friendly'})
+        state=self.command('combat','start',{**base,'version':state['version']})
+        self.assertEqual(state['turn_order'][0]['side'],'friendly')
     def test_documents_reject_nonfinite_numbers(self):
         with self.assertRaises(MapError):domain.document({'value':float('nan')})
     def test_audio_timeline_overlap_pause_and_permission(self):

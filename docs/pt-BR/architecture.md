@@ -227,14 +227,14 @@ entrada; integrações usam os wrappers públicos ou `api.resources`.
 | Domínio | Responsabilidade e restrição relevante |
 | --- | --- |
 | Itens | Documentos versionados com permissões por usuário. A implementação PDF nativa atualmente não retorna tipos de item; a criação comum fica indisponível até que essa capacidade seja implementada. |
-| Combate | Encontro da cena, iniciativa, turno atual e histórico limitado. Mudanças de ordem preservam a identidade do combatente; a progressão pode avançar efeitos nos documentos dos atores. |
+| Combate | Encontro da cena, iniciativa por lados de KALLISTIS, ativação atual e histórico limitado. O mestre atribui os lados e escolhe representantes; cada representante rola 2d10 + Agilidade + Percepção. O lado vencedor escolhe agir primeiro ou segundo; depois, os lados alternam uma ativação. Empates rerrolam com os mesmos representantes. |
 | Cartas | Definições reutilizáveis e instâncias mutáveis; zonas de compra, mão, cena e descarte, propriedade e visibilidade. O controle do mestre não revela automaticamente a face oculta de outro jogador. |
 | Áudio | Uploads, playlists, reprodução e trilhas sonoras. O estado calcula posições pelo horário do servidor e ganho espacial pelos tokens controlados e paredes acústicas. A entrega HTTP do arquivo tem autorização própria. |
 | Compêndios | Pacotes da campanha e acesso ao catálogo nativo. Arquivos portáteis capturam um grafo permitido de dependências e importam documentos e arquivos para uma campanha de sistema compatível. |
 
 O auxiliar declarativo de fórmulas em `combat/formula_engine.py` é distinto da
-gramática de dados do chat. A iniciativa atual chama `dice.engine.evaluate`; alterar
-um interpretador não altera automaticamente o outro.
+gramática de dados do chat. A iniciativa de KALLISTIS usa o motor de resolução
+de dois d10 do sistema e uma ordem de ativações autoritativa no servidor.
 
 ## Arquivos portáteis e administração
 

@@ -220,14 +220,14 @@ external callers use the public wrappers or `api.resources`.
 | Domain | Responsibility and important boundary |
 | --- | --- |
 | Items | Versioned item documents with per-user grants. The native PDF implementation currently returns no item types, so ordinary item creation is unavailable until that capability is implemented. |
-| Combat | A scene's encounter, initiative, current turn and bounded turn history. Turn order changes preserve combatant identity; progression can advance effects on actor documents. |
+| Combat | A scene's encounter, KALLISTIS side initiative, current activation and bounded turn history. The GM assigns sides and representatives; each representative rolls 2d10 + Agility + Perception. The winner chooses first or second, then sides alternate one activation at a time. Ties reroll with the same representatives. |
 | Cards | Reusable definitions and mutable deck instances; draw/hand/scene/discard zones, ownership and face visibility. A GM's control permission does not automatically expose another player's hidden face. |
 | Audio | Track uploads, playlists, playback transport and soundtrack scheduling. State projects positions using server time and spatial gain using controlled listener tokens and acoustic walls. HTTP file delivery remains separately authorized. |
 | Compendiums | Campaign packs and native content catalog access. Portable bundles capture an allowlisted dependency graph and import documents/assets into a compatible campaign system. |
 
 The older declarative formula helper in `combat/formula_engine.py` is distinct from
-the chat dice grammar. Current combat initiative calls `dice.engine.evaluate`;
-changing one engine does not automatically change the other.
+the chat dice grammar. KALLISTIS initiative uses the system's two-d10 resolution
+engine and its server-authoritative combat activation order.
 
 ## Archives and host administration
 

@@ -44,8 +44,16 @@ class MinimumCombatTests(TransactionTestCase):
         return services.command(self.who, command_name, {"sceneId": str(self.map.pk), **payload})
 
     def start(self):
-        self.command("add", tokenId=str(self.one.tokens.first().pk))
-        self.command("add", tokenId=str(self.two.tokens.first().pk))
+        one = str(self.one.tokens.first().pk)
+        two = str(self.two.tokens.first().pk)
+        self.command("add", tokenId=one)
+        self.command("add", tokenId=two)
+        self.command("side", tokenId=one, side="friendly")
+        self.command("side", tokenId=two, side="hostile")
+        initiative = self.command(
+            "roll-initiative", friendlyRepresentative=one, hostileRepresentative=two
+        )
+        self.command("choose-first-side", side=initiative["config"]["side_initiative"]["winner"])
         return self.command("start")
 
     def test_defenses_structured_resolutions_and_exposed_bonus(self):
@@ -157,15 +165,25 @@ class MinimumCombatTests(TransactionTestCase):
                 "expectedVersion": token.version,
             }, uuid.uuid4())
 
-    def test_roster_manual_order_turn_clock_and_end_state(self):
+    def test_side_initiative_turn_clock_and_end_state(self):
         one = str(self.one.tokens.first().pk)
         two = str(self.two.tokens.first().pk)
         self.command("add", tokenId=one)
         self.command("add", tokenId=two)
-        state = self.command("initiative", tokenId=two, value="second")
-        self.assertEqual(state["combatants"][1]["initiative"], "second")
+        self.command("side", tokenId=one, side="friendly")
+        self.command("side", tokenId=two, side="hostile")
+        initiative = self.command(
+            "roll-initiative", friendlyRepresentative=one, hostileRepresentative=two
+        )
+        result = initiative["config"]["side_initiative"]
+        self.assertEqual(set(result["totals"]), {"friendly", "hostile"})
+        self.assertNotEqual(result["totals"]["friendly"], result["totals"]["hostile"])
+        self.assertIn(result["winner"], {"friendly", "hostile"})
+        self.command("choose-first-side", side=result["winner"])
         state = self.command("start")
         self.assertEqual((state["active"], state["round"], state["turn"]), (True, 1, 0))
+        self.assertEqual(len(state["turn_order"]), 2)
+        self.assertEqual(state["turn_order"][0]["side"], result["winner"])
         state = self.command("next")
         self.assertEqual((state["round"], state["turn"]), (1, 1))
         state = self.command("previous")

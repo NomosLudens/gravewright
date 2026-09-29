@@ -3,6 +3,7 @@ import uuid
 from django.test import TestCase
 from gravewright.table.tests import test_modules
 from gravewright.table import services
+from gravewright.actors.models import Actor
 from gravewright.maps import objects
 from gravewright.maps.services import MapError
 from gravewright.journals.models import Journal
@@ -32,15 +33,28 @@ class AuditGapTests(TestCase):
         state=self.command('combat','add',{**base,'actorId':str(self.actor.pk)})
         self.assertIsNone(state['combatants'][0]['token_id'])
         self.assertEqual(state['combatants'][0]['actor_id'],str(self.actor.pk))
+        hostile=Actor.objects.create(campaign=self.campaign,name='Hostile',data=self.actor.data.copy())
+        from gravewright.tokens.models import Token
+        hostile_token=Token.objects.create(scene=self.scene,actor=hostile)
+        self.command('combat','add',{**base,'tokenId':str(hostile_token.pk)})
+        self.command('combat','side',{**base,'actorId':str(self.actor.pk),'side':'friendly'})
+        self.command('combat','side',{**base,'tokenId':str(hostile_token.pk),'side':'hostile'})
+        state=self.command('combat','roll-initiative',{**base,'friendlyRepresentative':str(self.actor.pk),'hostileRepresentative':str(hostile_token.pk)})
+        state=self.command('combat','choose-first-side',{**base,'side':'friendly'})
         state=self.command('combat','start',{**base,'version':state['version']})
         state=self.command('combat','next',{**base,'version':state['version']},self.player)
+        self.assertEqual(state['round'],1)
+        state=self.command('combat','next',{**base,'version':state['version']})
         self.assertEqual(state['round'],2)
         with self.assertRaises(MapError):
             self.command('combat','previous-round',{**base,'version':state['version']},self.player)
         state=self.command('combat','previous-round',{**base,'version':state['version']})
         self.assertEqual(state['round'],1)
-        state=self.command('combat','initiative',{**base,'actorId':str(self.actor.pk),'value':18,'version':state['version']})
+        with self.assertRaisesRegex(MapError,'Individual initiative is not used'):
+            self.command('combat','initiative',{**base,'actorId':str(self.actor.pk),'value':18,'version':state['version']})
+        state=self.command('combat','stop',{**base,'version':state['version']})
         state=self.command('combat','remove',{**base,'actorId':str(self.actor.pk),'version':state['version']})
+        state=self.command('combat','remove',{**base,'tokenId':str(hostile_token.pk),'version':state['version']})
         self.assertFalse(state['active'])
         self.assertEqual(state['combatants'],[])
 
