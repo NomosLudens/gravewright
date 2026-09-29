@@ -18,7 +18,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
 
-from gravewright.campaigns.models import Membership
+from gravewright.campaigns.models import KallistisCampaignLink, Membership
 
 from .models import AuthAttempt, KallistisIdentity, KallistisPhraseCredential, KallistisPlayerAccess, User
 
@@ -154,11 +154,13 @@ def sign_in_kallistis_phrase(request, phrase):
 
 
 def provision_kallistis_phrase(payload):
-    expected = {"schema", "source_user_id", "player_code", "phrase"}
+    expected = {"schema", "source_user_id", "player_code", "source_mesa_id", "campaign_id", "phrase"}
     if not isinstance(payload, dict) or set(payload) != expected or payload.get("schema") != "kallistis.gravewright.player-phrase.v1":
         raise AuthError("invalid_player_phrase_payload", 400)
     try:
         source_user_id = str(UUID(str(payload["source_user_id"])))
+        source_mesa_id = UUID(str(payload["source_mesa_id"]))
+        campaign_id = UUID(str(payload["campaign_id"]))
     except (TypeError, ValueError, AttributeError):
         raise AuthError("invalid_player_identity", 400) from None
     player_code = payload.get("player_code")
@@ -167,6 +169,11 @@ def provision_kallistis_phrase(payload):
     normalized = normalize_kallistis_phrase(payload.get("phrase"))
     if normalized is None or len(normalized) < 16:
         raise AuthError("invalid_player_phrase", 400)
+    mapping = KallistisCampaignLink.objects.filter(
+        source_system="kallistis", source_mesa_id=source_mesa_id, campaign_id=campaign_id
+    ).exists()
+    if not mapping:
+        raise AuthError("vtt_mesa_mapping_required", 409)
     identity = (
         KallistisIdentity.objects.select_related("user")
         .filter(source_system="kallistis", source_user_id=source_user_id, user__is_active=True)
@@ -174,7 +181,9 @@ def provision_kallistis_phrase(payload):
     )
     if identity is None:
         raise AuthError("kallistis_identity_required", 409)
-    if not Membership.objects.filter(user=identity.user, role=Membership.Role.PLAYER).exists():
+    if not Membership.objects.filter(
+        user=identity.user, campaign_id=campaign_id, role=Membership.Role.PLAYER
+    ).exists():
         raise AuthError("player_membership_required", 409)
     digest = kallistis_phrase_digest(normalized)
     with password_capacity():
