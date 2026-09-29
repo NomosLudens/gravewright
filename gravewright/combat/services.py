@@ -3,6 +3,8 @@
 from copy import deepcopy
 from uuid import uuid4
 
+from django.db import transaction
+
 from gravewright.actors import runtime
 from gravewright.actors import services as actors
 from gravewright.actors.models import Actor
@@ -112,6 +114,10 @@ def _start_turn(row, entry):
     if actor is None:
         return {"phase": "start", "skipped": True}
     state = _actor_runtime(actor)
+    state["rules"] = rules.begin_round(
+        state["rules"], movement_mode=_config(row)["movement_mode"]
+    )
+    _safe_write(actor, state)
     result = {"phase": "start", "actorId": str(actor.pk), "condition": None}
     if not _condition(state, "CAIDO"):
         return result
@@ -172,6 +178,7 @@ def _end_turn(row, entry):
 
 def _reset_movement(entry):
     entry["movement_used"] = 0
+    entry["run_used"] = False
 
 
 def _serialized_combatant(row, entry, who, target):
@@ -184,19 +191,50 @@ def _serialized_combatant(row, entry, who, target):
     data = tokens.data(token) if token else {}
     index = row.combatants.index(entry)
     controlled = tokens.control(token, who) if token else actors.access(actor, who, True)
+    actor_state = _actor_runtime(actor)
+    public_entry = dict(entry)
+    if who.role != "gm" and not controlled:
+        public_entry.pop("run_used", None)
+    movement = None
+    if who.role == "gm" or controlled:
+        config = _config(row)
+        mode = config["movement_mode"]
+        per_move = config["movement_allowance"].get(mode, 6 if mode == "GRID" else 2)
+        conditions = {item.get("type") for item in actor_state["conditions"]}
+        if "LENTO" in conditions:
+            per_move = max(0, per_move - (2 if mode == "GRID" else 1))
+        immobile = "IMOBILIZADO" in conditions
+        if immobile:
+            per_move = 0
+        run_used = entry.get("run_used", False) is True
+        action_economy = actor_state["rules"].get("action_economy", {})
+        movement = {
+            "mode": mode,
+            "pointsPerMove": per_move,
+            "used": entry.get("movement_used", 0),
+            "runUsed": run_used,
+            "canRun": bool(
+                row.active
+                and row.combatants.index(entry) == row.turn
+                and not run_used
+                and not immobile
+                and action_economy.get("action", 0) > 0
+            ),
+        }
     bars = data.get("bars", {}).get("bar_1", {})
     maximum, value = bars.get("max", 0), bars.get("value", 0)
     return {
         "position": index + 1, "conditions_count": len(_actor_runtime(actor)["conditions"]),
         "bar": {"value": value, "max": maximum, "percent": value / maximum * 100 if maximum else 0} if controlled else None,
-        **entry, "id": identity(entry), "token_id": entry.get("tokenId"), "actor_id": str(actor.pk),
+        **public_entry, "id": identity(entry), "token_id": entry.get("tokenId"), "actor_id": str(actor.pk),
         "name": data.get("token", {}).get("name") or actor.name, "canControl": controlled,
         "current": row.active and index == row.turn, "is_current": row.active and index == row.turn,
         "is_next": row.active and index == (row.turn + 1) % len(row.combatants),
         "has_acted": row.active and index < row.turn,
         "can_move_up": index > 0, "can_move_down": index < len(row.combatants) - 1,
         "defenses": defenses(actor),
-        "runtime": _actor_runtime(actor) if who.role == "gm" or controlled else None,
+        "runtime": actor_state if who.role == "gm" or controlled else None,
+        "movement": movement,
     }
 
 
@@ -237,10 +275,28 @@ def _require_gm(who):
         raise MapError("Only the GM can manage combat.", "forbidden")
 
 
+def _spend_actor_action(actor):
+    actor = Actor.objects.select_for_update().get(pk=actor.pk)
+    actor_state = _actor_runtime(actor)
+    try:
+        spent = rules.spend_action(actor_state["rules"], "action")
+    except rules.RuleError as exc:
+        raise MapError(str(exc), "action_spent") from None
+    actor_state["rules"] = spent["state"]
+    _safe_write(actor, actor_state)
+    return actor
+
+
 def _resolve_action(row, who, payload):
     attacker = actors.get(payload.get("actorId"), who)
     if who.role != "gm" and not actors.access(attacker, who, True):
         raise MapError("Character not controlled.", "forbidden")
+    if row.active and who.role != "gm":
+        entry = next((item for item in row.combatants if (candidate := actor_for(item)) and candidate.pk == attacker.pk), None)
+        if entry is None or row.combatants[row.turn] is not entry:
+            raise MapError("It is not this character's turn.", "not_your_turn")
+        if _actor_runtime(attacker)["rules"].get("action_economy", {}).get("action", 0) < 1:
+            raise MapError("Action already spent.", "action_spent")
     defense_name = str(payload.get("targetDefense", payload.get("defense", "GUARDA"))).upper()
     environmental = defense_name in {"ENVIRONMENT", "DIFFICULTY"}
     if defense_name not in DEFENSES and not environmental:
@@ -279,6 +335,8 @@ def _resolve_action(row, who, payload):
         "target_defense_value": target_value, "environmental": environmental,
         "grave_wound_applies": payload.get("grave_wound_applies") is True,
     }
+    if row.active and who.role != "gm":
+        attacker = _spend_actor_action(attacker)
     config = _config(row)
     config["resolutions"] = (config["resolutions"] + [{"id": str(uuid4()), "kind": "action", **result}])[-MAX_EVENTS:]
     return {"kind": "action", "attackerId": str(attacker.pk), "targetId": None if environmental else str(target_actor.pk), "result": result}
@@ -332,13 +390,14 @@ def _damage(row, who, payload):
     return {"kind": "damage", "result": result}
 
 
+@transaction.atomic
 def command(who, action, p):
     target = scene(p.get("sceneId"), who)
     row, created = Encounter.objects.select_for_update().get_or_create(scene=target)
     if not created:
         version(row, p)
     config = _config(row)
-    if who.role != "gm" and action not in {"next", "resolve", "attack"}:
+    if who.role != "gm" and action not in {"next", "resolve", "attack", "run"}:
         raise MapError("Only the GM can manage combat.", "forbidden")
     if action in {"resolve", "attack"}:
         result = _resolve_action(row, who, p)
@@ -367,7 +426,26 @@ def command(who, action, p):
         row.version += 1
         row.save(update_fields=["config", "version"])
         return {**state(who, str(target.pk)), "resolution": result}
-    if action == "movement-mode":
+    if action == "run":
+        if not row.active or not row.combatants:
+            raise MapError("Correr is available only during active combat.")
+        entry = _entry_for_target(row, p.get("tokenId", p.get("actorId")))
+        if row.combatants[row.turn] is not entry:
+            raise MapError("Correr is available only on this character's turn.", "not_your_turn")
+        if who.role != "gm" and not _controlled(entry, who):
+            raise MapError("Character not controlled.", "forbidden")
+        if entry.get("run_used"):
+            raise MapError("Correr has already been used this turn.")
+        actor = actor_for(entry)
+        if actor is None:
+            raise MapError("Character not found.")
+        actor = Actor.objects.select_for_update().get(pk=actor.pk)
+        actor_state = _actor_runtime(actor)
+        if _condition(actor_state, "IMOBILIZADO"):
+            raise MapError("Movement blocked by IMOBILIZADO.", "immobilized")
+        actor = _spend_actor_action(actor)
+        entry["run_used"] = True
+    elif action == "movement-mode":
         _require_gm(who)
         mode = str(p.get("mode", "")).upper()
         if mode not in MOVEMENT_MODES:
@@ -383,7 +461,7 @@ def command(who, action, p):
         else:
             entry = {"actorId": str(actors.get(p.get("actorId"), who).pk)}
         if not any(identity(c) == identity(entry) for c in row.combatants):
-            row.combatants.append({**entry, "initiative": None, "defeated": False, "hidden": False, "movement_used": 0})
+            row.combatants.append({**entry, "initiative": None, "defeated": False, "hidden": False, "movement_used": 0, "run_used": False})
     elif action == "remove":
         _require_gm(who)
         target_id = str(p.get("tokenId", p.get("actorId")))
@@ -514,16 +592,19 @@ def movement_context(token, who, points, *, gm_override=False):
     allowance = config["movement_allowance"].get(mode, 6 if mode == "GRID" else 2)
     actor_state = _actor_runtime(token.actor)
     conditions = {item.get("type") for item in actor_state["conditions"]}
-    distance = sum(max(abs(b[0] - a[0]), abs(b[1] - a[1])) for a, b in zip(points, points[1:]))
+    per_move = max(0, allowance - (2 if mode == "GRID" else 1)) if "LENTO" in conditions else allowance
+    allowance = per_move * (2 if entry.get("run_used") else 1)
+    distance = sum(
+        abs(b[0] - a[0]) + abs(b[1] - a[1]) if mode == "GRID"
+        else max(abs(b[0] - a[0]), abs(b[1] - a[1]))
+        for a, b in zip(points, points[1:])
+    )
     if "IMOBILIZADO" in conditions:
         raise MapError("Movement blocked by IMOBILIZADO.", "immobilized")
     override = who.role == "gm" and gm_override is True
     if not override:
         if row.combatants[row.turn] is not entry:
             raise MapError("It is not this token's turn; GM override is required.", "not_your_turn")
-        if "LENTO" in conditions:
-            allowance -= 2 if mode == "GRID" else 1
-        allowance = max(0, allowance)
         if entry.get("movement_used", 0) + distance > allowance:
             raise MapError("Movement exceeds the current allowance.", "movement_exceeded")
         entry["movement_used"] = entry.get("movement_used", 0) + distance
