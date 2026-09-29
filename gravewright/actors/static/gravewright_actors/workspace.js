@@ -126,12 +126,12 @@ async function startKallistisImport(file) {
   const data = new FormData();
   data.set("campaign_id", campaign);
   data.set("file", file);
-  const csrf = await csrfHeaders();
+  const csrf = await csrfToken();
   const response = await fetch("/api/kallistis/import/preview", {
     method: "POST",
     credentials: "same-origin",
     body: data,
-    headers: csrf,
+    headers: { "X-CSRF-Token": csrf },
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok || !result.valid) throw Error(result.error || "Ficha KALLISTIS rejeitada.");
@@ -144,15 +144,16 @@ async function startKallistisImport(file) {
   openKallistisImport(result.preview, payload, options.campaigns || []);
 }
 
-async function csrfHeaders() {
-  const response = await fetch("/__gravewright/csrf", {
+async function csrfToken() {
+  const response = await fetch("/api/security/csrf", {
+    method: "GET",
     credentials: "same-origin",
     cache: "no-store",
   });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok || !result.token || !result.header)
+  if (!response.ok || !result.ready || !result.token)
     throw new Error("O formulário seguro expirou. Tente novamente.");
-  return { [result.header]: result.token };
+  return result.token;
 }
 
 function openKallistisImport(previewData, payload, campaigns) {
@@ -207,12 +208,13 @@ function openKallistisImport(previewData, payload, campaigns) {
     submit.disabled = true;
     status.hidden = true;
     try {
+      const csrf = await csrfToken();
       const response = await fetch("/api/kallistis/import/confirm", {
         method: "POST",
         credentials: "same-origin",
         headers: {
           "Content-Type": "application/json",
-          ...await csrfHeaders(),
+          "X-CSRF-Token": csrf,
         },
         body: JSON.stringify({
           campaign_id: campaignSelect.value,

@@ -1,7 +1,11 @@
 from copy import deepcopy
+import json
+from pathlib import Path
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.conf import settings
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import Client, TestCase, override_settings
 
 from gravewright.accounts.models import User
 from gravewright.campaigns.models import Campaign, Membership
@@ -78,6 +82,49 @@ class KallistisImportTests(TestCase):
         self.assertFalse(result["canonical"])
         self.assertFalse(result["player"]["email_present"])
         self.assertEqual(result["character_name"], "esquecido")
+
+    @override_settings(
+        CSRF_COOKIE_SECURE=True,
+        CSRF_COOKIE_NAME="__Host-gravewright-csrf",
+        SESSION_COOKIE_SECURE=True,
+        CSRF_TRUSTED_ORIGINS=["https://testserver"],
+    )
+    def test_import_uses_runtime_csrf_contract(self):
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.gm)
+        csrf_response = client.get("/api/security/csrf", secure=True)
+        self.assertEqual(csrf_response.status_code, 200)
+        csrf_data = csrf_response.json()
+        self.assertTrue(csrf_data["ready"])
+        self.assertTrue(csrf_data["token"])
+        self.assertTrue(client.cookies[settings.CSRF_COOKIE_NAME]["secure"])
+
+        response = client.post(
+            "/api/kallistis/import/preview",
+            {
+                "campaign_id": str(self.campaign.pk),
+                "file": SimpleUploadedFile(
+                    "kallistis.json",
+                    json.dumps(payload()).encode(),
+                    content_type="application/json",
+                ),
+            },
+            secure=True,
+            HTTP_ORIGIN="https://testserver",
+            HTTP_X_CSRF_TOKEN=csrf_data["token"],
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["valid"])
+
+        source = (
+            Path(__file__).parent
+            / "static"
+            / "gravewright_actors"
+            / "workspace.js"
+        ).read_text()
+        importer_source = source.split("function openKallistisImport", 1)[0]
+        self.assertIn('fetch("/api/security/csrf"', importer_source)
+        self.assertNotIn("document.cookie.match", importer_source)
 
     def test_invalid_schema_and_snapshot_are_rejected(self):
         with self.assertRaisesRegex(KallistisImportError, "invalid_schema"):
