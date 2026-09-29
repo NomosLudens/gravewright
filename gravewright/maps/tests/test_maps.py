@@ -91,6 +91,38 @@ class MapTests(TransactionTestCase):
             self.client.get(f"/api/maps/{m['id']}/manifest").status_code, 404
         )
 
+    @override_settings(
+        GRAVEWRIGHT_PUBLIC_ORIGIN="https://testserver",
+        SESSION_COOKIE_SECURE=True,
+        CSRF_COOKIE_SECURE=True,
+        SESSION_COOKIE_NAME="__Host-gravewright-session",
+        CSRF_COOKIE_NAME="__Host-gravewright-csrf",
+    )
+    def test_upload_accepts_csrf_from_secure_host_cookie(self):
+        from django.test import Client
+
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.gm)
+        client.get("/api/security/csrf", secure=True)
+        csrf = client.cookies["__Host-gravewright-csrf"].value
+        image = BytesIO()
+        Image.new("RGB", (80, 60), "#354b66").save(image, "PNG")
+        response = client.post(
+            f"/api/containers/{self.campaign.pk}/scene-upload",
+            {
+                "name": "Fracture plaza",
+                "map": SimpleUploadedFile(
+                    "map.png", image.getvalue(), content_type="image/png"
+                ),
+                "activate": "false",
+            },
+            secure=True,
+            HTTP_ORIGIN="https://testserver",
+            HTTP_X_CSRF_TOKEN=csrf,
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertIsNone(services.state(self.campaign.pk, self.gm.pk)["activeMapId"])
+
     def test_upload_limits_reject_before_decode_or_file_publication(self):
         from unittest.mock import patch
         self.client.force_login(self.gm)

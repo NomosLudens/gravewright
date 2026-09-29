@@ -121,14 +121,10 @@ function values(el) {
   return data;
 }
 function csrf() {
-  return (
-    document.cookie
-      .split("; ")
-      .find((c) => c.startsWith("gravewright-csrf="))
-      ?.split("=")
-      .slice(1)
-      .join("=") || ""
-  );
+  const cookie = document.cookie
+    .split("; ")
+    .find((value) => /^(?:__Host-)?gravewright-csrf=/.test(value));
+  return cookie?.slice(cookie.indexOf("=") + 1) || "";
 }
 function upload(groupId = "") {
   const el = form(
