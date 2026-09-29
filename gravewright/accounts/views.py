@@ -254,6 +254,19 @@ def kallistis_campaign_link(request):
         return JsonResponse({"valid": False, "error": exception.code}, status=exception.status)
     return JsonResponse(result, status=200)
 
+
+@csrf_exempt
+@require_POST
+def kallistis_player_phrase(request):
+    payload, error = _kallistis_internal_payload(request)
+    if error is not None:
+        return error
+    try:
+        result = services.provision_kallistis_phrase(payload)
+    except services.AuthError as exception:
+        return JsonResponse({"valid": False, "error": exception.code}, status=exception.status)
+    return JsonResponse(result, status=200)
+
 @require_GET
 def gate(request):
     return gate_response(request)

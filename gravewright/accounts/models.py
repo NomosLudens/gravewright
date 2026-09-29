@@ -94,6 +94,21 @@ class KallistisPlayerAccess(models.Model):
         ]
 
 
+class KallistisPhraseCredential(models.Model):
+    """Phrase credential for a KALLISTIS identity, isolated from legacy slot logins."""
+
+    user = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name="kallistis_phrase_credential"
+    )
+    source_user_id = models.CharField(max_length=64, unique=True)
+    player_code = models.CharField(max_length=16, unique=True)
+    phrase_lookup_digest = models.CharField(max_length=64, unique=True, editable=False)
+    phrase_hash = models.CharField(max_length=256, editable=False)
+    revoked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
 class AuthAttempt(models.Model):
     """Shared, database-backed attempt window; contains no raw IP addresses."""
 

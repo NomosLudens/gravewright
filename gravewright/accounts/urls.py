@@ -17,6 +17,8 @@ urlpatterns = [
          name='kallistis-campaign-list'),
     path('api/internal/kallistis/campaigns/link', views.kallistis_campaign_link,
          name='kallistis-campaign-link'),
+    path('api/internal/kallistis/player-phrase', views.kallistis_player_phrase,
+         name='kallistis-player-phrase'),
     path('api/kallistis/characters/<str:character_id>', views.kallistis_character_read,
          name='kallistis-character-read'),
     path('api/security/csrf', views.csrf, name='csrf'),
