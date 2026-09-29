@@ -120,31 +120,34 @@ function values(el) {
   }
   return data;
 }
-function csrf() {
-  const cookie = document.cookie
-    .split("; ")
-    .find((value) => /^(?:__Host-)?gravewright-csrf=/.test(value));
-  return cookie?.slice(cookie.indexOf("=") + 1) || "";
+async function csrfHeaders() {
+  const response = await fetch("/__gravewright/csrf", {
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.token || !result.header)
+    throw new Error("The secure form expired. Try again.");
+  return { [result.header]: result.token };
 }
 function upload(groupId = "") {
   const el = form(
     "upload",
-    (form) =>
-      new Promise((resolve, reject) => {
-        const file = form.querySelector("input[type=file]").files[0];
-        if (!file) {
-          reject(new Error("Choose a map image."));
-          return;
-        }
-        const data = values(form),
-          body = new FormData();
-        body.append("name", data.name);
-        body.append("map", file);
-        body.append("settings", JSON.stringify(data));
-        body.append("activate", String(data.activate));
+    async (form) => {
+      const file = form.querySelector("input[type=file]").files[0];
+      if (!file) throw new Error("Choose a map image.");
+      const headers = await csrfHeaders();
+      const data = values(form),
+        body = new FormData();
+      body.append("name", data.name);
+      body.append("map", file);
+      body.append("settings", JSON.stringify(data));
+      body.append("activate", String(data.activate));
+      return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open("POST", `/api/containers/${campaign}/scene-upload`);
-        xhr.setRequestHeader("X-CSRF-Token", decodeURIComponent(csrf()));
+        for (const [name, value] of Object.entries(headers))
+          xhr.setRequestHeader(name, value);
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable)
             form.querySelector("[data-upload-label]").textContent =
@@ -175,7 +178,8 @@ function upload(groupId = "") {
         };
         xhr.onerror = () => reject(new Error("Could not upload the map."));
         xhr.send(body);
-      }),
+      });
+    },
   );
   populate(el, { ...defaults, groupId });
   const input = el.querySelector("input[type=file]"),

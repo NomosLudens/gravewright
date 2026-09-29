@@ -30,7 +30,7 @@ from .kallistis_import import (
 def publish(campaign):
     layer = get_channel_layer()
     for kind in ("room.actors", "room.tokens", "room.map_layers"):
-        async_to_sync(layer.group_send)(f"table.{campaign.hex}", {"type": kind})
+        async_to_sync(layer.group_send)(f"table.{campaign.pk.hex}", {"type": kind})
 
 
 @require_GET

@@ -103,6 +103,29 @@ class KallistisImportTests(TestCase):
         self.assertEqual(User.objects.count(), before_users)
         self.assertEqual(Membership.objects.count(), before_memberships)
 
+    def test_import_confirm_returns_success_after_realtime_publish(self):
+        import json
+        from . import services
+
+        self.client.force_login(self.gm)
+        response = self.client.post(
+            "/api/kallistis/import/confirm",
+            data=json.dumps(
+                {
+                    "campaign_id": str(self.campaign.pk),
+                    "membership_id": self.membership.pk,
+                    "payload": payload(),
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertTrue(response.json()["valid"])
+        self.assertEqual(
+            [row["name"] for row in services.state(self.campaign.pk, self.gm.pk)["actors"]],
+            ["esquecido"],
+        )
+
     def test_duplicate_character_does_not_create_second_actor(self):
         import_character(self.gm.pk, self.campaign.pk, self.membership.pk, payload())
         before = Actor.objects.count()
