@@ -8,7 +8,7 @@ UPSTREAM_BRANCH=main
 
 ORIGIN=NomosLudens/gravewright
 PRODUCTION_BRANCH=master
-PRODUCTION_HOST=BABY
+PRODUCTION_HOST=MINI
 
 DIRECT_UPSTREAM_DEPLOY=FORBIDDEN
 AUTO_UPSTREAM_DEPLOY=NO
@@ -23,10 +23,12 @@ fetch upstream
 → tests
 → real browser proof
 → merge master
-→ deploy Baby
+→ deploy Mini (`kaline-mini`)
 ```
 
-Baby consumes only `origin/master`. It never pulls `upstream/main` directly.
+Mini (`kaline-mini`, Tailscale) runs the production service from
+`/home/tonyus-dev/gravewright` and consumes only `origin/master`. It never
+pulls `upstream/main` directly.
 
 KALLISTIS customization priority:
 
