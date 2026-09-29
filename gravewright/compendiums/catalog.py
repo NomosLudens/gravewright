@@ -1,8 +1,12 @@
 """Read native data/compendiums collections; never execute package code."""
 import json
 import uuid
+from io import BytesIO
 from pathlib import Path
 from django.conf import settings
+from django.core.files.base import ContentFile
+from django.db import transaction
+from PIL import Image, ImageOps, UnidentifiedImageError
 from gravewright.table.domain import MapError, manage, title, document, number
 from .models import ContentAccess
 
@@ -66,10 +70,23 @@ def command(who, action, payload):
     data=document(entry.get('data',{}))
     import_folder=data.pop('importFolder',None)
     if kind=='actor':
-        from gravewright.actors.models import Actor
+        from gravewright.actors.models import Actor, Asset
         from gravewright.actors.services import command as actor_command
-        created=actor_command(who.campaign_id,who.user_id,'actor.create',{'name':name,'type':entry.get('type','character'),'data':data},uuid.uuid4())
-        result=Actor.objects.get(pk=created['id'])
+        images={image_kind:pack_image(base,entry,image_kind) for image_kind in ('portrait','token') if entry.get(image_kind) is not None}
+        stored=[]
+        try:
+            with transaction.atomic():
+                created=actor_command(who.campaign_id,who.user_id,'actor.create',{'name':name,'type':entry.get('type','character'),'data':data},uuid.uuid4())
+                result=Actor.objects.get(pk=created['id'])
+                for image_kind,(filename,raw) in images.items():
+                    asset=Asset(campaign_id=who.campaign_id,actor=result,kind=image_kind,name=filename[:240])
+                    asset.file.save(uuid.uuid4().hex+'.png',ContentFile(raw),save=False)
+                    stored.append(asset.file)
+                    asset.save()
+        except Exception:
+            for image_file in stored:
+                image_file.delete(save=False)
+            raise
     elif kind=='item':
         from gravewright.items.services import command as create_item
         return {**create_item(who,'create',{'name':name,'type':entry.get('type'),'data':data}),'kind':'item'}
@@ -105,6 +122,24 @@ def command(who, action, payload):
         result.folder=parent;result.save(update_fields=['folder'])
     return {'id':str(result.pk),'kind':kind}
 
+
+
+def pack_image(base,entry,kind):
+    relative=entry.get(kind)
+    if not isinstance(relative,str) or not relative.strip():raise MapError('Invalid actor image.')
+    root=base.resolve()
+    path=(base/relative).resolve()
+    if not path.is_relative_to(root) or not path.is_file() or path.stat().st_size>10_000_000:raise MapError('Invalid actor image.')
+    try:
+        with Image.open(path) as image:
+            if image.format not in {'PNG','JPEG','WEBP'} or image.width*image.height>25_000_000:raise MapError('Invalid actor image.')
+            image.load()
+            out=BytesIO()
+            ImageOps.exif_transpose(image).convert('RGBA').save(out,format='PNG')
+            raw=out.getvalue()
+    except (UnidentifiedImageError,Image.DecompressionBombError,OSError,ValueError):
+        raise MapError('Invalid actor image.') from None
+    return path.name,raw
 
 def import_deck(who,base,name,data):
     from django.core.files.base import ContentFile
