@@ -53,15 +53,23 @@ window.addEventListener('gravewright:connected',()=>{for(const name of modules)w
 window.addEventListener('gravewright:module-scene',()=>{scene=window.gravewrightMaps?.current?.id||null;states.combat={active:false,round:0,turn:0,combatants:[],version:0};publishCombat(states.combat);render('combat');for(const name of modules)window.gravewrightRealtime?.subscribeModule(name,scene);});
 window.addEventListener('gravewright:search-open',({detail})=>{if(detail.type==='item')void refresh('items').then(()=>{const item=states.items.items.find(i=>i.id===detail.id);if(item)itemSheet(item);});if(detail.type==='compendium'){panel('compendiums').hidden=false;void refresh('compendiums');}});
 const combat=panel('combat');
-combat?.addEventListener('change',e=>{if(e.target.dataset.combatInitiative)void command('combat','initiative',{tokenId:e.target.dataset.combatInitiative,value:states.combat.config?.input==='text'?e.target.value:Number(e.target.value),version:Number(e.target.dataset.combatVersion)}).catch(()=>{});});
-combat?.querySelector('[data-initiative-config]')?.addEventListener('submit',e=>{e.preventDefault();void command('combat','configure',{formula:e.target.elements.formula.value,version:states.combat?.version||0}).catch(()=>{});});
+combat?.addEventListener('change',e=>{
+ const id=e.target.dataset.combatSide||e.target.dataset.combatActivations;
+ if(e.target.dataset.combatSide)void command('combat','side',{tokenId:id,side:e.target.value,version:states.combat?.version||0}).catch(error=>notify('combat',error));
+ if(e.target.dataset.combatActivations)void command('combat','activations',{tokenId:id,value:Number(e.target.value),version:states.combat?.version||0}).catch(error=>notify('combat',error));
+});
 combat?.addEventListener('click',async e=>{const b=e.target.closest('[data-combat-action]');if(!b)return;const action=b.dataset.combatAction,tokenId=b.dataset.combatantId;try{
  if(action==='combatants/add-actor'){const r=await fetch(`/api/containers/${table}/actors`);if(!r.ok)throw Error('Unable to load actors.');const data=await r.json();dialog('Add actor',[{name:'actor',label:'Actor',options:data.actors.map(a=>({value:a.id,label:a.name}))}],form=>command('combat','add',{actorId:form.elements.actor.value,version:states.combat?.version||0}));return;}
  if(action==='combatants/add-selected'){for(const id of window.gravewrightTokenSelection||[])await command('combat','add',{tokenId:id,version:states.combat?.version||0});return;}
  if(action==='token/sheet'){const token=(window.gravewrightTokenState?.tokens||[]).find(t=>t.id===b.dataset.tokenId);if(token)window.gravewrightActors.open(token.actorId,token);return;}
  if(action==='token/focus'){window.dispatchEvent(new CustomEvent('gravewright:focus-token',{detail:{id:b.dataset.tokenId}}));return;}
- const actions={end:'stop',start:'start','turn/next':'next','turn/previous':'previous','round/next':'next-round','round/previous':'previous-round','turn/set':'set-turn','order/up':'order-up','order/down':'order-down','combatants/remove':'remove','initiative/roll-all':'roll','initiative/roll-npcs':'roll','initiative/roll-missing':'roll','initiative/roll-one':'roll','flags/hidden':'toggle','flags/defeated':'toggle'};
- await command('combat',actions[action],{tokenId,scope:action.startsWith('initiative/roll-')?action.slice('initiative/roll-'.length):undefined,version:states.combat?.version||0,...action==='flags/hidden'?{hidden:b.dataset.value==='1'}:{},...action==='flags/defeated'?{defeated:b.dataset.value==='1'}:{}});
+ if(action==='initiative/roll-sides'){
+  const friendlyRepresentative=combat.querySelector('[data-initiative-representative="friendly"]')?.value;
+  const hostileRepresentative=combat.querySelector('[data-initiative-representative="hostile"]')?.value;
+  await command('combat','roll-initiative',{friendlyRepresentative,hostileRepresentative,version:states.combat?.version||0});return;
+ }
+ const actions={end:'stop',start:'start','turn/next':'next','turn/previous':'previous','round/next':'next-round','round/previous':'previous-round','turn/set':'set-turn','order/up':'order-up','order/down':'order-down','combatants/remove':'remove','initiative/first-side':'choose-first-side','flags/hidden':'toggle','flags/defeated':'toggle'};
+ await command('combat',actions[action],{tokenId,side:b.dataset.side,version:states.combat?.version||0,...action==='flags/hidden'?{hidden:b.dataset.value==='1'}:{},...action==='flags/defeated'?{defeated:b.dataset.value==='1'}:{}});
  }catch(error){notify('combat',error);}});
 window.addEventListener('gravewright:token-selection',()=>{if(combat&&!combat.hidden&&!combat.contains(document.activeElement))render('combat');});
 window.gravewrightItems={open:async id=>{await refresh('items');const item=states.items.items.find(i=>i.id===id);if(item)itemSheet(item);}};
