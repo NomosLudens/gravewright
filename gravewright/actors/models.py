@@ -33,9 +33,10 @@ class Actor(models.Model):
 
 
 class KallistisCharacterLink(models.Model):
-    """Stable identity link for a manually imported KALLISTIS character."""
+    """Stable identity link for one KALLISTIS character in one source Mesa."""
 
-    kallistis_character_id = models.CharField(max_length=128, unique=True)
+    kallistis_character_id = models.CharField(max_length=128)
+    source_mesa_id = models.CharField(max_length=128, blank=True, default="")
     actor = models.OneToOneField(
         Actor, on_delete=models.CASCADE, related_name="kallistis_link"
     )
@@ -43,6 +44,14 @@ class KallistisCharacterLink(models.Model):
     source_state = models.CharField(max_length=32)
     canonical = models.BooleanField(default=False)
     imported_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["kallistis_character_id", "source_mesa_id"],
+                name="actors_kallistis_character_mesa_link",
+            ),
+        ]
 
 class Asset(models.Model):
     """Campaign PDF template or actor portrait/token image served after authorization."""

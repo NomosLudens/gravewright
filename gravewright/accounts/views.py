@@ -213,6 +213,29 @@ def kallistis_provision(request):
     return JsonResponse(result, status=200)
 
 
+@csrf_exempt
+@require_POST
+def kallistis_character_sync(request):
+    signature_error = verify_kallistis_provision_signature(request)
+    if signature_error is not None:
+        return signature_error
+    if len(request.body) > 2 * 1024 * 1024:
+        return JsonResponse({"valid": False, "error": "request_too_large"}, status=413)
+    from gravewright.actors.kallistis_import import KallistisImportError, sync_character
+
+    try:
+        payload = json.loads(request.body)
+        result = sync_character(payload)
+    except (ValueError, UnicodeDecodeError):
+        return JsonResponse({"valid": False, "error": "invalid_json"}, status=400)
+    except KallistisImportError as error:
+        return JsonResponse({"valid": False, "error": error.code}, status=error.status)
+    from gravewright.actors.views import publish
+
+    publish(result["campaign_id"])
+    return JsonResponse(result, status=200)
+
+
 def _kallistis_internal_payload(request):
     signature_error = verify_kallistis_provision_signature(request)
     if signature_error is not None:

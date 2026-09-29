@@ -4,10 +4,12 @@ from copy import deepcopy
 import json
 import math
 import re
+from uuid import UUID
 
 from django.db import transaction
 
-from gravewright.campaigns.models import Campaign, Membership
+from gravewright.campaigns.models import Campaign, KallistisCampaignLink, Membership
+from gravewright.accounts.models import KallistisIdentity
 from gravewright.pdf_system.schema import defaults, normalize
 
 from .models import Actor, KallistisCharacterLink
@@ -90,14 +92,17 @@ def _walk(value, path="snapshot", depth=0):
         raise KallistisImportError("invalid_snapshot", f"Invalid value at {path}.")
 
 
-def validate_payload(payload):
+def validate_payload(payload, allow_automatic=False):
     if not isinstance(payload, dict) or set(payload) - TOP_LEVEL_KEYS:
         raise KallistisImportError("invalid_schema")
     if payload.get("schema") != "kallistis.gravewright.character":
         raise KallistisImportError("invalid_schema")
     if payload.get("schema_version") != 1:
         raise KallistisImportError("unsupported_schema_version")
-    if payload.get("export_mode") != "manual_runtime_snapshot":
+    export_mode = payload.get("export_mode")
+    if export_mode != "manual_runtime_snapshot" and not (
+        allow_automatic and export_mode == "automatic_runtime_sync"
+    ):
         raise KallistisImportError("invalid_export_mode")
     if type(payload.get("canonical")) is not bool:
         raise KallistisImportError("invalid_export")
@@ -106,14 +111,16 @@ def validate_payload(payload):
     if mesa is not None:
         if not isinstance(mesa, dict) or set(mesa) != MESA_KEYS:
             raise KallistisImportError("invalid_export")
-        _string(mesa.get("id"), "mesa.id", 128)
+        mesa_id = _string(mesa.get("id"), "mesa.id", 128)
         _string(mesa.get("name"), "mesa.name", 120)
+    else:
+        mesa_id = ""
     player = payload.get("player")
     if not isinstance(player, dict) or set(player) - PLAYER_KEYS:
         raise KallistisImportError("invalid_export")
-    _optional_string(player.get("kallistis_user_id"), "player.kallistis_user_id", 128)
     _optional_string(player.get("display_name"), "player.display_name", 120)
     _optional_string(player.get("email"), "player.email", 320)
+    player_id = _optional_string(player.get("kallistis_user_id"), "player.kallistis_user_id", 128)
     character = payload.get("character")
     if not isinstance(character, dict) or set(character) - CHARACTER_KEYS:
         raise KallistisImportError("invalid_export")
@@ -137,6 +144,16 @@ def validate_payload(payload):
         raise KallistisImportError("invalid_snapshot")
     if not isinstance(snapshot.get("atributosBase"), dict):
         raise KallistisImportError("invalid_snapshot")
+    if export_mode == "automatic_runtime_sync" and (
+        not mesa_id or not player_id or source_state != "approved" or not payload["canonical"]
+    ):
+        raise KallistisImportError("invalid_automatic_sync")
+    if export_mode == "automatic_runtime_sync":
+        try:
+            mesa_id = str(UUID(mesa_id))
+            player_id = str(UUID(player_id))
+        except (TypeError, ValueError, AttributeError):
+            raise KallistisImportError("invalid_automatic_sync") from None
     return {
         "source_state": source_state,
         "canonical": payload["canonical"],
@@ -144,6 +161,9 @@ def validate_payload(payload):
         "name": name,
         "snapshot": snapshot,
         "payload": payload,
+        "mesa_id": mesa_id,
+        "player_id": player_id,
+        "export_mode": export_mode,
     }
 
 
@@ -287,9 +307,15 @@ def import_character(user_id, campaign_id, membership_id, payload):
     )
     if player is None:
         raise KallistisImportError("player_not_in_campaign", status=403)
+    source_mesa_id = str(
+        KallistisCampaignLink.objects.filter(campaign=campaign)
+        .values_list("source_mesa_id", flat=True)
+        .first()
+        or ""
+    )
     existing = (
         KallistisCharacterLink.objects.select_related("actor")
-        .filter(kallistis_character_id=parsed["character_id"])
+        .filter(kallistis_character_id=parsed["character_id"], source_mesa_id=source_mesa_id)
         .first()
     )
     if existing is not None:
@@ -303,6 +329,7 @@ def import_character(user_id, campaign_id, membership_id, payload):
     )
     KallistisCharacterLink.objects.create(
         kallistis_character_id=parsed["character_id"],
+        source_mesa_id=source_mesa_id,
         actor=actor,
         source_schema_version=1,
         source_state=parsed["source_state"],
@@ -314,4 +341,92 @@ def import_character(user_id, campaign_id, membership_id, payload):
         "player_id": str(player.user_id),
         "player_name": player.user.name,
         "campaign_id": str(campaign.pk),
+    }
+
+
+@transaction.atomic
+def sync_character(payload):
+    """Upsert canonical KALLISTIS fields for the exact linked Mesa in place."""
+    parsed = validate_payload(payload, allow_automatic=True)
+    if parsed["export_mode"] != "automatic_runtime_sync":
+        raise KallistisImportError("invalid_export_mode")
+    campaign_link = KallistisCampaignLink.objects.select_for_update().filter(
+        source_system="kallistis", source_mesa_id=parsed["mesa_id"]
+    ).select_related("campaign").first()
+    if campaign_link is None:
+        raise KallistisImportError("campaign_mapping_not_found", status=404)
+    identity = KallistisIdentity.objects.filter(
+        source_system="kallistis", source_user_id=parsed["player_id"], user__is_active=True
+    ).select_related("user").first()
+    if identity is None:
+        raise KallistisImportError("player_identity_not_found", status=404)
+    membership = Membership.objects.filter(
+        campaign=campaign_link.campaign,
+        user=identity.user,
+        role=Membership.Role.PLAYER,
+    ).first()
+    if membership is None:
+        raise KallistisImportError("player_not_in_campaign", status=403)
+
+    link = KallistisCharacterLink.objects.select_for_update().filter(
+        kallistis_character_id=parsed["character_id"], source_mesa_id=parsed["mesa_id"]
+    ).select_related("actor").first()
+    next_data = actor_data(parsed)
+    if link is None:
+        actor = Actor.objects.create(
+            campaign=campaign_link.campaign,
+            name=parsed["name"],
+            type="character",
+            data=next_data,
+            permissions={str(identity.user_id): "owner"},
+        )
+        link = KallistisCharacterLink.objects.create(
+            kallistis_character_id=parsed["character_id"],
+            source_mesa_id=parsed["mesa_id"],
+            actor=actor,
+            source_schema_version=1,
+            source_state=parsed["source_state"],
+            canonical=True,
+        )
+        created = True
+    else:
+        actor = Actor.objects.select_for_update().get(pk=link.actor_id)
+        merged_data = deepcopy(actor.data) if isinstance(actor.data, dict) else {}
+        fields = merged_data.get("fields", {})
+        fields = deepcopy(fields) if isinstance(fields, dict) else {}
+        fields.update(next_data.get("fields", {}))
+        for key, value in next_data.items():
+            if key in {"fields", "runtime"}:
+                continue
+            merged_data[key] = value
+        runtime = merged_data.get("runtime", {})
+        runtime = deepcopy(runtime) if isinstance(runtime, dict) else {}
+        next_runtime = next_data.get("runtime", {})
+        next_runtime = next_runtime if isinstance(next_runtime, dict) else {}
+        attributes = runtime.get("attributes", {})
+        attributes = deepcopy(attributes) if isinstance(attributes, dict) else {}
+        attributes.update(next_runtime.get("attributes", {}))
+        runtime["attributes"] = attributes
+        merged_data["runtime"] = runtime
+        merged_data["fields"] = fields
+        permissions = deepcopy(actor.permissions) if isinstance(actor.permissions, dict) else {}
+        permissions[str(identity.user_id)] = "owner"
+        actor.name = parsed["name"]
+        actor.data = merged_data
+        actor.permissions = permissions
+        actor.version += 1
+        actor.sheet_version += 1
+        actor.save(update_fields=["name", "data", "permissions", "version", "sheet_version", "updated_at"])
+        link.source_state = parsed["source_state"]
+        link.canonical = True
+        link.save(update_fields=["source_state", "canonical"])
+        created = False
+    return {
+        "valid": True,
+        "source_mesa_id": parsed["mesa_id"],
+        "campaign_id": str(campaign_link.campaign_id),
+        "kallistis_character_id": parsed["character_id"],
+        "actor_id": str(actor.pk),
+        "created": created,
+        "updated": not created,
     }

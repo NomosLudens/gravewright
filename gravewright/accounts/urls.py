@@ -13,6 +13,8 @@ urlpatterns = [
     path('sso/kallistis', views.kallistis_handoff, name='kallistis-handoff'),
     path('api/internal/kallistis/provision/mesa', views.kallistis_provision,
          name='kallistis-provision-mesa'),
+    path('api/internal/kallistis/sync/character', views.kallistis_character_sync,
+         name='kallistis-character-sync'),
     path('api/internal/kallistis/campaigns/list', views.kallistis_campaign_list,
          name='kallistis-campaign-list'),
     path('api/internal/kallistis/campaigns/link', views.kallistis_campaign_link,
