@@ -685,6 +685,62 @@ body[data-game-layout="classic"] .game-panel[data-modal-id^="panel-settings-"] .
     border-bottom: 1px solid var(--border);
 }
 
+.gw-combat-initiative-setup {
+    display: grid;
+    gap: 6px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.gw-combat-initiative-setup__representatives,
+.gw-combat-combatant__side-config {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.gw-combat-initiative-setup select,
+.gw-combat-combatant__side-config select,
+.gw-combat-combatant__side-config input {
+    min-width: 0;
+    max-width: 10rem;
+    padding: 3px 5px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: rgba(0, 0, 0, 0.35);
+    color: var(--text);
+}
+
+.gw-combat-combatant__side-config input {
+    width: 3.4rem;
+}
+
+.gw-combat-initiative-setup__result {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.gw-combat-activation-sequence {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    padding: 4px 0 8px;
+}
+
+.gw-combat-activation-sequence__item {
+    flex: 0 0 auto;
+    padding: 3px 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: 0.72rem;
+}
+
+.gw-combat-activation-sequence__item.is-friendly { border-color: #79c39a; }
+.gw-combat-activation-sequence__item.is-hostile { border-color: #e17b7b; }
+.gw-combat-activation-sequence__item.is-current { color: var(--text); background: var(--surface-raised); font-weight: 700; }
+
 
 .gw-combat-icon {
     display: inline-grid;

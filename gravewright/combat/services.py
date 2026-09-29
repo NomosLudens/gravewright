@@ -21,6 +21,7 @@ from .models import Encounter
 
 DEFENSES = {"GUARDA", "FORTITUDE", "INTEGRIDADE"}
 MOVEMENT_MODES = {"GRID", "ZONES"}
+COMBAT_SIDES = {"friendly", "hostile"}
 MAX_EVENTS = 256
 
 
@@ -59,7 +60,7 @@ def _config(row):
     value = row.config if isinstance(row.config, dict) else {}
     value.setdefault("movement_mode", "GRID")
     value.setdefault("movement_allowance", {"GRID": 6, "ZONES": 2})
-    value.setdefault("initiative_status", "BLOCKED_CANONICAL_CONFIRMATION")
+    value["initiative_status"] = "SIDE_ALTERNATION"
     value.setdefault("processed_events", {})
     value.setdefault("resolutions", [])
     value.setdefault("movement_overrides", [])
@@ -107,6 +108,37 @@ def _remove_condition(state, kind):
 
 def _turn_key(row, entry, phase):
     return f"{phase}:{row.round}:{identity(entry)}"
+
+
+def _activation_order(row, first_side=None):
+    config = _config(row)
+    first_side = first_side or config.get("first_side")
+    if first_side not in COMBAT_SIDES:
+        raise MapError("Roll side initiative and choose which side acts first.")
+    queues = {side: [] for side in COMBAT_SIDES}
+    for entry in row.combatants:
+        side = entry.get("side")
+        if side in COMBAT_SIDES and not entry.get("defeated"):
+            try:
+                count = int(number(entry.get("activations", 1), 1, 12))
+            except (TypeError, ValueError):
+                raise MapError("Activations per combatant must be between 1 and 12.") from None
+            queues[side].extend([identity(entry)] * count)
+    order = []
+    other_side = "hostile" if first_side == "friendly" else "friendly"
+    while queues["friendly"] or queues["hostile"]:
+        for side in (first_side, other_side):
+            if queues[side]:
+                order.append(queues[side].pop(0))
+    config["activation_order"] = order
+    return order
+
+
+def _current_entry(row):
+    order = _config(row).get("activation_order") or []
+    if 0 <= row.turn < len(order):
+        return _actor_entry(row, order[row.turn])
+    return None
 
 
 def _start_turn(row, entry):
@@ -190,11 +222,15 @@ def _serialized_combatant(row, entry, who, target):
         return None
     data = tokens.data(token) if token else {}
     index = row.combatants.index(entry)
+    activation_order = _config(row).get("activation_order") or []
+    current_id = activation_order[row.turn] if row.active and row.turn < len(activation_order) else None
+    next_id = activation_order[row.turn + 1] if row.active and row.turn + 1 < len(activation_order) else (activation_order[0] if row.active and activation_order else None)
     controlled = tokens.control(token, who) if token else actors.access(actor, who, True)
     actor_state = _actor_runtime(actor)
     public_entry = dict(entry)
     if who.role != "gm" and not controlled:
         public_entry.pop("run_used", None)
+    side_score = (_config(row).get("side_initiative") or {}).get("totals", {}).get(entry.get("side"))
     movement = None
     if who.role == "gm" or controlled:
         config = _config(row)
@@ -215,7 +251,7 @@ def _serialized_combatant(row, entry, who, target):
             "runUsed": run_used,
             "canRun": bool(
                 row.active
-                and row.combatants.index(entry) == row.turn
+                and identity(entry) == current_id
                 and not run_used
                 and not immobile
                 and action_economy.get("action", 0) > 0
@@ -227,10 +263,11 @@ def _serialized_combatant(row, entry, who, target):
         "position": index + 1, "conditions_count": len(_actor_runtime(actor)["conditions"]),
         "bar": {"value": value, "max": maximum, "percent": value / maximum * 100 if maximum else 0} if controlled else None,
         **public_entry, "id": identity(entry), "token_id": entry.get("tokenId"), "actor_id": str(actor.pk),
+        "side_score": side_score,
         "name": data.get("token", {}).get("name") or actor.name, "canControl": controlled,
-        "current": row.active and index == row.turn, "is_current": row.active and index == row.turn,
-        "is_next": row.active and index == (row.turn + 1) % len(row.combatants),
-        "has_acted": row.active and index < row.turn,
+        "current": row.active and identity(entry) == current_id, "is_current": row.active and identity(entry) == current_id,
+        "is_next": row.active and identity(entry) == next_id,
+        "has_acted": row.active and identity(entry) in activation_order[:row.turn],
         "can_move_up": index > 0, "can_move_down": index < len(row.combatants) - 1,
         "defenses": defenses(actor),
         "runtime": actor_state if who.role == "gm" or controlled else None,
@@ -247,14 +284,21 @@ def state(who, scene_id=None):
         return dict(sceneId=str(target.pk), active=False, round=0, turn=0, combatants=[], version=0)
     rows = [item for entry in row.combatants if (item := _serialized_combatant(row, entry, who, target))]
     config = _config(row)
+    visible_by_id = {item["id"]: item for item in rows}
+    order = config.get("activation_order") or []
+    turn_order = [
+        {"id": actor_id, "name": visible_by_id[actor_id]["name"], "side": visible_by_id[actor_id].get("side"), "current": slot == row.turn}
+        for slot, actor_id in enumerate(order) if actor_id in visible_by_id
+    ]
     return {
         "sceneId": str(target.pk), "active": row.active, "round": row.round, "turn": row.turn,
         "combatants": rows,
         "current_name": next((item["name"] for item in rows if item["is_current"]), ""),
         "next_name": next((item["name"] for item in rows if item["is_next"]), ""),
         "version": row.version,
-        "config": {**config, "input": "roll" if config.get("formula") else "text"},
-        "initiative_formula_status": "BLOCKED_CANONICAL_CONFIRMATION",
+        "turn_order": turn_order,
+        "config": config,
+        "initiative_status": "SIDE_ALTERNATION",
     }
 
 
@@ -293,7 +337,7 @@ def _resolve_action(row, who, payload):
         raise MapError("Character not controlled.", "forbidden")
     if row.active and who.role != "gm":
         entry = next((item for item in row.combatants if (candidate := actor_for(item)) and candidate.pk == attacker.pk), None)
-        if entry is None or row.combatants[row.turn] is not entry:
+        if entry is None or identity(_current_entry(row) or {}) != identity(entry):
             raise MapError("It is not this character's turn.", "not_your_turn")
         if _actor_runtime(attacker)["rules"].get("action_economy", {}).get("action", 0) < 1:
             raise MapError("Action already spent.", "action_spent")
@@ -430,7 +474,7 @@ def command(who, action, p):
         if not row.active or not row.combatants:
             raise MapError("Correr is available only during active combat.")
         entry = _entry_for_target(row, p.get("tokenId", p.get("actorId")))
-        if row.combatants[row.turn] is not entry:
+        if not _current_entry(row) or identity(_current_entry(row)) != identity(entry):
             raise MapError("Correr is available only on this character's turn.", "not_your_turn")
         if who.role != "gm" and not _controlled(entry, who):
             raise MapError("Character not controlled.", "forbidden")
@@ -458,51 +502,142 @@ def command(who, action, p):
             if token.scene_id != target.pk:
                 raise MapError("Token is not in this scene.")
             entry = {"tokenId": str(token.pk)}
+            if token.disposition in COMBAT_SIDES:
+                entry["side"] = token.disposition
         else:
             entry = {"actorId": str(actors.get(p.get("actorId"), who).pk)}
         if not any(identity(c) == identity(entry) for c in row.combatants):
-            row.combatants.append({**entry, "initiative": None, "defeated": False, "hidden": False, "movement_used": 0, "run_used": False})
+            row.combatants.append({**entry, "initiative": None, "activations": 1, "defeated": False, "hidden": False, "movement_used": 0, "run_used": False})
+            config.pop("side_initiative", None)
+            config.pop("first_side", None)
+            config.pop("activation_order", None)
     elif action == "remove":
         _require_gm(who)
         target_id = str(p.get("tokenId", p.get("actorId")))
         removed_index = next((i for i, entry in enumerate(row.combatants) if identity(entry) == target_id), None)
         if removed_index is not None:
+            current_id = identity(_current_entry(row) or {})
             row.combatants.pop(removed_index)
             if not row.combatants:
                 row.active, row.round, row.turn = False, 0, 0
+                config.pop("side_initiative", None)
+                config.pop("first_side", None)
+                config.pop("activation_order", None)
             else:
-                if removed_index < row.turn:
-                    row.turn -= 1
-                row.turn = min(row.turn, len(row.combatants) - 1)
-    elif action == "configure":
+                if row.active and config.get("first_side") in COMBAT_SIDES:
+                    if not any(entry.get("side") == side and not entry.get("defeated") for entry in row.combatants for side in ("friendly", "hostile")):
+                        row.active, row.round, row.turn = False, 0, 0
+                    else:
+                        order = _activation_order(row)
+                        row.turn = next((slot for slot, actor_id in enumerate(order) if actor_id == current_id), min(row.turn, len(order) - 1))
+                else:
+                    config.pop("side_initiative", None)
+                    config.pop("first_side", None)
+                    config.pop("activation_order", None)
+    elif action == "side":
         _require_gm(who)
-        formula = p.get("formula", "")
-        if not isinstance(formula, str) or len(formula) > 24:
-            raise MapError("Invalid initiative formula.")
-        config["formula"] = formula
+        if row.active:
+            raise MapError("Combatant sides can be changed between rounds only after combat stops.")
+        entry = _entry_for_target(row, p.get("tokenId", p.get("actorId")))
+        side = p.get("side")
+        if side in COMBAT_SIDES:
+            entry["side"] = side
+        elif side == "":
+            entry.pop("side", None)
+        else:
+            raise MapError("Choose Friendly or Hostile, or leave it unassigned.")
+        config.pop("side_initiative", None)
+        config.pop("first_side", None)
+        config.pop("activation_order", None)
+    elif action == "activations":
+        _require_gm(who)
+        if row.active:
+            raise MapError("Activation counts can be changed only between encounters.")
+        entry = _entry_for_target(row, p.get("tokenId", p.get("actorId")))
+        try:
+            value = int(p.get("value"))
+        except (TypeError, ValueError):
+            raise MapError("Activations per combatant must be a whole number from 1 to 12.") from None
+        if str(value) != str(p.get("value")) or not 1 <= value <= 12:
+            raise MapError("Activations per combatant must be a whole number from 1 to 12.")
+        entry["activations"] = value
+        config.pop("side_initiative", None)
+        config.pop("first_side", None)
+        config.pop("activation_order", None)
+    elif action == "roll-initiative":
+        _require_gm(who)
+        if row.active:
+            raise MapError("Roll side initiative before starting combat.")
+        representatives = {}
+        for side, field in (("friendly", "friendlyRepresentative"), ("hostile", "hostileRepresentative")):
+            rep_id = str(p.get(field, ""))
+            entry = _actor_entry(row, rep_id)
+            if not entry or entry.get("side") != side or entry.get("defeated"):
+                raise MapError(f"Choose a living {side} representative from the assigned side.")
+            actor = actor_for(entry)
+            if not actor:
+                raise MapError("Initiative representative has no character sheet.")
+            actor_state = _actor_runtime(actor)
+            modifier = actor_state["attributes"].get("agilidade", 0) + actor_state.get("skills", {}).get("percepcao", 0)
+            representatives[side] = {"entry": entry, "actor": actor, "modifier": modifier}
+        if not any(item.get("side") == "friendly" for item in row.combatants) or not any(item.get("side") == "hostile" for item in row.combatants):
+            raise MapError("Assign at least one combatant to each side before rolling.")
+        rolls = {side: [] for side in COMBAT_SIDES}
+        totals = {}
+        while True:
+            for side in ("friendly", "hostile"):
+                rep = representatives[side]
+                roll = evaluate_kallistis(rep["modifier"], 1)
+                rolls[side].append({
+                    "representativeId": identity(rep["entry"]),
+                    "representative": rep["actor"].name,
+                    "modifier": rep["modifier"],
+                    **roll,
+                })
+                totals[side] = roll["total"]
+            if totals["friendly"] != totals["hostile"]:
+                break
+        winner = "friendly" if totals["friendly"] > totals["hostile"] else "hostile"
+        config["side_initiative"] = {"rolls": rolls, "totals": totals, "winner": winner, "firstSide": None}
+        config.pop("first_side", None)
+        config.pop("activation_order", None)
+    elif action == "choose-first-side":
+        _require_gm(who)
+        if row.active:
+            raise MapError("Choose the first side before starting combat.")
+        initiative = config.get("side_initiative") or {}
+        first_side = p.get("side")
+        if first_side not in COMBAT_SIDES or initiative.get("winner") not in COMBAT_SIDES:
+            raise MapError("Roll side initiative first.")
+        if first_side not in {initiative["winner"], "hostile" if initiative["winner"] == "friendly" else "friendly"}:
+            raise MapError("The winning side chooses which side acts first.")
+        config["first_side"] = first_side
+        initiative["firstSide"] = first_side
+        _activation_order(row, first_side)
     elif action == "initiative":
         _require_gm(who)
-        entry = _entry_for_target(row, p.get("tokenId", p.get("actorId")))
-        entry["initiative"] = number(p.get("value"), -1e6, 1e6) if config.get("formula") else str(p.get("value", ""))[:24]
-        if config.get("formula"):
-            row.combatants.sort(key=lambda item: item["initiative"] if item["initiative"] is not None else -float("inf"), reverse=True)
-            row.turn = 0
-    elif action == "roll":
-        _require_gm(who)
-        raise MapError("Initiative formula is blocked pending canonical confirmation.")
+        raise MapError("Individual initiative is not used; roll once for each side.")
     elif action == "toggle":
         _require_gm(who)
         entry = _entry_for_target(row, p.get("tokenId", p.get("actorId")))
         for field in ("hidden", "defeated"):
             if field in p:
                 entry[field] = boolean(p[field])
+        if not row.active and "defeated" in p:
+            config.pop("side_initiative", None)
+            config.pop("first_side", None)
+            config.pop("activation_order", None)
     elif action in ("order-up", "order-down", "set-turn"):
         _require_gm(who)
+        if action in {"order-up", "order-down"} and row.active:
+            raise MapError("Combat order can be edited only before initiative is rolled.")
         index = next((i for i, c in enumerate(row.combatants) if identity(c) == str(p.get("tokenId", p.get("actorId")))), None)
         if index is None:
             raise MapError("Combatant not found.")
         if action == "set-turn":
-            row.turn = index
+            identity_id = identity(row.combatants[index])
+            order = config.get("activation_order") or []
+            row.turn = next((slot for slot, actor_id in enumerate(order) if actor_id == identity_id), 0)
         else:
             target_index = max(0, min(len(row.combatants) - 1, index + (-1 if action == "order-up" else 1)))
             if target_index != index:
@@ -511,68 +646,109 @@ def command(who, action, p):
                 elif target_index == row.turn:
                     row.turn = index
                 row.combatants[index], row.combatants[target_index] = row.combatants[target_index], row.combatants[index]
+                config.pop("side_initiative", None)
+                config.pop("first_side", None)
+                config.pop("activation_order", None)
     elif action in ("next-round", "previous-round"):
         _require_gm(who)
         if not row.active:
             raise MapError("Combat has not started.")
         if row.combatants:
-            ending_entry = row.combatants[row.turn]
+            ending_entry = _current_entry(row)
             _end_turn(row, ending_entry)
         row.round = max(1, row.round + (-1 if action == "previous-round" else 1))
         row.turn = 0
         for entry in row.combatants:
             _reset_movement(entry)
-        if row.combatants:
+        order = _activation_order(row)
+        if not order:
+            row.active, row.round, row.turn = False, 0, 0
+        while order and _current_entry(row).get("defeated"):
+            row.turn += 1
+            if row.turn >= len(order):
+                row.turn = 0
+        if row.active and row.combatants:
             advance_effects(
                 who.campaign_id,
                 ending_entry.get("tokenId") if ending_entry else None,
                 actor_id=ending_entry.get("actorId") if ending_entry else None,
                 new_round=action == "next-round",
             )
-        if row.combatants:
-            _start_turn(row, row.combatants[row.turn])
+        if row.active and row.combatants:
+            _start_turn(row, _current_entry(row))
     elif action == "start":
         _require_gm(who)
         if not row.combatants:
             raise MapError("Add combatants first.")
+        if config.get("first_side") not in COMBAT_SIDES:
+            raise MapError("Roll side initiative and let the winner choose which side acts first.")
         row.active, row.round, row.turn = True, 1, 0
         for entry in row.combatants:
             _reset_movement(entry)
-        _start_turn(row, row.combatants[0])
+        order = _activation_order(row)
+        while order and _current_entry(row).get("defeated"):
+            row.turn += 1
+            if row.turn >= len(order):
+                row.turn = 0
+        _start_turn(row, _current_entry(row))
     elif action == "stop":
         _require_gm(who)
         row.active, row.round, row.turn = False, 0, 0
+        config.pop("side_initiative", None)
+        config.pop("first_side", None)
+        config.pop("activation_order", None)
     elif action in ("next", "previous"):
         if not row.active or not row.combatants:
             raise MapError("Combat has not started.")
-        current = row.combatants[row.turn]
+        order = config.get("activation_order") or []
+        if not order:
+            raise MapError("Combat has no side activation order.")
+        current = _current_entry(row)
+        if current is None:
+            raise MapError("This combat has no side activation sequence. Stop it, assign sides, and roll initiative.")
         if who.role != "gm" and (action != "next" or not _controlled(current, who)):
             raise MapError("It is not your turn.", "forbidden")
         if action == "previous":
-            for _ in row.combatants:
+            for _ in order:
                 row.turn -= 1
                 if row.turn < 0:
-                    row.turn, row.round = len(row.combatants) - 1, max(1, row.round - 1)
-                if not row.combatants[row.turn].get("defeated"):
+                    row.round = max(1, row.round - 1)
+                    order = _activation_order(row)
+                    if not order:
+                        row.active, row.round, row.turn = False, 0, 0
+                        break
+                    row.turn = len(order) - 1
+                previous_entry = _current_entry(row)
+                if previous_entry and not previous_entry.get("defeated"):
                     break
         else:
-            previous_round = row.round
             _end_turn(row, current)
-            for _ in row.combatants:
-                row.turn += 1
-                if row.turn >= len(row.combatants):
-                    row.turn, row.round = 0, row.round + 1
-                if not row.combatants[row.turn].get("defeated"):
-                    break
+            previous_round = row.round
+            if not any(not entry.get("defeated") for entry in row.combatants):
+                row.active, row.round, row.turn = False, 0, 0
+            else:
+                for _ in range(len(order) + len(row.combatants) + 1):
+                    row.turn += 1
+                    if row.turn >= len(order):
+                        row.round += 1
+                        row.turn = 0
+                        order = _activation_order(row)
+                        if not order:
+                            row.active, row.round, row.turn = False, 0, 0
+                            break
+                    next_candidate = _current_entry(row)
+                    if next_candidate and not next_candidate.get("defeated"):
+                        break
             advance_effects(
                 who.campaign_id,
                 current.get("tokenId"),
                 actor_id=current.get("actorId"),
                 new_round=row.round != previous_round,
             )
-        for entry in row.combatants:
-            _reset_movement(entry)
-        _start_turn(row, row.combatants[row.turn])
+        next_entry = _current_entry(row) if row.active else None
+        if next_entry:
+            _reset_movement(next_entry)
+            _start_turn(row, next_entry)
     else:
         raise MapError("Unknown combat command.")
     row.config = config
@@ -603,7 +779,7 @@ def movement_context(token, who, points, *, gm_override=False):
         raise MapError("Movement blocked by IMOBILIZADO.", "immobilized")
     override = who.role == "gm" and gm_override is True
     if not override:
-        if row.combatants[row.turn] is not entry:
+        if identity(_current_entry(row) or {}) != identity(entry):
             raise MapError("It is not this token's turn; GM override is required.", "not_your_turn")
         if entry.get("movement_used", 0) + distance > allowance:
             raise MapError("Movement exceeds the current allowance.", "movement_exceeded")

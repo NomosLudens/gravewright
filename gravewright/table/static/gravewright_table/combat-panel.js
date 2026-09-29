@@ -22,12 +22,20 @@
         waitingGm: "Waiting for the GM.",
         round: "Round",
         turn: "Turn",
-        initiative: "Initiative",
-        rollAll: "Roll initiative",
-        rollNpcs: "Roll for NPCs",
-        rollMissing: "Roll the missing ones",
-        rollOne: "Roll for this combatant",
-        setInitiative: "Set initiative",
+        initiative: "Side initiative",
+        friendly: "Friendly side",
+        hostile: "Hostile side",
+        unassigned: "Assign side",
+        activations: "Activations per round",
+        rollSides: "Roll side representatives",
+        chooseFirst: "Winner: choose which side acts first",
+        firstFriendly: "Friendly side first",
+        firstHostile: "Hostile side first",
+        representatives: "Representatives",
+        winner: "Initiative winner",
+        sideScore: "Side total",
+        rollOne: "Roll this side representative",
+        setInitiative: "Side initiative",
         previousTurn: "Previous turn",
         nextTurn: "Next turn",
         previousRound: "Previous round",
@@ -162,32 +170,31 @@
 
 
     function initiativeCell(combatant, state, isGm, L) {
-        const text = combatant.initiative == null ? "" : String(combatant.initiative);
-        if (!isGm) {
-            const cell = el("span", "gw-combat-combatant__score", text || "-");
-            cell.title = initiativeLabel(state, L);
-            return cell;
-        }
-        const numeric = state?.config?.input !== "text";
-        const input = el(
-            "input",
-            "gw-combat-combatant__score gw-combat-combatant__score--editable"
-            + (numeric ? "" : " gw-combat-combatant__score--text"),
-        );
-        if (numeric) {
-            input.type = "number";
-            input.step = "any";
+        const wrap = el("div", "gw-combat-combatant__side-config");
+        const side = isGm ? document.createElement("select") : el("span", "gw-combat-combatant__score");
+        if (isGm) {
+            side.setAttribute("aria-label", `${L.initiative}: ${combatant.name}`);
+            side.disabled = !!state.active;
+            side.dataset.combatSide = combatant.id;
+            [["", L.unassigned], ["friendly", L.friendly], ["hostile", L.hostile]].forEach(([value, label]) => {
+                const option = document.createElement("option"); option.value = value; option.textContent = label; side.append(option);
+            });
+            side.value = combatant.side || "";
         } else {
-            input.type = "text";
-            input.maxLength = 24;
+            side.textContent = combatant.side === "friendly" ? L.friendly : combatant.side === "hostile" ? L.hostile : L.unassigned;
         }
-        input.value = text;
-        input.placeholder = "-";
-        input.title = L.setInitiative;
-        input.setAttribute("aria-label", `${initiativeLabel(state, L)}: ${combatant.name}`);
-        input.dataset.combatInitiative = combatant.id;
-        input.dataset.combatVersion = state.version;
-        return input;
+        const score = el("span", "gw-combat-combatant__score", combatant.side_score == null ? "–" : String(combatant.side_score));
+        score.title = `${L.sideScore}: ${combatant.side === "friendly" ? L.friendly : L.hostile}`;
+        wrap.append(side, score);
+        if (isGm) {
+            const activations = document.createElement("input");
+            activations.type = "number"; activations.min = "1"; activations.max = "12"; activations.step = "1";
+            activations.value = String(combatant.activations || 1); activations.disabled = !!state.active;
+            activations.title = L.activations; activations.setAttribute("aria-label", `${L.activations}: ${combatant.name}`);
+            activations.dataset.combatActivations = combatant.id;
+            wrap.append(activations);
+        }
+        return wrap;
     }
 
     function combatantMenu(combatant, state, isGm, L) {
@@ -210,11 +217,6 @@
         }
         if (isGm) {
             const id = { combatantId: combatant.id };
-            if (canRoll(state)) {
-                list.appendChild(
-                    menuItem("initiative/roll-one", initiativeIcon(state), L.rollOne, { data: id }),
-                );
-            }
             if (combatant.can_move_up) {
                 list.appendChild(menuItem("order/up", "ph-arrow-up", L.moveUp, { data: id }));
             }
@@ -295,7 +297,7 @@
         const selected = Number(panel.dataset.selectedTokenCount || 0);
         const bar = el("div", "gw-combat-toolbar");
         bar.append(
-            button(active ? "end" : "start", active ? "ph-stop" : "ph-play", active ? L.end : L.start),
+            button(active ? "end" : "start", active ? "ph-stop" : "ph-play", active ? L.end : L.start, { disabled: !active && !state?.config?.first_side }),
             button("combatants/add-selected", "ph-plus-circle",
                 selected ? `${L.addSelected} (${selected})` : L.addSelected, { disabled: selected < 1 }),
             button("turn/previous", "ph-caret-left", L.previousTurn, { disabled: !active }),
@@ -309,19 +311,57 @@
     }
 
 
-    function canRoll(state) {
-        return state?.config?.input === "roll";
+    function initiativeSetup(state, L, isGm) {
+        const setup = el("section", "gw-combat-initiative-setup");
+        const roster = Array.isArray(state?.combatants) ? state.combatants : [];
+        const representatives = el("div", "gw-combat-initiative-setup__representatives");
+        representatives.appendChild(el("strong", null, L.representatives));
+        for (const side of ["friendly", "hostile"]) {
+            const select = document.createElement("select");
+            select.dataset.initiativeRepresentative = side;
+            const rows = roster.filter((row) => row.side === side && !row.defeated);
+            rows.forEach((row) => {
+                const option = document.createElement("option");
+                option.value = row.id; option.textContent = row.name; select.append(option);
+            });
+            select.disabled = !isGm || !!state.active || !rows.length;
+            select.setAttribute("aria-label", side === "friendly" ? L.friendly : L.hostile);
+            representatives.appendChild(select);
+        }
+        if (isGm && !state.active) {
+            setup.append(representatives, button("initiative/roll-sides", "ph-dice-five", L.rollSides, {
+                primary: true,
+                disabled: !roster.some((row) => row.side === "friendly" && !row.defeated) || !roster.some((row) => row.side === "hostile" && !row.defeated),
+            }));
+        }
+        const result = state?.config?.side_initiative;
+        if (result?.totals) {
+            setup.appendChild(el("p", "gw-combat-initiative-setup__result",
+                `${L.friendly}: ${result.totals.friendly} · ${L.hostile}: ${result.totals.hostile} · ${L.winner}: ${result.winner === "friendly" ? L.friendly : L.hostile}`));
+            if (isGm && !state.active) {
+                setup.appendChild(el("p", null, L.chooseFirst));
+                setup.append(
+                    button("initiative/first-side", "ph-arrow-right", L.firstFriendly, { data: { side: "friendly" } }),
+                    button("initiative/first-side", "ph-arrow-right", L.firstHostile, { data: { side: "hostile" } }),
+                );
+            }
+            if (result.firstSide) setup.appendChild(el("p", "gw-combat-initiative-setup__result",
+                `First: ${result.firstSide === "friendly" ? L.friendly : L.hostile}`));
+        }
+        return setup;
     }
 
-    function rollBar(state, L, active) {
-        const bar = el("div", "gw-combat-rollbar");
-        const die = initiativeIcon(state);
-        bar.append(
-            button("initiative/roll-all", die, L.rollAll, { disabled: !active, primary: true }),
-            button("initiative/roll-npcs", "ph-skull", L.rollNpcs, { disabled: !active }),
-            button("initiative/roll-missing", "ph-question", L.rollMissing, { disabled: !active }),
-        );
-        return bar;
+    function activationSequence(state) {
+        const sequence = Array.isArray(state?.turn_order) ? state.turn_order : [];
+        if (!state?.active || !sequence.length) return null;
+        const strip = el("div", "gw-combat-activation-sequence");
+        sequence.forEach((slot, index) => {
+            const item = el("span", "gw-combat-activation-sequence__item", `${index + 1}. ${slot.name}`);
+            item.classList.toggle("is-current", !!slot.current);
+            item.classList.add(slot.side === "friendly" ? "is-friendly" : "is-hostile");
+            strip.appendChild(item);
+        });
+        return strip;
     }
 
     function renderPanel(panel, state) {
@@ -338,9 +378,11 @@
         if (state?.config?.accent) target.style.setProperty("--gw-combat-accent", state.config.accent);
 
         target.appendChild(header(state, L, active));
+        const sequence = activationSequence(state);
+        if (sequence) target.appendChild(sequence);
         if (isGm) {
             target.appendChild(toolbar(panel, state, L, active));
-            if (canRoll(state)) target.appendChild(rollBar(state, L, active));
+            if (!active) target.appendChild(initiativeSetup(state, L, isGm));
         }
 
         const list = el("div", "gw-combat-list");
