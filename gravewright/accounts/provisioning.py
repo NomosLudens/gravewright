@@ -47,7 +47,7 @@ def parse_payload(payload):
     mesa_id = _uuid(mesa.get("source_mesa_id"), "invalid_mesa_id")
     mesa_name = _text(mesa.get("name"), "invalid_mesa_name", 1, 80)
     members = payload.get("members")
-    if not isinstance(members, list) or not 1 <= len(members) <= 128:
+    if not isinstance(members, list) or len(members) > 128:
         raise KallistisProvisionError("invalid_members")
     parsed_members = []
     seen = set()
