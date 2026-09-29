@@ -143,6 +143,21 @@ class CampaignTests(TestCase):
             self.assertEqual(self.client.get('/inside/dialog/' + mode + '/' + row['id']).status_code, 200)
         self.assertRedirects(Client().get('/inside'), '/login')
 
+    def test_campaign_gm_can_open_settings_from_table_card(self):
+        row = self.create()
+        membership = Membership.objects.create(
+            campaign_id=row['id'], user=self.player, role=Membership.Role.GM
+        )
+        path = '/inside/dialog/edit/' + row['id']
+        gm_page = self.clients[self.player.pk].get('/inside')
+        self.assertContains(gm_page, path)
+        self.assertContains(self.clients[self.player.pk].get(path), 'Vincular mesa KALLISTIS')
+        membership.role = Membership.Role.PLAYER
+        membership.save(update_fields=['role'])
+        player_page = self.clients[self.player.pk].get('/inside')
+        self.assertNotContains(player_page, path)
+        self.assertEqual(self.clients[self.player.pk].get(path).status_code, 403)
+
     def test_ui_mutations_and_preferences(self):
         token = self.client.cookies[settings.CSRF_COOKIE_NAME].value
         response = self.client.post('/inside/campaigns/create', {**self.data, 'csrfmiddlewaretoken': token}, HTTP_DATASTAR_REQUEST='true')

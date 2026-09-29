@@ -21,7 +21,7 @@ from gravewright.accounts.models import UserPreference
 from gravewright.accounts.views import MESSAGES as AUTH_TEXT, api_error, is_datastar, read_json
 from gravewright.campaigns import services as campaigns
 from gravewright.campaigns.catalog import list_rulesets
-from gravewright.campaigns.models import Campaign
+from gravewright.campaigns.models import Campaign, Membership
 from gravewright.campaigns.forms import CampaignForm
 from gravewright.campaigns.views import authenticated, validate_campaign_form
 from .responses import navigate
@@ -38,7 +38,14 @@ def inside_response(request, *, section='campaigns', dialog='', campaign=None, f
         section = 'addons'
     if section not in SECTIONS or (request.user.role != 'owner' and section in ('privacy', 'systems', 'addons', 'marketplace', 'administration')):
         section = 'campaigns'
-    rows = [campaigns.public_campaign(c) for c in Campaign.objects.visible_to(request.user).with_members()]
+    rows = []
+    for candidate in Campaign.objects.visible_to(request.user).with_members():
+        row = campaigns.public_campaign(candidate)
+        row['canManage'] = any(
+            member.user_id == request.user.pk and member.role == Membership.Role.GM
+            for member in candidate.memberships.all()
+        )
+        rows.append(row)
     query = request.GET.get('search', request.POST.get('_insideSearch', ''))
     system = request.GET.get('system', request.POST.get('_insideSystem', ''))
     visible = [row for row in rows if (not system or row['system'] == system) and
