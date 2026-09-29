@@ -14,6 +14,7 @@ export function createTokens(surface, board, map, gm, initial) {
   status.className = "token-workspace__status";
   surface.append(svg, status);
   let state = initial,
+    combatState = window.gravewrightCombatState || { active: false, combatants: [] },
     rows = [],
     readRevision = 0,
     controller,
@@ -302,6 +303,17 @@ export function createTokens(surface, board, map, gm, initial) {
           item("BookOpenText", "Open character sheet", () =>
             controller.call("openSheet", t),
           );
+        const combatant = combatState.combatants?.find(
+          (row) => row.token_id === t.id && row.movement?.canRun,
+        );
+        if (t.canControl && combatant)
+          item("Plus", "Correr · second Movement", () =>
+            window.gravewrightRealtime.resourceCommand("combat", "run", {
+              sceneId: map.id,
+              tokenId: t.id,
+              version: combatState.version,
+            }),
+          );
         if (gm) {
           item(
             t.hidden ? "Eye" : "EyeSlash",
@@ -376,6 +388,37 @@ export function createTokens(surface, board, map, gm, initial) {
     const group = node("g", {
       transform: `translate(${view.x} ${view.y}) scale(${scale})`,
     });
+    if (v.interactive) {
+      for (const t of v.displayed) {
+        if (!t.canControl || !v.selected.includes(t.id)) continue;
+        const combatant = combatState.combatants?.find((row) => row.token_id === t.id);
+        const movement = combatant?.movement;
+        if (movement?.mode === "ZONES") continue;
+        const perMove = movement?.pointsPerMove ?? 6;
+        const used = movement?.used ?? 0;
+        const regularRemaining = Math.max(0, perMove - used);
+        const canShowRun = !!movement && (movement.canRun || movement.runUsed);
+        if (canShowRun) {
+          const totalRemaining = Math.max(0, perMove * 2 - used);
+          group.append(node("circle", {
+            class: "token-workspace__movement-range token-workspace__movement-range--run",
+            cx: g.x + (t.gridX + t.cells / 2) * g.cell,
+            cy: g.y + (t.gridY + (t.heightCells ?? t.cells) / 2) * g.cell,
+            r: totalRemaining * g.cell,
+            "aria-label": `Correr: up to ${totalRemaining} movement points`,
+            "pointer-events": "none",
+          }));
+        }
+        group.append(node("circle", {
+          class: "token-workspace__movement-range token-workspace__movement-range--regular",
+          cx: g.x + (t.gridX + t.cells / 2) * g.cell,
+          cy: g.y + (t.gridY + (t.heightCells ?? t.cells) / 2) * g.cell,
+          r: regularRemaining * g.cell,
+          "aria-label": `Movement: up to ${regularRemaining} movement points`,
+          "pointer-events": "none",
+        }));
+      }
+    }
     for (const stored of v.displayed) {
       let t=stored;
       if(selectionPreview?.objects.some(o=>o.key==='token:'+stored.id)){
@@ -639,6 +682,11 @@ export function createTokens(surface, board, map, gm, initial) {
     dialog(v);
   }
   const motion = (e) => controller.receiveMotion(e.detail),
+    combatUpdate = (e) => {
+      combatState = e.detail || { active: false, combatants: [] };
+      void read().catch(() => {});
+      repaint();
+    },
     snapshot = (e) => {
       if (e.detail.mapId !== map.id) return;
       readRevision++;
@@ -657,6 +705,7 @@ export function createTokens(surface, board, map, gm, initial) {
   };
   window.addEventListener('gravewright:focus-token',focusToken);
   window.addEventListener("gravewright:token.drag", motion);
+  window.addEventListener("gravewright:combat-state", combatUpdate);
   window.addEventListener("gravewright:tokens.state", snapshot);
   window.addEventListener("gravewright:map-layers", layers);
   window.addEventListener("gravewright:map-viewport", viewport);
@@ -755,6 +804,7 @@ export function createTokens(surface, board, map, gm, initial) {
       for (const [name, fn] of [
         ["gravewright:focus-token", focusToken],
         ["gravewright:token.drag", motion],
+        ["gravewright:combat-state", combatUpdate],
         ["gravewright:tokens.state", snapshot],
         ["gravewright:map-layers", layers],
         ["gravewright:map-viewport", viewport],
