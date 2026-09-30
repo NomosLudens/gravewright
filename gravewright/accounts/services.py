@@ -167,7 +167,9 @@ def provision_kallistis_phrase(payload):
     if not isinstance(player_code, str) or not re.fullmatch(r"JOGADOR-(0[1-9]|1[0-9]|2[0-5])", player_code):
         raise AuthError("invalid_player_code", 400)
     normalized = normalize_kallistis_phrase(payload.get("phrase"))
-    if normalized is None or len(normalized) < 16:
+    # KALLISTIS issues one canonical Velarim puzzle piece per player (mi-<word>).
+    # This endpoint is signature-protected; keep the accepted grammar narrow.
+    if normalized is None or not re.fullmatch(r"mi-[a-z]+", normalized):
         raise AuthError("invalid_player_phrase", 400)
     mapping = KallistisCampaignLink.objects.filter(
         source_system="kallistis", source_mesa_id=source_mesa_id, campaign_id=campaign_id
