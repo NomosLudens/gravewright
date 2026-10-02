@@ -242,6 +242,6 @@
 
     .gw-shell__content {
         padding: var(--step-21) var(--step-13)
-            calc(var(--control-height-lg) + var(--step-21));
+            calc(var(--control-height-lg) + var(--step-34));
     }
 }

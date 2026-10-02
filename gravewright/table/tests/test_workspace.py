@@ -37,6 +37,13 @@ class WorkspaceTests(TestCase):
         preview = self.client.get(f'/inside/dialog/preview/{self.campaign.pk}')
         self.assertContains(preview, f'/game/{self.campaign.pk}')
 
+    def test_owner_navigation_has_accessible_names_and_current_page(self):
+        self.client.force_login(self.owner)
+        response = self.client.get('/inside')
+        for label in ('Tables', 'Systems', 'Modules', 'Administration', 'Settings', 'Privacy'):
+            self.assertContains(response, f'aria-label="{label}"')
+        self.assertContains(response, 'aria-current="page"')
+
     def test_campaign_text_is_escaped_and_deleted_tables_are_unreachable(self):
         self.client.force_login(self.owner)
         self.campaign.name = '<script>alert(1)</script>'

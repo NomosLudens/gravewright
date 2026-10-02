@@ -2,6 +2,7 @@
 (() => {
 const cleanups = new WeakMap();
 const windows = new Set();
+const visibility = new WeakMap();
 function mount(element) {
     const doc = element.ownerDocument, view = doc.defaultView;
     const originalZ = element.style.zIndex;
@@ -54,15 +55,40 @@ function mount(element) {
     handle.addEventListener('pointerdown', pointerDown);
     view.addEventListener('resize', resize);
     raise();
-    cleanups.set(element, () => { stopDrag(); windows.delete(entry); element.style.zIndex = originalZ; element.classList.remove('gw-window--focused'); element.removeEventListener('pointerdown', raise, true); element.removeEventListener('focusin', raise); handle.removeEventListener('pointerdown', pointerDown); view.removeEventListener('resize', resize); });
+    visibility.set(element, view.getComputedStyle(element).display !== 'none');
+    const visibilityObserver = new MutationObserver(() => {
+        const visible = view.getComputedStyle(element).display !== 'none';
+        if (visible !== visibility.get(element)) {
+            visibility.set(element, visible);
+            if (visible) raise();
+        }
+    });
+    visibilityObserver.observe(element, { attributes: true, attributeFilter: ['class', 'hidden', 'style'] });
+    cleanups.set(element, () => { stopDrag(); visibilityObserver.disconnect(); windows.delete(entry); element.style.zIndex = originalZ; element.classList.remove('gw-window--focused'); element.removeEventListener('pointerdown', raise, true); element.removeEventListener('focusin', raise); handle.removeEventListener('pointerdown', pointerDown); view.removeEventListener('resize', resize); });
 }
 
 const mounted = new Set();
 function syncWindows() {
   for (const el of mounted) if (!el.isConnected) { cleanups.get(el)?.(); cleanups.delete(el); mounted.delete(el); }
-  document.querySelectorAll('[data-movable]').forEach(el => { if (!mounted.has(el)) { mount(el); mounted.add(el); } });
+  document.querySelectorAll('[data-movable]').forEach(el => {
+    if (!mounted.has(el)) { mount(el); mounted.add(el); }
+    const visible = getComputedStyle(el).display !== 'none';
+    if (visible !== visibility.get(el)) {
+      visibility.set(el, visible);
+      if (visible) el.dispatchEvent(new Event('focusin', { bubbles: true }));
+    }
+  });
 }
 new MutationObserver(syncWindows).observe(document.documentElement,{childList:true,subtree:true});
+window.addEventListener('resize', syncWindows);
 syncWindows();
+
+const dock = document.querySelector('.game-dock');
+const table = dock?.closest('.game-table');
+if (dock && table) {
+    const updateDockHeight = () => table.style.setProperty('--game-dock-height', `${Math.ceil(dock.getBoundingClientRect().height)}px`);
+    new ResizeObserver(updateDockHeight).observe(dock);
+    updateDockHeight();
+}
 
 })();
