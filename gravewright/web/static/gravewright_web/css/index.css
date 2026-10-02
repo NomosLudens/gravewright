@@ -18,7 +18,7 @@
 @import "./blocks/modal.css";
 @import "./blocks/table-modal.css";
 @import "./blocks/shell.css";
-@import "./blocks/nav.css";
+@import "./blocks/nav.css?v=20261002-window-focus";
 @import "./blocks/panel.css";
 @import "./blocks/card.css";
 @import "./blocks/campaign-card.css";
