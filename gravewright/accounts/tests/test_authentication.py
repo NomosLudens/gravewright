@@ -184,6 +184,13 @@ class AuthenticationTests(AuthClientMixin, TestCase):
         self.post('/api/auth/register', PLAYER)
         self.assertNotContains(self.client.get('/inside'), PLAYER['email'])
 
+    def test_file_inputs_keep_stable_identity_during_inside_navigation(self):
+        self.setup_owner()
+        administration = self.client.get('/inside?section=administration')
+        self.assertContains(administration, 'id="administration-import-archive"')
+        campaign_dialog = self.client.get('/inside/dialog/create')
+        self.assertContains(campaign_dialog, 'id="campaign-cover-image-file"')
+
     def test_database_constraints_and_django_admin(self):
         self.setup_owner()
         for kwargs in [dict(email='second@example.test', role='owner'),
