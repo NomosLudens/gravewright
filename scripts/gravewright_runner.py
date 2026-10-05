@@ -1,12 +1,14 @@
 """Prepare private user data and supervise the local Gravewright server and updates.
 
-Windows users enter through Gravewright Runner.bat, which installs the locked
-dependencies. This helper is also portable for automated checks with --data-dir.
+Windows installation uses Install Windows.bat; the generated Gravewright Runner.bat
+only starts the prepared app. This helper is also portable for checks with --data-dir.
 It never loads or edits the source checkout's .env or development database.
 """
 
 import argparse
+import base64
 from contextlib import contextmanager
+import hashlib
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -17,16 +19,201 @@ import socket
 import sys
 import threading
 import time
-from urllib.request import ProxyHandler, build_opener
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 import webbrowser
 
 
 ROOT = Path(__file__).resolve().parents[1]
 LOGGER = logging.getLogger('gravewright.runner')
+DEFAULT_MARKETPLACE_URL = (
+    'https://raw.githubusercontent.com/Gravewright/marketplace/main/'
+    'gravewright.marketplace.json'
+)
+DEFAULT_MARKETPLACE_KEYS_URL = (
+    'https://raw.githubusercontent.com/Gravewright/marketplace/main/trusted-keys.json'
+)
+DEFAULT_MARKETPLACE_KEYS_SHA256 = '0cb7f0d636f36ff73e1f49a6f0af5f7b7bba34b2e77a0d0f0ad92b0b53517ec3'
+DEFAULT_MARKETPLACE_CHOICE = '.default-marketplace-choice'
 
 
 class RunnerError(Exception):
     """An actionable startup failure safe to display in the launcher console."""
+
+
+class HTTPSOnlyRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urlsplit(newurl).scheme != 'https':
+            raise RunnerError('The default marketplace redirected to an insecure address.')
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _download_default_keys():
+    try:
+        opener = build_opener(ProxyHandler({}), HTTPSOnlyRedirects())
+        with opener.open(Request(DEFAULT_MARKETPLACE_KEYS_URL, headers={
+            'User-Agent': 'Gravewright-Runner/1',
+        }), timeout=30) as response:
+            raw = response.read(1024 * 1024 + 1)
+    except RunnerError:
+        raise
+    except Exception as error:
+        raise RunnerError('Could not download the default marketplace public keys.') from error
+    if (len(raw) > 1024 * 1024
+            or hashlib.sha256(raw).hexdigest() != DEFAULT_MARKETPLACE_KEYS_SHA256):
+        raise RunnerError('The default marketplace key file failed its integrity check.')
+    try:
+        keys = json.loads(raw)
+        if (not isinstance(keys, dict) or not keys
+                or any(not isinstance(key_id, str) or not key_id
+                       or not isinstance(value, str)
+                       or len(base64.b64decode(value, validate=True)) != 32
+                       for key_id, value in keys.items())):
+            raise ValueError
+    except (ValueError, TypeError):
+        raise RunnerError('The default marketplace public keys are invalid.') from None
+    return raw
+
+
+def _write_private(path, raw):
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = path.with_name(path.name + f'.{secrets.token_hex(8)}.tmp')
+    try:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, 'wb') as stream:
+            stream.write(raw)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _update_dotenv(path, values):
+    try:
+        original = path.read_text(encoding='utf-8')
+    except FileNotFoundError:
+        original = ''
+    except (OSError, UnicodeError) as error:
+        raise RunnerError(f'Could not read the Runner configuration at {path}.') from error
+    remaining = dict(values)
+    output = []
+    for line in original.splitlines():
+        name = line.split('=', 1)[0].strip() if '=' in line and not line.lstrip().startswith('#') else ''
+        if name.startswith('export '):
+            name = name[7:].strip()
+        if name in values:
+            if name in remaining:
+                output.append(f'{name}={json.dumps(remaining.pop(name), ensure_ascii=False)}')
+        else:
+            output.append(line)
+    if remaining:
+        if output and output[-1]:
+            output.append('')
+        output.append('# Settings saved by Gravewright Runner.')
+        output.extend(f'{name}={json.dumps(value, ensure_ascii=False)}'
+                      for name, value in remaining.items())
+    _write_private(path, ('\n'.join(output) + '\n').encode('utf-8'))
+
+
+def configure_environment(directory, *, prompt=input):
+    """Collect installer answers before updating the personal environment file."""
+    from dotenv import dotenv_values
+
+    user = dotenv_values(directory / '.env', interpolate=False)
+    values = {**dotenv_values(ROOT / '.env.example', interpolate=False), **user}
+    fields = (
+        ('APP_NAME', 'Table name', 'text'),
+        ('DEFAULT_LOCALE', 'Language (en, pt-BR)', 'locale'),
+        ('GRAVEWRIGHT_PORT', 'Local port (1-65535)', 'port'),
+        ('GRAVEWRIGHT_MODULES_ROOT', 'Modules folder', 'text'),
+        ('CAMPAIGN_JOIN_CODE_ENABLED', 'Join codes', 'bool'),
+        ('CAMPAIGN_SNAPSHOTS_ENABLED', 'Campaign snapshots', 'bool'),
+        ('CAMPAIGN_EXPORT_ENABLED', 'Campaign export', 'bool'),
+    )
+    print(f'Configure: {directory / ".env"}\n'
+          'Enter = keep current value. Ctrl+C = cancel.', flush=True)
+    answers = {}
+    try:
+        for key, label, kind in fields:
+            current = values.get(key) or ''
+            if key == 'GRAVEWRIGHT_MODULES_ROOT' and not user.get(key):
+                current = 'media/modules'
+            hint = ' (y/n)' if kind == 'bool' else ''
+            while True:
+                value = prompt(f'{label}{hint} [{current}]: ').strip() or current
+                if any(ord(char) < 32 for char in value):
+                    print('Invalid value.', flush=True)
+                    continue
+                if kind == 'port':
+                    try:
+                        number = int(value)
+                    except ValueError:
+                        number = 0
+                    if not 1 <= number <= 65535:
+                        print('Use 1-65535.', flush=True)
+                        continue
+                    value = str(number)
+                elif kind == 'locale':
+                    value = {'en': 'en', 'pt-br': 'pt-BR'}.get(value.casefold())
+                    if value is None:
+                        print('Use en / pt-BR.', flush=True)
+                        continue
+                elif kind == 'bool':
+                    value = {'s': 'true', 'sim': 'true', 'y': 'true', 'yes': 'true',
+                             'true': 'true', '1': 'true', 'n': 'false', 'nao': 'false',
+                             'não': 'false', 'no': 'false', 'false': 'false', '0': 'false'}.get(value.casefold())
+                    if value is None:
+                        print('Use y/n.', flush=True)
+                        continue
+                elif not value:
+                    print('Enter a value.', flush=True)
+                    continue
+                answers[key] = value
+                break
+    except (EOFError, KeyboardInterrupt):
+        raise RunnerError('Configuration cancelled; answers were not saved. '
+                          'Run interactively to configure, or use --check for unattended checks.') from None
+    _update_dotenv(directory / '.env', answers)
+    print('Configuration saved.', flush=True)
+    return True
+
+
+def install_default_marketplace(directory, download=None):
+    """Install the pinned official key file and persist the catalog settings."""
+    raw = (download or _download_default_keys)()
+    key_path = directory / 'marketplace' / 'trusted-keys.json'
+    _write_private(key_path, raw)
+    values = {
+        'GRAVEWRIGHT_MARKETPLACE_URL': DEFAULT_MARKETPLACE_URL,
+        'GRAVEWRIGHT_MARKETPLACE_KEYS_FILE': key_path.as_posix(),
+    }
+    _update_dotenv(directory / '.env', values)
+    os.environ.update(values)
+    _write_private(directory / DEFAULT_MARKETPLACE_CHOICE, b'installed\n')
+    return {**values, 'keyPath': str(key_path)}
+
+
+def offer_default_marketplace(directory, prompt=input, download=None):
+    """Offer the official signed catalog once and persist the owner's choice."""
+    catalog = os.environ.get('GRAVEWRIGHT_MARKETPLACE_URL', '').strip()
+    keyfile = os.environ.get('GRAVEWRIGHT_MARKETPLACE_KEYS_FILE', '').strip()
+    marker = directory / DEFAULT_MARKETPLACE_CHOICE
+    if catalog or keyfile or marker.exists():
+        return False
+    try:
+        answer = prompt(
+            'Install the default Gravewright Marketplace? '
+            '[y/N]: '
+        ).strip().casefold()
+    except (EOFError, KeyboardInterrupt):
+        print('', flush=True)
+        return False
+    if answer not in {'y', 'yes', 's', 'sim'}:
+        _write_private(marker, b'declined\n')
+        print('Default marketplace installation skipped.', flush=True)
+        return False
+    result = install_default_marketplace(directory, download=download)
+    print(f'Default marketplace installed. Public keys: {result["keyPath"]}', flush=True)
+    return True
 
 
 def data_directory(value=None):
@@ -116,6 +303,11 @@ def prepare_environment(directory, port_override=None):
             raise ValueError
     except (TypeError, ValueError):
         raise RunnerError('GRAVEWRIGHT_PORT must be a number from 1 to 65535.') from None
+    configured_modules = (user.get('GRAVEWRIGHT_MODULES_ROOT') or '').strip()
+    modules_root = Path(configured_modules).expanduser() if configured_modules else directory / 'media/modules'
+    if not modules_root.is_absolute():
+        modules_root = directory / modules_root
+    modules_root = modules_root.resolve()
 
     # Purge inherited application settings, including undocumented Runner internals.
     for name in tuple(os.environ):
@@ -131,6 +323,7 @@ def prepare_environment(directory, port_override=None):
         GRAVEWRIGHT_REDIS_URL='', TRUSTED_PROXIES='',
         GRAVEWRIGHT_DATABASE=str(directory / 'gravewright.sqlite3'),
         GRAVEWRIGHT_MEDIA_ROOT=str(directory / 'media'),
+        GRAVEWRIGHT_MODULES_ROOT=str(modules_root),
         GRAVEWRIGHT_RUNNER_DATA=str(directory),
         GRAVEWRIGHT_RUNNER_TOKEN=secrets.token_urlsafe(32),
         PYTHONUTF8='1',
@@ -261,17 +454,25 @@ def serve(port, open_browser=True):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Gravewright Runner: install data and run locally.')
+    parser = argparse.ArgumentParser(description='Gravewright Runner: install data and run locally.',
+                                     allow_abbrev=False)
     parser.add_argument('--data-dir', help='Override the persistent user-data directory.')
     parser.add_argument('--port', type=int, help='Use this port for this run without editing configuration.')
     parser.add_argument('--no-browser', action='store_true', help='Print the address without opening a browser.')
     parser.add_argument('--check', action='store_true', help='Prepare and check the installation, then exit.')
+    parser.add_argument('--configure-default-marketplace', action='store_true',
+                        help='Ask personal settings and offer the official marketplace, then exit.')
     args = parser.parse_args(argv)
     log_path = None
     try:
         directory = data_directory(args.data_dir)
         with instance_lock(directory):
             port = prepare_environment(directory, args.port)
+            if not args.check and args.configure_default_marketplace:
+                configure_environment(directory)
+                port = prepare_environment(directory, args.port)
+                offer_default_marketplace(directory)
+                return 0
             if not args.check:
                 check_port(port)
             log_path = configure_logging(directory)

@@ -130,7 +130,13 @@ Não copie somente `db.sqlite3` da raiz nem restaure código antigo sobre banco 
 
 ## Atualizações e serviços opcionais
 
-A descoberta de versões do núcleo é opcional por `GRAVEWRIGHT_RELEASES_REPOSITORY=owner/repo`. Espera artefatos Django compatíveis com metadados SHA-256. O atualizador atual informa estado e artefato; não substitui a instalação em execução. Confira os bytes baixados, faça backup, revise migrações e atualize o código manualmente.
+Ao atualizar o pacote publicado 0.1.1 pela Administração, o supervisor antigo
+continua executando. Pare o Runner, extraia o ZIP 0.1.2 sobre a pasta original e
+execute o novo instalador usando a mesma pasta de dados pessoais. Essa troca
+única habilita apps Django e a nova substituição de arquivos. Preserve os dados
+pessoais e a pasta `updates` durante a transição.
+
+A descoberta usa `GRAVEWRIGHT_RELEASES_REPOSITORY`, com padrão `Gravewright/gravewright`; um valor vazio a desativa. Artefatos Django compatíveis exigem metadados SHA-256. Instalações iniciadas pelo Runner ou `main.py` permitem atualizar pela Administração, com substituição de arquivos, migrações, reinício e recuperação. Servidores ASGI iniciados diretamente exigem atualização pelo operador.
 
 O marketplace usa catálogo HTTPS e arquivo local de chaves públicas Ed25519 confiáveis. URL vazia deixa a descoberta online sem configuração. Revise autores e código antes de instalar módulos, pois executam na origem da aplicação. Veja [módulos](modules.md).
 
@@ -145,7 +151,7 @@ fluxo de atualização; `--dev` é reservado ao desenvolvimento com autoreload.
 Não é necessário iniciar um modo especial para usar o botão de atualização.
 
 Em Administração → Atualizações, escolha o canal, verifique a versão e clique
-em **Fazer backup e instalar atualização**. O download, validação SHA-256,
+em **Instalar atualização**. O download, validação SHA-256,
 preparação de dependências, backup, migrações, reinício e recuperação são
 controlados por essa tela nos três sistemas operacionais. Alpha usa o canal
 Desenvolvimento. Acesso e conexões de mesa são interrompidos durante a troca;
@@ -158,20 +164,24 @@ consulta. A release inicial `0.1.0-alpha.0`, anterior ao supervisor, não pode
 aplicar atualizações: é necessário distribuir este inicializador atualizado
 para habilitar o fluxo da interface nessa instalação antiga.
 
-A versão nova fica em um diretório separado. Banco, mídia, compêndios e os
-arquivos estáticos compartilhados do Runner são preservados. Falhas de
-migração ou inicialização restauram a versão anterior e seus dados. Uma
-transação interrompida é recuperada ao iniciar novamente. Checkouts Git com
-alterações locais são protegidos contra substituição. Não execute outro
-servidor contra o mesmo banco durante a atualização.
+A atualização substitui os arquivos na pasta original do projeto, incluindo `Install Windows.bat`, scripts, assets e o runner gerado. Arquivos da versão anterior que não existem na release nova são removidos. `.env`, ambientes Python, caches e diretórios de dados/extensões locais são preservados. As dependências da versão nova são preparadas isoladamente antes da substituição.
+
+A opção **Manter cópia .old para rollback** vem marcada. Após o sucesso, cria uma pasta irmã, por exemplo `Gravewright-0.1.2.old`, com o código anterior e os snapshots de banco, mídia e outros dados em `.gravewright-rollback`. Se já existir uma cópia, uma nova recebe um identificador no nome; nenhuma cópia anterior é sobrescrita. Desmarcar elimina a cópia temporária após o sucesso. Durante a instalação sempre existe recuperação temporária: falhas de migração, substituição ou inicialização restauram código, inicializadores e dados. Uma transação interrompida é recuperada na próxima inicialização.
+
+Para restaurar uma cópia retida, encerre o Runner e execute com o Python da instalação (o caminho aparece no BAT gerado):
+
+```bat
+"CAMINHO_DO_PYTHON\python.exe" -X utf8 scripts\rollback_update.py "E:\Gravewright-0.1.2.old"
+```
+
+A restauração também retorna banco e mídia ao momento do backup; alterações feitas depois dele serão perdidas. Preserve a pasta de estado e os ambientes de atualização junto da cópia `.old`, pois ela referencia o Python anterior. Checkouts Git com alterações locais continuam bloqueados contra atualização. Não execute outro servidor contra o mesmo banco durante atualização ou restauração.
 
 O Runner guarda versões, backups e `update.log` na pasta `updates` dentro de
 seu diretório de dados. O inicializador por `main.py` usa o diretório de estado
 do usuário: `%LOCALAPPDATA%/Gravewright/updates` no Windows,
 `~/Library/Application Support/Gravewright/updates` no macOS e
 `$XDG_STATE_HOME/gravewright/updates` (ou `~/.local/state/gravewright/updates`)
-no Linux. Preserve esses diretórios e reserve espaço para backups, que não são
-apagados automaticamente.
+no Linux. Preserve esses diretórios e reserve espaço para os ambientes e as cópias `.old` retidas.
 
 O workflow `Automatic updates` testa Windows, Linux e macOS nativamente.
 Para reproduzir, execute `uv run python tests/e2e/automatic_updates.py` e

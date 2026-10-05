@@ -15,7 +15,7 @@ alterar a lógica atual dos serviços.
 | [`manage.py`](../../manage.py) | Entrada dos comandos de administração Django. |
 | [`main.py`](../../main.py) | Inicia o servidor ASGI de desenvolvimento com host e porta configurados. |
 | [`scripts/gravewright_runner.py`](../../scripts/gravewright_runner.py) | Prepara configuração pessoal, banco e recursos e executa o servidor Daphne local do Gravewright Runner. |
-| [`Gravewright Runner.bat`](../../Gravewright%20Runner.bat) | Launcher CMD Windows: detecta/reaproveita uv, Python e Node/npm, instala ferramentas ausentes, executa comandos fixados de dependências/build e inicia a aplicação. |
+| [`Install Windows.bat`](../../Install%20Windows.bat) | Instalador Windows: prepara ferramentas, dependências, frontend e configuração, depois gera `Gravewright Runner.bat` apenas para iniciar a aplicação. |
 | [`scripts/prepare_frontend.py`](../../scripts/prepare_frontend.py) | Planeja a preparação do frontend por impressões das dependências, fontes e saídas e registra os resultados verificados do build para o launcher em lote. |
 | [`scripts/windows/create_shortcut.py`](../../scripts/windows/create_shortcut.py) | Cria o atalho com ícone por ctypes da biblioteca padrão e COM do Windows. |
 | [`config/runner.py`](../../config/runner.py), [`config/runner_asgi.py`](../../config/runner_asgi.py), [`config/runner_urls.py`](../../config/runner_urls.py) | Perfil dedicado à execução local, recursos estáticos coletados e rotas do executor; veja o [guia Windows](windows-runner.md). |
@@ -23,6 +23,8 @@ alterar a lógica atual dos serviços.
 | [`config/environment.py`](../../config/environment.py) | Carrega o ambiente e interpreta booleanos, caminhos e origem pública. |
 | [`config/engine.py`](../../config/engine.py) | Recursos habilitados e limites validados do motor. |
 | [`config/settings.py`](../../config/settings.py) | Apps, SQLite, sessões, templates, mídia e configuração de Channels. |
+| [`config/marketplace_apps.py`](../../config/marketplace_apps.py), [`gravewright/modules/server_apps.py`](../../gravewright/modules/server_apps.py) | Seleção verificada de apps Django, importação na inicialização e ativação autorizada pelo proprietário. |
+| [`scripts/update_supervisor.py`](../../scripts/update_supervisor.py) | Atualização do core e ativação Django, ambientes isolados, backup, migrações, reinício e rollback. |
 | [`config/asgi.py`](../../config/asgi.py), [`config/wsgi.py`](../../config/wsgi.py) | Entradas do servidor; ASGI inclui WebSocket da mesa. |
 | [`config/proxy.py`](../../config/proxy.py) | Restaura esquemas HTTP/WebSocket a partir de um único cabeçalho forwarded-proto válido enviado por um par conectado confiável. |
 | [`config/urls.py`](../../config/urls.py) | Reúne rotas HTTP dos apps. |

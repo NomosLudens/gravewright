@@ -2,13 +2,13 @@
 
 [Documentation index](../README.md) · [Português](../pt-BR/modules.md) · [API reference](api.md)
 
-Gravewright installs signed ZIP packages containing browser JavaScript, assets, and a JSON manifest. A server owner installs releases; a campaign GM chooses exact releases and interface replacements for a table. Installation never imports package Python or starts package executables.
+Gravewright installs signed ZIP packages containing browser JavaScript or trusted Django apps, assets, and a JSON manifest. A server owner installs releases; a campaign GM chooses browser modules and interface replacements for a table. Django apps are activated separately for the whole server.
 
 Third-party module licensing is described in the [licensing policy](../../LICENSING.md). The manifest records the module author's chosen license; installation does not change it.
 
 ## Trust and installation boundaries
 
-Installed modules execute as ES modules in the application's main browser page. There is no iframe sandbox, Shadow DOM, or capability-based JavaScript isolation. Modules can interact with the page and browser environment. A signature authenticates the configured publisher and archive bytes; it does not prove that code is safe. Configure signing keys for publishers whose code you are prepared to run in users' sessions.
+Browser modules execute as ES modules in the application's main browser page. There is no iframe sandbox, Shadow DOM, or capability-based JavaScript isolation. Modules can interact with the page and browser environment. A signature authenticates the configured publisher and archive bytes; it does not prove that code is safe. Configure signing keys for publishers whose code you are prepared to run in users' sessions.
 
 The supported host interfaces enforce the authenticated user's campaign membership, native resource permissions, module activation revision, and mount lease. Those checks remain on the server. Modules receive no Python execution, SQL interface, or server-side service loader through this mechanism. Integrations installed separately as Django/Python code are trusted server code; see the [Python API](api.md#python-interface).
 
@@ -168,9 +168,11 @@ record["signature"] = base64.b64encode(private_key.sign(canonical(record))).deco
 
 Publish the archive and catalog over HTTPS, configure the public key, then use the owner's Marketplace screen to install the release. A GM activates it under the table's Settings → Extensions. The HTTP installation route takes only `id` and `version`, looks up the configured catalog, and verifies the selected archive. It does not accept an arbitrary archive URL from the request.
 
+As a fully local alternative, the owner can use **Install from ZIP** in the same modal. This flow does not contact the marketplace or require a catalog or publisher keys: the local upload is the owner's explicit trust decision. The ZIP still undergoes the same manifest, compatibility, path, file-type, quota, and executable-content validation. In Systems it must declare `system`; in Modules it must not. Because module JavaScript runs on the application origin, install only trusted files.
+
 Installation checks the archive digest, manifest identity and SDK range, entry-file presence, filenames, entry types, and extracted bytes. Limits are 64 MiB compressed, 256 MiB expanded, 4,096 entries, and 64 active modules per table. Paths cannot traverse directories or contain backslashes, percent escapes, URL punctuation, or NUL. Symlinks, encrypted entries, case-insensitive duplicate paths, disallowed extensions, and recognized native executable headers are rejected. Supported file extensions are listed in `ModulePackages.install`; license texts should use `.txt` or `.md` because extensionless files are not accepted.
 
-Installed archives live under `MEDIA_ROOT/modules/archives/`; extracted packages live under `MEDIA_ROOT/modules/packages/<id>/<version>/<digest>/`. The database stores manifests and signed records. A release ID/version cannot be replaced with different bytes. Activation and authenticated asset access recheck stored content; do not edit extracted files to develop an update. Publish a new version instead.
+By default, installed archives live under `MEDIA_ROOT/modules/archives/`; extracted packages live under `MEDIA_ROOT/modules/packages/<id>/<version>/<digest>/`. Set, for example, `GRAVEWRIGHT_MODULES_ROOT=/srv/gravewright/modules` in `.env` to choose another folder; relative paths start at the source root and changing it requires a host restart. The database stores manifests and the trusted origin of each installation. A release ID/version cannot be replaced with different bytes. Activation and authenticated asset access recheck stored content; do not edit extracted files to develop an update. Publish a new version instead.
 
 Activation uses `{modules, replacements, expectedRevision}`. `modules` maps IDs to exact versions, `replacements` maps surface names to module IDs, and `expectedRevision` must equal the last read `moduleSetRevision` (`"0"` initially). A stale revision produces `conflict`. Successful changes issue a fresh revision and notify table clients. Clients also poll and reconcile on reconnect, so activation does not depend solely on socket delivery.
 
@@ -255,7 +257,7 @@ Browser tests require the development dependencies and installed Playwright brow
 
 ### Installation-wide language packages
 
-A manifest may declare `locales`, mapping locale IDs to `{ "name": "Português (Brasil)", "path": "locales/pt-BR.json" }`. Catalog files are nonempty JSON objects mapping original UI strings to translations, preserving `{name}`-style placeholders. English is built into the host and cannot be overridden; a package cannot combine `system` and `locales`. Python is not loaded from marketplace packages.
+A manifest may declare `locales`, mapping locale IDs to `{ "name": "Português (Brasil)", "path": "locales/pt-BR.json" }`. Catalog files are nonempty JSON objects mapping original UI strings to translations, preserving `{name}`-style placeholders. English is built into the host and cannot be overridden; a package cannot combine `system` and `locales`. Language packages cannot contain Python.
 
 Language packages appear in Installed modules. An owner uses `POST /api/module-packages/activation` with `{ "id": "gravewright.translator", "version": "0.1.0", "enabled": true }` to activate one installation-wide language package. Activation verifies the installed signed archive. Campaign module configuration rejects language packages and the table extension list omits them.
 
@@ -269,7 +271,7 @@ The Translator Django app is maintained at <https://github.com/Gravewright/trans
 
 Inside now has separate **Systems** and **Modules** libraries, with a tile/list view preference, search and pagination. **Install system** or **Install module** opens the configured catalog in a dialog filtered to that category. The native PDF system remains visible without remote configuration. Installed libraries never require a catalog fetch; catalog diagnostics appear when opening the installation browser. The old `section=marketplace` link resolves to Modules for compatibility.
 
-New signed catalog records should include `"type": "system"` or `"type": "module"`. This field participates in the signature and must match the ZIP manifest (`system` means the manifest declares `system`). Invalid values and mismatches are rejected. Legacy records without a type remain valid and default to modules when not yet installed; installed manifests determine their actual category. Publishers of system packages must include the signed type for correct discovery before installation.
+New signed catalog records should include `"type": "system"`, `"type": "module"`, or `"type": "django"`. Django records require an explicit type and a `django` manifest block. This field participates in the signature and must match the ZIP manifest (`system` means the manifest declares `system`). Invalid values and mismatches are rejected. Legacy records without a type remain valid and default to modules when not yet installed; installed manifests determine their actual category. Publishers of system packages must include the signed type for correct discovery before installation.
 
 Catalog records may also declare `tags`: up to 24 unique, trimmed, nonempty Unicode strings of at most 64 characters. They participate in the canonical signature and form creator-defined categories in the installation modal. Categories are scoped to the selected package type. Missing tags remain valid and packages still appear under All packages.
 
@@ -286,6 +288,44 @@ resources on `onDispose`. The host only supplies the button; the module owns its
 UI, assets and validation. Modules without this optional callback are unchanged.
 
 ### Explicitly installed Django apps
+
+The marketplace also accepts signed catalog records with `"type": "django"`.
+These appear in **Modules** with a **Django · Server** badge. A local Django ZIP
+can be installed through **Install from ZIP** in the same library. Installation
+only validates and extracts the archive; use its activation button to execute
+the trusted server code and restart the host. This requires the managed Runner
+or `main.py`, plus `uv`. There is no manual `.env` change for marketplace apps.
+
+Use the normal manifest identity, SDK, description, author and license fields,
+omit `entry`, `system` and `locales`, and add:
+
+```json
+"django": {
+  "apps": ["my_extension.apps.MyExtensionConfig"],
+  "requirements": ["some-library==1.2.3"]
+}
+```
+
+The ZIP must contain `my_extension/__init__.py` and the app's Python sources,
+migrations, templates and static assets. `requirements` is optional and accepts
+exact `name==version` pins from the configured Python package index, without
+URLs, local paths, extras or installer flags. Dependency resolution cannot
+replace the core versions locked by Gravewright. Apps must use distinct import
+names and Django labels. An AppConfig may define `gravewright_urlconf`; each
+app is responsible for authentication, CSRF and resource permissions on its routes.
+
+Activation prepares a separate Python environment, checks Django, backs up the
+database and files, applies migrations, collects static files and restarts.
+Failures restore the previous environment, package selection and data. Only
+one server operation may run at a time. Enabled selections live in
+`MEDIA_ROOT/modules/server-apps.json` (or the configured modules directory),
+survive core updates, and have their dependency pins reapplied during updates.
+Deactivation restarts the host without the app; it does not reverse migrations
+or delete the app's data. Revoked releases cannot be newly activated; an already
+running app must be deactivated by the owner. Python sources are not served by
+the browser-package asset endpoint or offered as table-level modules.
+
+The following remains an alternative for operator-managed source checkouts:
 
 A host operator may install a trusted Python app in the server's environment and
 set `GRAVEWRIGHT_SERVER_APPS` to its import path (comma-separated for multiple
@@ -314,5 +354,16 @@ to their package root directories (`:` separated on Linux/macOS, `;` on Windows)
 Relative paths resolve against the VTT checkout. These explicitly trusted paths
 survive virtual-environment synchronization; app dependencies still require
 installation. The Python packages remain outside the VTT repository.
+
+The checkout ships a default folder for these apps: `extensions/django`, set by
+`GRAVEWRIGHT_DJANGO_MODULES_ROOT`. It is appended to `sys.path` when it exists,
+so a package placed directly in it only needs its import path in
+`GRAVEWRIGHT_SERVER_APPS`; explicit `GRAVEWRIGHT_SERVER_APP_PATHS` entries
+precede it. Browser module sources have a matching default folder,
+`extensions/api` (`GRAVEWRIGHT_API_MODULES_ROOT`), which is documentation and
+authoring space only — installed signed packages still live under
+`MEDIA_ROOT/modules`. A configured folder that does not exist prevents startup;
+deleting the shipped defaults without configuring them is supported. Git ignores
+the contents of both folders, so extensions stay out of this repository.
 
 [Ethical module porting](ethical-module-porting.md)

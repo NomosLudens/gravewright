@@ -19,9 +19,9 @@
     <div class="campaign-hub__owner"><span class="gw-avatar" aria-hidden="true">{{ user.name[:1]|upper }}</span><span class="campaign-hub__owner-copy"><strong>{{ user.name }}</strong></span><button class="campaign-hub__logout" type="submit" form="logout-form" data-attr:disabled="$_pending">{{ auth.signOut }}</button></div>
   </header>
   <div class="gw-shell__content{{ ' gw-shell__content--packages' if section in ['addons','marketplace','systems','administration'] else '' }}{{ ' player-settings gw-shell__content--settings' if section=='settings' else '' }}">
+  {% if owner %}{% include 'gravewright_web/inside/administration.html' %}{% endif %}
   {% if section=='campaigns' %}{% include 'gravewright_web/inside/library.html' %}
   {% elif section in ['addons','marketplace','systems'] %}{% include 'gravewright_web/inside/modules.html' %}
-  {% elif section=='administration' %}{% include 'gravewright_web/inside/administration.html' %}
   {% elif section=='settings' %}{% include 'gravewright_accounts/settings/account.html' %}
   {% elif section=='privacy' %}{% include 'gravewright_web/inside/privacy.html' %}{% endif %}
   </div>

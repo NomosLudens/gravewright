@@ -40,6 +40,16 @@ uv run --locked python manage.py test gravewright.table.tests.test_frontend_api 
 uv run --locked python manage.py test gravewright.dice --noinput
 ```
 
+As verificações de release para apps Django e atualizações gerenciadas incluem:
+
+```bash
+uv run --locked python tests/e2e/django_marketplace.py
+uv run --locked python tests/e2e/automatic_updates.py --runner
+```
+
+Esses cenários usam dados isolados e verificam dependências, rotas Django,
+recuperação de falhas de migração, preservação nas atualizações e rollback `.old`.
+
 ## JavaScript
 
 Use Node.js atual com módulos ES nativos e `node:test`; estes comandos foram verificados com Node 24. Não é necessário instalar pacotes na raiz para esses testes.
@@ -116,7 +126,7 @@ O cenário cria um checkout temporário com espaços, pontuação e Unicode no c
 
 O mesmo cenário executa os testes unitários de preparação do frontend e o cenário do servidor Python real no Chromium. `--skip-browser` omite a instalação das dependências de testes de navegador e o cenário no navegador, mantendo as verificações do arquivo em lote. Diagnósticos são salvos em `test-results/windows-runner/`. Código, ambiente e dados de campanha temporários são removidos ao terminar o cenário.
 
-Use `"Gravewright Runner.bat" --check --no-pause --data-dir "<diretório-temporário-de-dados>"` para uma preparação manual pelo arquivo em lote que termina sem servir requisições. Isso ainda instala dependências ausentes, compila recursos quando necessário e aplica migrações. A existência do workflow não significa que seus jobs já passaram para uma versão; apenas `--source-check` não valida a execução nativa do arquivo em lote.
+Use `"Install Windows.bat" --check --no-pause --data-dir "<diretório-temporário-de-dados>"` para uma preparação manual pelo arquivo em lote que termina sem servir requisições. Isso ainda instala dependências ausentes, compila recursos quando necessário e aplica migrações. A existência do workflow não significa que seus jobs já passaram para uma versão; apenas `--source-check` não valida a execução nativa do arquivo em lote.
 
 Antes de publicar um pacote Windows, execute esse workflow e verifique a inicialização comum com dois cliques, abertura automática do navegador, Ctrl+C e fechamento do console em um computador Windows. O [guia do executor](windows-runner.md) descreve o modo de diagnóstico com diretório de dados isolado. Testes no Linux ou em outro sistema verificam o ambiente Python naquele sistema, não o CMD nem os atalhos nativos do Windows.
 

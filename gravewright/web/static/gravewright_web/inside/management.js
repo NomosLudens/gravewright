@@ -6,6 +6,8 @@ const text = (root, selector, value) => {
 };
 const show = (root, selector, visible) => root.querySelector(selector)?.toggleAttribute("hidden", !visible);
 const marketplaceErrors = {
+  managed_start_required: "Start Gravewright with the 0.1.2 or newer Runner or main.py to activate Django apps. When upgrading from 0.1.1, replace the old launcher using the new release ZIP and installer.",
+  update_in_progress: "Another server operation is running. Wait for it to finish before activating Django apps.",
   marketplace_catalog_missing: "Set GRAVEWRIGHT_MARKETPLACE_URL to the publisher's HTTPS JSON catalog, then restart the host.",
   marketplace_catalog_invalid: "GRAVEWRIGHT_MARKETPLACE_URL must be a valid HTTPS catalog URL without credentials or a fragment. Correct it and restart the host.",
   marketplace_keys_missing: "Set GRAVEWRIGHT_MARKETPLACE_KEYS_FILE to the publisher's trusted public keys file, then restart the host.",
@@ -54,12 +56,13 @@ function modules(root) {
   const kind = root.dataset.packageKind;
   const manager = root.closest('[data-package-manager]');
   const browser = manager.querySelector('[data-package-browser]');
+  const localDialog = manager.querySelector('[data-local-install]');
   const detail = root.querySelector('[data-package-detail]');
   const native = root.querySelector('[data-native-system]');
   const language = document.documentElement.lang;
   const ui = (en, pt, es) => language === 'pt-BR' ? pt : language === 'es' ? es : en;
   const nativeRow = native ? (() => { const r = JSON.parse(native.textContent); return {id:r.systemId, name:r.title, version:'', builtin:true, system:{}, description:ui('Built into Gravewright. Available when creating a table.', 'Integrado ao Gravewright. Disponível ao criar uma mesa.', 'Integrado en Gravewright. Disponible al crear una mesa.')}; })() : null;
-  const packageType = r => r.system ? 'system' : r.type ?? 'module';
+  const packageType = r => r.system || r.type === 'system' ? 'system' : 'module';
   function view(mode) {
     root.dataset.view = !installedOnly || mode === 'list' ? 'list' : 'tiles';
     root.querySelectorAll('[data-view-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.viewMode === root.dataset.view)));
@@ -168,6 +171,11 @@ function modules(root) {
       text(card, "h3", local?.name ?? row.name ?? row.id);
       text(card, '[data-card-description]', row.description ?? local?.description ?? '');
       const tags = card.querySelector('[data-tags]');
+      if (tags && (local?.django || row.type === 'django')) {
+        const badge = document.createElement('span');
+        badge.textContent = 'Django · Server';
+        tags.append(badge);
+      }
       if (tags) for (const tag of row.tags ?? local?.tags ?? []) { const badge = document.createElement('span'); badge.textContent = tag; tags.append(badge); }
       text(card, "[data-version]", row.builtin ? "PDF" : `v${row.version}`);
       const status = row.builtin ? ui('Built-in', 'Integrado', 'Integrado') : local?.revoked ? ui('Revoked', 'Revogado', 'Revocado') : local?.globalEnabled ? ui('Active', 'Ativo', 'Activo') : local ? ui('Installed', 'Instalado', 'Instalado') : ui('Available', 'Disponível', 'Disponible');
@@ -195,16 +203,37 @@ function modules(root) {
         text(root, '[role=status]', ui('Package installed. It is now in your library.', 'Pacote instalado. Ele já está na sua biblioteca.', 'Paquete instalado. Ya está en tu biblioteca.'));
         show(root, "[role=status]", true);
       });
-      if (installedOnly && local?.locales && !local.revoked) {
+      if (installedOnly && (local?.locales || local?.django) && (!local.revoked || local.globalEnabled)) {
         const button = document.createElement('button');
         button.type = 'button';
         button.dataset.action = 'global-activation';
         button.textContent = '⏻';
         button.title = local.globalEnabled ? ui('Deactivate languages', 'Desativar idiomas', 'Desactivar idiomas') : ui('Activate languages', 'Ativar idiomas', 'Activar idiomas');
         button.setAttribute('aria-label', button.title);
+        if (local.django) {
+          button.title = local.globalEnabled ? 'Deactivate Django app and restart server' : 'Activate trusted Django server code and restart server';
+          button.setAttribute('aria-label', button.title);
+        }
         button.setAttribute('aria-pressed', String(!!local.globalEnabled));
         button.onclick = () => run(root, async () => {
           await http.post('/api/module-packages/activation', {id: row.id, version: row.version, enabled: !local.globalEnabled});
+          if (local.django) {
+            show(root, '[role=status]', true);
+            text(root, '[role=status]', 'Preparing Django apps. The server will restart automatically.');
+            const deadline = Date.now() + 15 * 60 * 1000;
+            let complete = false;
+            while (Date.now() < deadline) {
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              let progress;
+              try { progress = (await http.get('/api/admin/status')).updates.automatic; }
+              catch { continue; }
+              if (progress.busy) continue;
+              if (progress.stage !== 'complete') throw Error('Django activation failed. Previous configuration preserved; check the host update log.');
+              complete = true;
+              break;
+            }
+            if (!complete) throw Error('The server is still unavailable. Check the host update log before retrying.');
+          }
           location.reload();
         });
         card.querySelector(".module-catalog__actions").append(button);
@@ -275,8 +304,55 @@ function modules(root) {
       root.querySelector('[data-action=browse]').focus();
     };
     manager.querySelector('[data-action=close-browser]').onclick = closeBrowser;
+    const closeLocal = () => {
+      localDialog.close();
+    };
+    localDialog.addEventListener('close', () => {
+      localDialog.querySelector('[data-local-form]').reset();
+      show(localDialog, '[role=alert]', false);
+      manager.querySelector('[data-action=install-local]').focus();
+    });
+    localDialog.querySelectorAll('[data-action=close-local]').forEach(button => button.onclick = closeLocal);
+    manager.querySelector('[data-action=install-local]').onclick = async () => {
+      show(localDialog, '[role=alert]', false);
+      try {
+        const configuration = await http.get('/api/module-packages/install-local');
+        text(localDialog, '[data-local-directory]', configuration.directory);
+        localDialog.dataset.maxBytes = configuration.maxBytes;
+        localDialog.showModal();
+        localDialog.querySelector('input[type=file]').focus();
+      } catch (error) {
+        text(browser, '[role=alert]', error.message || ui('Could not read the local installation configuration.', 'Não foi possível ler a configuração da instalação local.', 'No se pudo leer la configuración de instalación local.'));
+        show(browser, '[role=alert]', true);
+      }
+    };
+    localDialog.querySelector('[data-local-form]').onsubmit = event => {
+      event.preventDefault();
+      // FormData omits disabled inputs, so capture before run() disables them.
+      const form = new FormData(event.currentTarget);
+      void run(localDialog, async () => {
+        const file = form.get('file');
+        if (!(file instanceof File) || !file.size) throw new Error(ui('Select a ZIP file.', 'Selecione um arquivo ZIP.', 'Selecciona un archivo ZIP.'));
+        if (file.size > Number(localDialog.dataset.maxBytes)) throw new Error(ui('The ZIP exceeds the 64 MiB package limit.', 'O ZIP ultrapassa o limite de 64 MiB por pacote.', 'El ZIP supera el límite de 64 MiB por paquete.'));
+        try {
+          await http.upload('/api/module-packages/install-local', form);
+        } catch (error) {
+          const message = error.code === 'conflict'
+            ? ui('This ID and version are already installed with different contents.', 'Este ID e versão já estão instalados com conteúdo diferente.', 'Este ID y versión ya están instalados con contenido diferente.')
+            : error.code === 'unavailable'
+              ? ui('This package is not compatible with the current SDK.', 'Este pacote não é compatível com o SDK atual.', 'Este paquete no es compatible con el SDK actual.')
+              : ui('The ZIP is not a valid package for this library.', 'O ZIP não é um pacote válido para esta biblioteca.', 'El ZIP no es un paquete válido para esta biblioteca.');
+          throw new Error(message);
+        }
+        closeLocal();
+        closeBrowser();
+        await refresh();
+        text(root, '[role=status]', ui('Local package installed from ZIP.', 'Pacote local instalado do ZIP.', 'Paquete local instalado desde ZIP.'));
+        show(root, '[role=status]', true);
+      });
+    };
     document.addEventListener('keydown', event => {
-      if (browser.hidden || browser.querySelector('dialog[open]')) return;
+      if (browser.hidden || manager.querySelector('dialog[open]')) return;
       if (event.key === 'Escape') { event.preventDefault(); closeBrowser(); }
       if (event.key === 'Tab') {
         const focusable = [...browser.querySelectorAll('button,input,select,a[href],[tabindex="0"]')].filter(el => !el.disabled && el.getClientRects().length);
@@ -331,14 +407,18 @@ function administration(root) {
   function updates(value) {
     release = value;
     automatic = value.automatic ?? automatic;
-    const stages = {queued:ui('Update queued','Atualização na fila','Actualización en cola'),download:ui('Downloading release','Baixando versão','Descargando versión'),verify:ui('Verifying release','Validando versão','Validando versión'),dependencies:ui('Preparing dependencies','Preparando dependências','Preparando dependencias'),backup:ui('Backing up database and files','Salvando banco e arquivos','Guardando base y archivos'),migrate:ui('Applying migrations','Aplicando migrações','Aplicando migraciones'),restart:ui('Restarting server','Reiniciando servidor','Reiniciando servidor'),rollback:ui('Restoring previous version','Restaurando versão anterior','Restaurando versión anterior'),rolled_back:ui('Update failed; previous version restored','A atualização falhou; versão anterior restaurada','La actualización falló; versión anterior restaurada'),failed:ui('Update failed; check the update log','A atualização falhou; consulte o log de atualização','La actualización falló; consulta el registro'),complete:ui('Update installed','Atualização instalada','Actualización instalada')};
-    text(root, '[data-automatic-help]', automatic.supported ? ui('Installation includes backup and a server restart. Open tables will disconnect briefly.','A instalação inclui backup e reinício do servidor. As mesas abertas serão desconectadas por um momento.','La instalación incluye copia de seguridad y reinicio. Las mesas abiertas se desconectarán brevemente.') : ui('Automatic installation is available through the Gravewright launcher on Windows, Linux and macOS. Restart using the updated launcher.','A instalação automática funciona pelo inicializador do Gravewright no Windows, Linux e macOS. Reinicie pelo inicializador atualizado.','La instalación automática está disponible desde el iniciador de Gravewright en Windows, Linux y macOS. Reinicia con el iniciador actualizado.'));
+    const stages = {replace:ui('Replacing project files','Substituindo arquivos do projeto','Sustituyendo archivos del proyecto'),queued:ui('Update queued','Atualização na fila','Actualización en cola'),download:ui('Downloading release','Baixando versão','Descargando versión'),verify:ui('Verifying release','Validando versão','Validando versión'),dependencies:ui('Preparing dependencies','Preparando dependências','Preparando dependencias'),backup:ui('Backing up database and files','Salvando banco e arquivos','Guardando base y archivos'),migrate:ui('Applying migrations','Aplicando migrações','Aplicando migraciones'),restart:ui('Restarting server','Reiniciando servidor','Reiniciando servidor'),rollback:ui('Restoring previous version','Restaurando versão anterior','Restaurando versión anterior'),rolled_back:ui('Update failed; previous version restored','A atualização falhou; versão anterior restaurada','La actualización falló; versión anterior restaurada'),failed:ui('Update failed; check the update log','A atualização falhou; consulte o log de atualização','La actualización falló; consulta el registro'),complete:ui('Update installed','Atualização instalada','Actualización instalada')};
+    text(root, '[data-automatic-help]', automatic.supported ? ui('Replaces project files, including launchers. Keep .old to retain a rollback copy after success. Temporary recovery is always available during installation. Open tables will disconnect.','Substitui os arquivos do projeto, incluindo os inicializadores. Marque .old para manter uma cópia de rollback após o sucesso. A recuperação temporária durante a instalação é sempre mantida. As mesas serão desconectadas.','Sustituye los archivos del proyecto, incluidos los iniciadores. Marca .old para conservar una copia tras el éxito. La recuperación temporal durante la instalación siempre está disponible. Las mesas se desconectarán.') : ui('Automatic installation is available through the Gravewright launcher on Windows, Linux and macOS. Restart using the updated launcher.','A instalação automática funciona pelo inicializador do Gravewright no Windows, Linux e macOS. Reinicie pelo inicializador atualizado.','La instalación automática está disponible desde el iniciador de Gravewright en Windows, Linux y macOS. Reinicia con el iniciador actualizado.'));
     const installButton = root.querySelector('[data-action=apply-update]');
     installButton.hidden = false;
     installButton.dataset.unavailable = String(!automatic.supported || automatic.busy || value.status !== 'available');
     installButton.disabled = installButton.dataset.unavailable === 'true';
+    root.querySelector('[data-update-keep-old]').disabled = !!automatic.busy;
     text(root, '[data-automatic-progress]', (stages[automatic.stage] ?? '') + (automatic.stage === 'download' && automatic.total ? ` · ${Math.floor(100 * automatic.received / automatic.total)}%` : ''));
     show(root, '[data-automatic-progress]', !!stages[automatic.stage]);
+    if (automatic.stage === 'complete' && automatic.backup) {
+      text(root, '[data-automatic-progress]', `${stages.complete} · .old: ${automatic.backup}`);
+    }
     if (automatic.busy && !pollTimer) pollTimer = setTimeout(pollUpdate, 1500);
     const statuses = {current:ui('Up to date','Atualizado','Actualizado'),available:ui('Update available','Atualização disponível','Actualización disponible'),failed:ui('Check failed','Falha na consulta','Error de consulta'),unchecked:ui('Not checked yet','Ainda não verificado','Todavía sin comprobar'),'ahead-of-channel':ui('Newer than this channel','Mais recente que este canal','Más reciente que este canal')};
     summary(root.querySelector('[data-update-summary]'), {[ui('Installed version','Versão instalada','Versión instalada')]:value.currentVersionLabel ?? value.currentVersion,[ui('Status','Situação','Estado')]:statuses[value.status] ?? value.status,...value.availableVersion ? {[ui('Published version','Versão publicada','Versión publicada')]:value.availableVersionLabel ?? value.availableVersion} : {},...value.checkedAt ? {[ui('Last check','Última verificação','Última comprobación')]:new Date(value.checkedAt*1000).toLocaleString(language)} : {}});
@@ -476,7 +556,7 @@ function administration(root) {
     if (action === "refresh") void run(root, async () => { await refresh(); if (!root.querySelector('[data-content=diagnostics]').hidden) await diagnostics(); });
     if (action === "diagnostics") void run(root, diagnostics);
     if (action === 'apply-update') void run(root, async () => {
-      try { automatic = await http.post('/api/admin/updates/apply', {version: release.availableVersion}, {timeoutMs:null}); }
+      try { automatic = await http.post('/api/admin/updates/apply', {version: release.availableVersion, keep_old: root.querySelector("[data-update-keep-old]").checked}, {timeoutMs:null}); }
       catch (error) { throw Error(ui('Could not start the update. Check for local changes, another update or a changed release.','Não foi possível iniciar a atualização. Verifique alterações locais, outra atualização em curso ou mudança na release.','No se pudo iniciar la actualización. Comprueba cambios locales, otra actualización o cambios en la versión.')); }
       updates({...release, automatic});
     });
@@ -531,8 +611,36 @@ function administration(root) {
   };
   void run(root, refresh);
 }
+function defaultMarketplace(root) {
+  const language = document.documentElement.lang;
+  const ui = (en, pt, es) => language === 'pt-BR' ? pt : language === 'es' ? es : en;
+  const button = root.querySelector('[data-action=install-default-marketplace]');
+  function render(state) {
+    text(root, '[data-marketplace-state]', state.default
+      ? ui('The default marketplace is installed and ready.', 'O marketplace padrão está instalado e pronto.', 'El marketplace predeterminado está instalado y listo.')
+      : state.configured
+        ? ui('A custom marketplace is already configured.', 'Um marketplace personalizado já está configurado.', 'Ya hay un marketplace personalizado configurado.')
+        : ui('No marketplace is configured for this installation.', 'Nenhum marketplace está configurado nesta instalação.', 'No hay ningún marketplace configurado en esta instalación.'));
+    button.hidden = !!state.configured;
+  }
+  async function refresh() {
+    render(await http.get('/api/marketplace/default'));
+  }
+  button.onclick = () => void run(root, async () => {
+    try {
+      render(await http.post('/api/marketplace/default'));
+    } catch {
+      throw new Error(ui(
+        'Could not install the default marketplace. Check the server connection and try again.',
+        'Não foi possível instalar o marketplace padrão. Verifique a conexão do servidor e tente novamente.',
+        'No se pudo instalar el marketplace predeterminado. Comprueba la conexión del servidor e inténtalo de nuevo.'
+      ));
+    }
+  });
+  void run(root, refresh);
+}
 function initialize() {
-  for (const [selector, start] of [["[data-module-catalog]", modules], ["[data-administration]", administration], ["[data-privacy-settings]", privacySettings]]) document.querySelectorAll(selector).forEach((root) => {
+  for (const [selector, start] of [["[data-module-catalog]", modules], ["[data-administration]", administration], ["[data-privacy-settings]", privacySettings], ["[data-default-marketplace]", defaultMarketplace]]) document.querySelectorAll(selector).forEach((root) => {
     if (root.dataset.initialized) return;
     root.dataset.initialized = "true";
     start(root);
