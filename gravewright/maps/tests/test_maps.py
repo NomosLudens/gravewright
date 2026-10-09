@@ -9,7 +9,7 @@ from django.test import TransactionTestCase, override_settings
 from PIL import Image
 
 from gravewright.maps import services
-from gravewright.maps.models import Folder, Scene, Tile
+from gravewright.maps.models import Broadcast, Folder, Scene, Tile
 from gravewright.realtime.tests import test_sockets as fixtures
 
 
@@ -59,6 +59,62 @@ class MapTests(TransactionTestCase):
         )
         self.assertEqual(response.status_code, 201, response.content)
         return response.json()
+
+    def test_admin_qa_scene_command_is_authorized_and_idempotent(self):
+        import hashlib
+        from io import StringIO
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
+        self.campaign.name = "QA Jornada Contínua 20261007"
+        self.campaign.save(update_fields=["name"])
+        source = Path(self.media.name) / "qa-arena.png"
+        Image.new("RGB", (80, 60), "#354b66").save(source, "PNG")
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        args = {
+            "campaign_id": str(self.campaign.pk),
+            "png_path": source,
+            "sha256": digest,
+        }
+
+        with self.assertRaises(CommandError):
+            call_command("create_qa_scene", **args, operator_id=str(self.player.pk))
+        with self.assertRaises(CommandError):
+            call_command(
+                "create_qa_scene",
+                **{**args, "campaign_id": str(self.other.pk)},
+                operator_id=str(self.gm.pk),
+            )
+        self.assertFalse(Scene.objects.filter(campaign=self.campaign).exists())
+        self.assertFalse(Scene.objects.filter(campaign=self.other).exists())
+
+        first_output = StringIO()
+        call_command(
+            "create_qa_scene",
+            **args,
+            operator_id=str(self.gm.pk),
+            stdout=first_output,
+        )
+        scene = Scene.objects.get(
+            campaign=self.campaign, name="Arena QA KALLISTIS"
+        )
+        self.assertEqual(scene.visibility, "players")
+        self.assertTrue(Broadcast.objects.filter(campaign=self.campaign, scene=scene).exists())
+        self.assertEqual(Tile.objects.filter(scene=scene).count(), 1)
+        self.assertIn("QA_SCENE=CREATED", first_output.getvalue())
+
+        second_output = StringIO()
+        call_command(
+            "create_qa_scene",
+            **args,
+            operator_id=str(self.gm.pk),
+            stdout=second_output,
+        )
+        self.assertEqual(
+            Scene.objects.filter(campaign=self.campaign, name="Arena QA KALLISTIS").count(),
+            1,
+        )
+        self.assertIn("QA_SCENE=EXISTING", second_output.getvalue())
 
     def test_upload_pyramid_and_authorized_tile_delivery(self):
         m = self.upload()

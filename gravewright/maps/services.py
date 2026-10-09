@@ -1,12 +1,17 @@
 """Campaign-scoped scenes and publication commands, independent of HTTP/Channels."""
 
+from io import BytesIO
 import math
 import re
+import uuid
 from django.conf import settings as django_settings
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 from django.db import transaction
+from PIL import Image, ImageOps, UnidentifiedImageError
 from gravewright.campaigns.models import Campaign
 from gravewright.journals.services import member, identifier
-from .models import Scene, Folder, Broadcast, Receipt
+from .models import Scene, Tile, Folder, Broadcast, Receipt
 
 DEFAULTS = {
     "gridSize": 70,
@@ -93,6 +98,131 @@ def settings(raw, previous=None):
 def manage(who):
     if who.role != "gm":
         raise MapError("Only the GM can manage scenes.", "forbidden")
+
+
+def create_from_upload(
+    campaign_id, user_id, raw_name, raw_settings, incoming, *, activate=False,
+    reject_duplicate=False,
+):
+    """Validate a raster, persist its tile pyramid and optionally publish it."""
+    stored = []
+    try:
+        who = member(campaign_id, user_id)
+        manage(who)
+        name = title(raw_name)
+        options = settings(raw_settings)
+        visibility = raw_settings.get("visibility", "players")
+        if visibility not in ("players", "gm"):
+            raise MapError("Invalid visibility.")
+        target = folder(raw_settings.get("groupId"), who)
+        if incoming is None or incoming.size > django_settings.MAP_UPLOAD_MAX_BYTES:
+            raise MapError("Choose a map image within the configured upload limit.")
+        try:
+            with Image.open(incoming) as source:
+                if source.format not in ("PNG", "JPEG", "WEBP", "TIFF"):
+                    raise ValueError("format")
+                if source.width * source.height > getattr(
+                    django_settings, "GRAVEWRIGHT_MAP_MAX_PIXELS", 64_000_000
+                ):
+                    raise MapError("This map exceeds the server image pixel limit.")
+                if (
+                    source.width > django_settings.MAP_IMAGE_MAX_WIDTH
+                    or source.height > django_settings.MAP_IMAGE_MAX_HEIGHT
+                ):
+                    raise MapError("Map dimensions exceed the configured limit.")
+                levels = max(0, math.ceil(math.log2(max(source.size) / 512)))
+                if sum(
+                    math.ceil(source.width / (512 * 2**lod))
+                    * math.ceil(source.height / (512 * 2**lod))
+                    for lod in range(levels + 1)
+                ) > django_settings.MAP_MAX_TILE_COUNT:
+                    raise MapError("Map tile count exceeds the configured limit.")
+                source.load()
+                raster = ImageOps.exif_transpose(source).convert("RGBA")
+        except (
+            UnidentifiedImageError,
+            ValueError,
+            OSError,
+            Image.DecompressionBombError,
+        ):
+            raise MapError("Choose a valid PNG, JPEG, WebP or TIFF image.") from None
+
+        width, height = raster.size
+        max_lod = max(0, math.ceil(math.log2(max(width, height) / 512)))
+        tiles = []
+        try:
+            for lod in range(max_lod + 1):
+                if lod:
+                    level = raster.resize(
+                        (math.ceil(width / 2**lod), math.ceil(height / 2**lod)),
+                        Image.Resampling.LANCZOS,
+                    )
+                else:
+                    level = raster
+                try:
+                    for y in range(math.ceil(level.height / 512)):
+                        for x in range(math.ceil(level.width / 512)):
+                            with level.crop(
+                                (
+                                    x * 512,
+                                    y * 512,
+                                    min((x + 1) * 512, level.width),
+                                    min((y + 1) * 512, level.height),
+                                )
+                            ) as chunk:
+                                content = BytesIO()
+                                chunk.save(content, format="WEBP", lossless=True)
+                            path = default_storage.save(
+                                "maps/tiles/" + uuid.uuid4().hex + ".webp",
+                                ContentFile(content.getvalue()),
+                            )
+                            stored.append(path)
+                            tiles.append(
+                                Tile(
+                                    lod=lod,
+                                    x=x,
+                                    y=y,
+                                    file=path,
+                                    byte_size=len(content.getvalue()),
+                                )
+                            )
+                finally:
+                    if lod:
+                        level.close()
+        finally:
+            raster.close()
+
+        with transaction.atomic():
+            Campaign.objects.select_for_update().get(pk=campaign_id)
+            who = member(campaign_id, user_id)
+            manage(who)
+            if reject_duplicate and Scene.objects.filter(
+                campaign_id=campaign_id, name=name
+            ).exists():
+                raise MapError("A scene with this name already exists.", "already_exists")
+            target = folder(raw_settings.get("groupId"), who)
+            row = Scene.objects.create(
+                campaign_id=campaign_id,
+                name=name,
+                folder=target,
+                visibility=visibility,
+                width=width,
+                height=height,
+                max_lod=max_lod,
+                settings=options,
+            )
+            for tile in tiles:
+                tile.scene = row
+            Tile.objects.bulk_create(tiles)
+            if activate:
+                Broadcast.objects.update_or_create(
+                    campaign_id=campaign_id, defaults={"scene": row}
+                )
+        stored.clear()
+        return row
+    finally:
+        for path in stored:
+            default_storage.delete(path)
 
 
 def scene(scene_id, who, write=False):
