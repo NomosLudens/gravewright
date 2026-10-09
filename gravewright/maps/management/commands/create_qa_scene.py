@@ -48,7 +48,7 @@ class Command(BaseCommand):
         if who.role != "gm":
             raise CommandError("The indicated operator does not have the campaign GM role.")
 
-        path = options["png_path"].expanduser().resolve()
+        path = Path(options["png_path"]).expanduser().resolve()
         if not path.is_file() or path.suffix.lower() != ".png":
             raise CommandError("--png-path must point to an existing PNG file.")
         expected = options["sha256"].strip().lower()

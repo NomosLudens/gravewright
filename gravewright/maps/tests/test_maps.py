@@ -73,7 +73,7 @@ class MapTests(TransactionTestCase):
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
         args = {
             "campaign_id": str(self.campaign.pk),
-            "png_path": source,
+            "png_path": str(source),
             "sha256": digest,
         }
 
