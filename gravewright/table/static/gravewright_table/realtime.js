@@ -81,6 +81,10 @@ function receive(event) {
     if(actorsSubscribed)send('actors.sync');
     if(tokenMapId)send('tokens.sync',{mapId:tokenMapId});
     for(const c of resourceCommands.values())send(c.area+'.command',c.payload);
+    // The table shell can join before the scene workspace subscribes. Always
+    // request the current broadcast for a full table page so it cannot remain
+    // on the empty-world screen until the GM opens the Scenes panel.
+    if (document.getElementById('maps-panel')) mapsSubscribed = true;
     if(mapsSubscribed) send('maps.sync');
     if(mapLayerId) send('maps.layers',{mapId:mapLayerId});
     for(const command of mapCommands.values()) send('maps.command',command.payload);
