@@ -129,7 +129,7 @@ func _receive(raw: String) -> void:
 
 func _load_map(data: Dictionary) -> void:
     var active: Variant = data.get("activeMapId", "")
-    var next_scene := active if typeof(active) == TYPE_STRING else ""
+    var next_scene: String = active if typeof(active) == TYPE_STRING else ""
     if next_scene != _scene_id:
         _tokens.clear()
         _selected_id = ""
@@ -227,7 +227,7 @@ func _gui_input(event: InputEvent) -> void:
             "id": selected["id"],
             "gridX": target.x,
             "gridY": target.y,
-            "expectedVersion": selected.get("version"),
+            "expectedVersion": int(selected.get("version", 0)),
             "path": []
         }
     }

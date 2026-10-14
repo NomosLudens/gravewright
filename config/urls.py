@@ -23,6 +23,16 @@ urlpatterns = [
     path('', include('gravewright.accounts.urls')),
 ]
 
+# The Godot export is a local-only development surface. Desktop Runner adds the
+# same campaign-scoped route through config.runner_urls when DEBUG is disabled.
+if settings.DEBUG:
+    from gravewright.table.tactics_export import export as tactics_export
+
+    urlpatterns += [
+        path('game/<uuid:campaign_id>/tactics/', tactics_export, {'asset': 'index.html'}),
+        path('game/<uuid:campaign_id>/tactics/<path:asset>', tactics_export),
+    ]
+
 # A trusted installed app may opt into HTTP routes without editing host URLs.
 for app in apps.get_app_configs():
     if (app.name in settings.GRAVEWRIGHT_SERVER_APPS or
