@@ -25,10 +25,11 @@ class AuthSecurityMiddleware(MiddlewareMixin):
         if not request.path.startswith(('/static/', '/admin/')):
             response['Cache-Control'] = 'no-store'
             # Datastar compiles trusted expressions in data-* attributes.
-            response['Content-Security-Policy'] = (
-                "default-src 'none'; script-src 'self' 'unsafe-eval'; "
-                "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; "
-                "font-src 'self'; media-src 'self' blob:; connect-src 'self'; base-uri 'none'; "
-                "form-action 'self'; frame-ancestors 'none'"
-            )
+            if 'Content-Security-Policy' not in response:
+                response['Content-Security-Policy'] = (
+                    "default-src 'none'; script-src 'self' 'unsafe-eval'; "
+                    "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; "
+                    "font-src 'self'; media-src 'self' blob:; connect-src 'self'; base-uri 'none'; "
+                    "form-action 'self'; frame-ancestors 'none'"
+                )
         return response

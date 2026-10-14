@@ -56,7 +56,7 @@ def _sha256(path: Path) -> str:
 def _git_commit() -> str:
     try:
         result = subprocess.run(
-            ["/usr/bin/git", "-C", "/home/tonyus-dev/gravewright", "rev-parse", "HEAD"],
+            ["git", "-C", str(settings.BASE_DIR), "rev-parse", "HEAD"],
             check=True,
             capture_output=True,
             text=True,

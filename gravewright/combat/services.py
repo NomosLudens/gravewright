@@ -516,7 +516,14 @@ def command(who, action, p):
         target_id = str(p.get("tokenId", p.get("actorId")))
         removed_index = next((i for i, entry in enumerate(row.combatants) if identity(entry) == target_id), None)
         if removed_index is not None:
-            current_id = identity(_current_entry(row) or {})
+            previous_order = list(config.get("activation_order") or [])
+            current_id = previous_order[row.turn] if row.active and row.turn < len(previous_order) else identity(_current_entry(row) or {})
+            current_activation = (
+                previous_order[: row.turn + 1].count(current_id) - 1
+                if current_id in previous_order and row.turn < len(previous_order)
+                else 0
+            )
+            next_ids = previous_order[row.turn + 1 :]
             row.combatants.pop(removed_index)
             if not row.combatants:
                 row.active, row.round, row.turn = False, 0, 0
@@ -529,7 +536,12 @@ def command(who, action, p):
                         row.active, row.round, row.turn = False, 0, 0
                     else:
                         order = _activation_order(row)
-                        row.turn = next((slot for slot, actor_id in enumerate(order) if actor_id == current_id), min(row.turn, len(order) - 1))
+                        current_slots = [slot for slot, actor_id in enumerate(order) if actor_id == current_id]
+                        if current_slots:
+                            row.turn = current_slots[min(current_activation, len(current_slots) - 1)]
+                        else:
+                            next_id = next((actor_id for actor_id in next_ids if actor_id in order), None)
+                            row.turn = order.index(next_id) if next_id else min(row.turn, len(order) - 1)
                 else:
                     config.pop("side_initiative", None)
                     config.pop("first_side", None)
