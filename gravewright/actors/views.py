@@ -27,10 +27,11 @@ from .kallistis_import import (
 )
 
 
-def publish(campaign):
+def publish(campaign_id):
+    campaign_id = getattr(campaign_id, "pk", campaign_id)
     layer = get_channel_layer()
     for kind in ("room.actors", "room.tokens", "room.map_layers"):
-        async_to_sync(layer.group_send)(f"table.{campaign.pk.hex}", {"type": kind})
+        async_to_sync(layer.group_send)(f"table.{campaign_id.hex}", {"type": kind})
 
 
 @require_GET

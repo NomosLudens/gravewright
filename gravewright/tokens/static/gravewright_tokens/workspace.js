@@ -66,6 +66,7 @@ export function createTokens(surface, board, map, gm, initial) {
       mapId: map.id,
       systemId: "gravewright-pdf-system",
       scene: map,
+      tacticalTerrain: state.tacticalTerrain,
       gm,
       cell: g.cell,
       width: Math.max(0, map.width - g.x),

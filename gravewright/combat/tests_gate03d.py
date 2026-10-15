@@ -165,6 +165,63 @@ class MinimumCombatTests(TransactionTestCase):
                 "expectedVersion": token.version,
             }, uuid.uuid4())
 
+    def test_scene_terrain_charges_kallistis_costs_and_rolls_back_excess_move(self):
+        from gravewright.maps.models import TacticalTerrain, TerrainCell
+        from gravewright.tokens import services as token_services
+
+        grid = TacticalTerrain.objects.create(scene=self.map, width=16, height=16)
+        TerrainCell.objects.bulk_create([
+            TerrainCell(terrain=grid, x=x, y=y)
+            for y in range(16) for x in range(16)
+        ])
+        TerrainCell.objects.filter(terrain=grid, x=1, y=0).update(
+            terrain_type="DIFICIL", movement_cost=2
+        )
+        TerrainCell.objects.filter(terrain=grid, x=2, y=1).update(
+            terrain_type="SEVERO", movement_cost=3
+        )
+        first, second = self.one.tokens.first(), self.two.tokens.first()
+        self.command("add", tokenId=str(first.pk))
+        self.command("add", tokenId=str(second.pk))
+        self.command("side", tokenId=str(first.pk), side="friendly")
+        self.command("side", tokenId=str(second.pk), side="hostile")
+        initiative = self.command(
+            "roll-initiative", friendlyRepresentative=str(first.pk), hostileRepresentative=str(second.pk)
+        )
+        self.assertIn(initiative["config"]["side_initiative"]["winner"], {"friendly", "hostile"})
+        self.command("choose-first-side", side="friendly")
+        self.command("start")
+
+        token = first
+        token.refresh_from_db()
+        command = {
+            "mapId": str(self.map.pk), "id": str(token.pk),
+            "gridX": 2, "gridY": 0, "path": [[1, 0]],
+            "expectedVersion": token.version,
+        }
+        token_services.command(self.campaign.pk, self.player.pk, "move", command, uuid.uuid4())
+        token.refresh_from_db()
+        encounter = services.Encounter.objects.get(scene=self.map)
+        used = next(row["movement_used"] for row in encounter.combatants if row["tokenId"] == str(token.pk))
+        self.assertEqual(used, 3)  # DIFICIL (2) + NORMAL (1), from KALLÍSTIS.
+
+        command.update(gridX=2, gridY=1, path=[], expectedVersion=token.version)
+        token_services.command(self.campaign.pk, self.player.pk, "move", command, uuid.uuid4())
+        token.refresh_from_db()
+        encounter.refresh_from_db()
+        used = next(row["movement_used"] for row in encounter.combatants if row["tokenId"] == str(token.pk))
+        self.assertEqual(used, 6)  # SEVERO costs 3.
+
+        before = (token.grid_x, token.grid_y, token.version, used)
+        command.update(gridX=1, gridY=1, path=[], expectedVersion=token.version)
+        with self.assertRaises(MapError) as exceeded:
+            token_services.command(self.campaign.pk, self.player.pk, "move", command, uuid.uuid4())
+        self.assertEqual(exceeded.exception.code, "movement_exceeded")
+        token.refresh_from_db()
+        encounter.refresh_from_db()
+        used_after = next(row["movement_used"] for row in encounter.combatants if row["tokenId"] == str(token.pk))
+        self.assertEqual((token.grid_x, token.grid_y, token.version, used_after), before)
+
     def test_side_initiative_turn_clock_and_end_state(self):
         one = str(self.one.tokens.first().pk)
         two = str(self.two.tokens.first().pk)

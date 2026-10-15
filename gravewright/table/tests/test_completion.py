@@ -17,14 +17,20 @@ class CompletionTests(TestCase):
     state = fixtures.TableModuleTests.state
     def test_roster_changes_preserve_current_identity(self):
         others=[Token.objects.create(scene=self.scene,actor=self.actor) for _ in range(2)]
-        rows=[{'tokenId':str(t.pk),'defeated':False} for t in [self.token,*others]]
-        encounter=Encounter.objects.create(scene=self.scene,active=True,round=2,turn=1,combatants=rows)
+        first, current, last = [str(t.pk) for t in [self.token, *others]]
+        rows=[
+            {'tokenId':first,'side':'friendly','defeated':False},
+            {'tokenId':current,'side':'hostile','activations':2,'defeated':False},
+            {'tokenId':last,'side':'friendly','defeated':False},
+        ]
+        encounter=Encounter.objects.create(
+            scene=self.scene, active=True, round=2, turn=2, combatants=rows,
+            config={'first_side':'friendly','activation_order':[first,current,current,last]},
+        )
         self.command('combat','remove',{'sceneId':str(self.scene.pk),'tokenId':str(self.token.pk),'version':encounter.version})
         encounter.refresh_from_db()
-        self.assertEqual(encounter.combatants[encounter.turn]['tokenId'],str(others[0].pk))
-        self.command('combat','order-down',{'sceneId':str(self.scene.pk),'tokenId':str(others[0].pk),'version':encounter.version})
-        encounter.refresh_from_db()
-        self.assertEqual(encounter.combatants[encounter.turn]['tokenId'],str(others[0].pk))
+        self.assertEqual(encounter.config['activation_order'][encounter.turn],current)
+        self.assertEqual(encounter.turn,2)
 
     def test_locked_pack_can_import_but_cannot_edit(self):
         pack=self.command('compendiums','create',{'name':'Read only'})['id']
@@ -40,7 +46,12 @@ class CompletionTests(TestCase):
             {'id':'expired','duration':{'type':'rounds','remaining':1},'data':{'modifiers':[{'operation':'damage_over_time','value':100,'target':'damage.self'}]}},
             {'id':'poison','duration':{'type':'rounds','remaining':3},'data':{'modifiers':[{'operation':'damage_over_time','value':3,'target':'damage.self'}]}},
         ];self.actor.save()
-        encounter=Encounter.objects.create(scene=self.scene,active=True,round=1,combatants=[{'tokenId':str(self.token.pk)}])
+        token_id = str(self.token.pk)
+        encounter=Encounter.objects.create(
+            scene=self.scene, active=True, round=1,
+            combatants=[{'tokenId':token_id,'side':'friendly'}],
+            config={'first_side':'friendly','activation_order':[token_id]},
+        )
         self.command('combat','next',{'sceneId':str(self.scene.pk),'version':encounter.version})
         self.actor.refresh_from_db()
         self.assertFalse(self.actor.data['effects'][0]['enabled'])
@@ -123,16 +134,22 @@ class CompletionTests(TestCase):
         self.actor.data['bars']['bar_1']={'value':10,'max':10}
         self.actor.data['effects']=[{'data':{'modifiers':[{'operation':'damage_over_time','value':2,'target':'damage.self'}]}}]
         self.actor.save()
-        encounter=Encounter.objects.create(scene=self.scene,active=True,round=1,combatants=[{'tokenId':str(self.token.pk)},{'tokenId':str(other.pk)}])
+        token_id, other_id = str(self.token.pk), str(other.pk)
+        encounter=Encounter.objects.create(
+            scene=self.scene, active=True, round=1,
+            combatants=[
+                {'tokenId':token_id,'side':'friendly'},
+                {'tokenId':other_id,'side':'hostile'},
+            ],
+            config={'first_side':'friendly','activation_order':[token_id,other_id]},
+        )
         rid=uuid.uuid4();payload={'sceneId':str(self.scene.pk),'version':encounter.version}
         for _ in range(2):domain.command(self.campaign.pk,self.gm.pk,'combat','next',payload,rid)
         self.actor.refresh_from_db();self.assertEqual(self.actor.data['bars']['bar_1']['value'],8)
         encounter.refresh_from_db()
-        self.command('combat','order-up',{'sceneId':str(self.scene.pk),'tokenId':str(other.pk),'version':encounter.version})
-        encounter.refresh_from_db()
         self.command('combat','previous',{'sceneId':str(self.scene.pk),'version':encounter.version})
         encounter.refresh_from_db()
-        self.assertEqual(encounter.combatants[encounter.turn]['tokenId'],str(self.token.pk))
+        self.assertEqual(encounter.config['activation_order'][encounter.turn],token_id)
 
     def test_audio_preview_cannot_select_another_scene_and_player_cannot_impersonate(self):
         from gravewright.audio.models import Track
