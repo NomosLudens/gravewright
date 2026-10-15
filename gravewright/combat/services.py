@@ -353,6 +353,9 @@ def _validate_tactical_attack(row, who, scene, attacker, target_actor, attacker_
     target_token = Token.objects.filter(pk=target_entry.get("tokenId"), scene=scene).first() if target_entry.get("tokenId") else None
     if not attacker_token or not target_token or attacker_token.pk == target_token.pk:
         raise MapError("Tactical attack requires two different persisted tokens in this scene.", "invalid_target")
+    from .kallistis_equipment import equipped_weapon
+    if not equipped_weapon(attacker):
+        raise MapError("Tactical attacks require a complete approved KALLÍSTIS sheet with a confirmed canonical weapon.", "invalid_weapon")
     prepared = runtime.authoritative_action(attacker.pk, who, action_data)
     action_skill = prepared["skill"]["name"]
     action_attribute = prepared["attribute"]["name"]
@@ -370,6 +373,26 @@ def _validate_tactical_attack(row, who, scene, attacker, target_actor, attacker_
     if economy.get("action", 0) < 1:
         raise MapError("Action already spent.", "action_spent")
     return True
+
+
+def _damage_profile(attacker, *, technique, degree):
+    from .kallistis_equipment import equipped_weapon
+
+    weapon = equipped_weapon(attacker)
+    if not weapon:
+        raise MapError("Damage requires a complete approved KALLÍSTIS sheet with a confirmed canonical weapon.", "invalid_weapon")
+    runtime_state = _actor_runtime(attacker)
+    potent = "potente" in weapon["tags"]
+    return {
+        "weaponName": weapon["name"],
+        "damageBase": weapon["base"],
+        "potent": potent,
+        "bodyBonus": min(runtime_state["attributes"]["corpo"], 3) if potent else 0,
+        "power": 1 if technique == "Emboscada" else 0,
+        "marginGrade": degree,
+        "fixedModifier": 0,
+        "perforating": "perfurante" in weapon["tags"],
+    }
 
 
 def _validate_ambush(row, attacker, target_entry, config):
@@ -458,6 +481,10 @@ def _resolve_action(row, who, payload):
         "target_defense_value": target_value, "environmental": environmental,
         "grave_wound_applies": payload.get("grave_wound_applies") is True,
     }
+    if tactical_attack:
+        result["damageProfile"] = _damage_profile(
+            attacker, technique=payload.get("technique"), degree=roll["degree"]
+        )
     if row.active and (who.role != "gm" or tactical_attack):
         attacker = _spend_actor_action(attacker)
     if technique_key:
@@ -475,8 +502,13 @@ def _resolve_action(row, who, payload):
             "potency": "LEVEL_I", "damageBaseMultiplier": 2,
             "condition": exposed["type"], "targetId": str(target_actor.pk),
         }
-    config["resolutions"] = (config["resolutions"] + [{"id": str(uuid4()), "kind": "action", **result}])[-MAX_EVENTS:]
-    return {"kind": "action", "attackerId": str(attacker.pk), "targetId": None if environmental else str(target_actor.pk), "result": result}
+    resolution_id = str(uuid4())
+    result["resolutionId"] = resolution_id
+    config["resolutions"] = (config["resolutions"] + [{
+        "id": resolution_id, "kind": "action", "attackerId": str(attacker.pk),
+        "targetId": None if environmental else str(target_actor.pk), **result,
+    }])[-MAX_EVENTS:]
+    return {"kind": "action", "resolutionId": resolution_id, "attackerId": str(attacker.pk), "targetId": None if environmental else str(target_actor.pk), "result": result}
 
 
 def _damage(row, who, payload):
@@ -490,15 +522,52 @@ def _damage(row, who, payload):
     if event_id in config.setdefault("processed_events", {}):
         previous = next((item for item in config["resolutions"] if item.get("event_id") == event_id), None)
         return {"kind": "damage", "replayed": True, "result": previous}
-    raw = number(payload.get("rawDamage"), 0, 100000)
+    from gravewright.maps.models import TacticalTerrain
+    from .models import MissionInstance
+    mission_active = MissionInstance.objects.filter(
+        scene=row.scene, state=MissionInstance.ACTIVE
+    ).exists()
+    tactical_damage = mission_active and TacticalTerrain.objects.filter(scene=row.scene).exists()
+    attack_record = None
+    calculation = None
+    protection = None
+    raw = 0
+    if tactical_damage:
+        if "rawDamage" in payload or "damageBaseMultiplier" in payload:
+            raise MapError("Tactical damage is derived from the saved attack; the client cannot submit a base or multiplier.", "invalid_damage_payload")
+        attack_id = str(payload.get("attackResolutionId", ""))
+        attack_record = next((item for item in config["resolutions"] if item.get("id") == attack_id and item.get("kind") == "action"), None)
+        if not attack_record or attack_record.get("targetId") != str(actor.pk):
+            raise MapError("Choose a saved attack against this target before applying damage.", "invalid_attack_resolution")
+        if not attack_record.get("success"):
+            raise MapError("A failed attack cannot receive damage.", "attack_missed")
+        if attack_record.get("damageEventId"):
+            raise MapError("Damage was already applied for this attack.", "damage_already_applied")
+        profile = attack_record.get("damageProfile")
+        if not isinstance(profile, dict):
+            raise MapError("The saved attack has no authoritative KALLÍSTIS damage profile.", "invalid_attack_resolution")
+        state = _actor_runtime(actor)
+        protection = state.get("protection", 0)
+        if profile.get("perforating") is True:
+            protection = max(0, protection - 1)
+        calculation = rules.damage(
+            base=profile["damageBase"], power=profile["power"],
+            margin_grade=profile["marginGrade"], fixed=profile["fixedModifier"],
+            body=profile["bodyBonus"], protection=protection,
+            potent=profile["potent"], scale=1, minimum=1,
+        )
+        raw = calculation["final"]
+    else:
+        raw = number(payload.get("rawDamage"), 0, 100000)
     state = _actor_runtime(actor)
     was_down = bool(_condition(state, "CAIDO"))
-    protection = payload.get("protectionValue", state.get("protection", 0))
-    protection = number(protection, 0, 100000)
+    if protection is None:
+        protection = payload.get("protectionValue", state.get("protection", 0))
+        protection = number(protection, 0, 100000)
     post = max(0, raw - protection)
     before = state["resources"]["vitality"]["current"]
     damage_result = rules.apply_damage(
-        state, raw, protection=protection,
+        state, raw, protection=0 if calculation else protection,
         fortitude=defenses(actor)["FORTITUDE"], damage_event=event_id,
     )
     post = damage_result["post_protection"]
@@ -514,13 +583,17 @@ def _damage(row, who, payload):
             combat["permanence_outcome"] = "TERMINAL"
     candidate = excess >= defenses(actor)["FORTITUDE"]
     result = {
-        "event_id": event_id, "raw_damage": raw, "protection_value": protection,
+        "event_id": event_id, "raw_damage": calculation["raw"] if calculation else raw, "protection_value": protection,
         "post_protection_damage": post, "vitality_before": before,
         "vitality_after": state["resources"]["vitality"]["current"], "excess_damage": excess,
         "fortitude": defenses(actor)["FORTITUDE"], "grave_wound_candidate": candidate,
         "grave_wound_requires_gm_confirmation": candidate, "caido": down,
         "permanence_failures": combat.get("permanence_failures", 0),
     }
+    if calculation:
+        result["attack_resolution_id"] = attack_record["id"]
+        result["damage_calculation"] = calculation
+        attack_record["damageEventId"] = event_id
     _remember(config, "processed_events", event_id)
     config["resolutions"] = (config["resolutions"] + [{"kind": "damage", **result}])[-MAX_EVENTS:]
     _safe_write(actor, state)

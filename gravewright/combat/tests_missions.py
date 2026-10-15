@@ -1,4 +1,5 @@
 import uuid
+from unittest.mock import patch
 
 from django.test import TestCase
 
@@ -68,8 +69,19 @@ class TacticalMissionTests(TestCase):
             runtime = {"people": people}
             data = normalize({})
             data["runtime"] = runtime
+            track = [{"oficio": "Batedor", "marco": 2, "tecnicas": ["Emboscada"]}] if index == 0 else []
+            data["fields"] = {"kallistis_source_snapshot": {
+                "completo": True,
+                "trilhaAtiva": 0,
+                "trilhas": track,
+                "equipamento": {"arma": "Machado" if index == 0 else "Faca", "proficienciaConfirmada": True},
+            }}
             permissions = {str(self.player.pk): "owner"} if index == 0 else {}
             actor = Actor.objects.create(campaign=self.campaign, name=f"QA {index}", data=data, permissions=permissions)
+            KallistisCharacterLink.objects.create(
+                actor=actor, kallistis_character_id=f"qa-character-{index}",
+                source_state="approved", canonical=True,
+            )
             token = Token.objects.create(scene=self.scene, actor=actor)
             result = self.command("mission.participant.add", {"actorId": str(actor.pk), "tokenId": str(token.pk), "role": role})
             participants.append((role, actor, token, result))
@@ -182,15 +194,12 @@ class TacticalMissionTests(TestCase):
         Token.objects.filter(pk=attacker_token.pk).update(grid_x=1, grid_y=1)
         Token.objects.filter(pk=target_token.pk).update(grid_x=2, grid_y=1)
         attacker_data = attacker.data
-        attacker_data["fields"]["kallistis_source_snapshot"] = {
+        attacker_data["fields"]["kallistis_source_snapshot"].update({
             "trilhaAtiva": 0,
             "trilhas": [{"oficio": "Batedor", "marco": 2, "tecnicas": ["Emboscada"]}],
-        }
+        })
         attacker.data = attacker_data
         attacker.save(update_fields=["data"])
-        KallistisCharacterLink.objects.create(
-            actor=attacker, kallistis_character_id="qa-batedor", source_state="approved", canonical=True
-        )
         self.command("mission.ready", {})
         self.combat_command("roll-initiative", {
             "friendlyRepresentative": str(attacker_token.pk),
@@ -215,7 +224,72 @@ class TacticalMissionTests(TestCase):
         self.assertEqual(result, replay)
         technique = result["resolution"]["result"]["technique"]
         self.assertEqual(technique["damageBaseMultiplier"], 2)
+        self.assertEqual(result["resolution"]["result"]["damageProfile"]["power"], 1)
         attacker.refresh_from_db()
         target.refresh_from_db()
         self.assertEqual(attacker.data["runtime"]["resources"]["breath"]["current"], 2)
         self.assertIn("EXPOSTO", {condition["type"] for condition in target.data["runtime"]["conditions"]})
+
+    def test_active_tactical_damage_uses_saved_attack_and_canonical_weapon_formula(self):
+        self.command("mission.create", {"definition": self.definition.key})
+        roster = self._add_roster()
+        attacker, target = roster[0][1], roster[3][1]
+        attacker_token, target_token = roster[0][2], roster[3][2]
+        Token.objects.filter(pk=attacker_token.pk).update(grid_x=1, grid_y=1)
+        Token.objects.filter(pk=target_token.pk).update(grid_x=2, grid_y=1)
+        attacker_data = attacker.data
+        attacker_data["runtime"]["attributes"] = {"corpo": 3}
+        attacker.data = attacker_data
+        attacker.save(update_fields=["data"])
+        target_data = target.data
+        target_data["runtime"]["attributes"] = {"corpo": 20}
+        target_data["runtime"]["resources"] = {"vitality": {"current": 70}}
+        target_data["runtime"]["protection"] = 2
+        target.data = target_data
+        target.save(update_fields=["data"])
+        self.command("mission.ready", {})
+        self.combat_command("roll-initiative", {
+            "friendlyRepresentative": str(attacker_token.pk),
+            "hostileRepresentative": str(target_token.pk),
+        })
+        self.combat_command("choose-first-side", {"side": "friendly"})
+        self.combat_command("start", {})
+        mission = MissionInstance.objects.get(scene=self.scene)
+        self.command("mission.start", {"version": mission.version})
+        attack_payload = {
+            "sceneId": str(self.scene.pk),
+            "version": Encounter.objects.get(scene=self.scene).version,
+            "actorId": str(attacker.pk),
+            "targetId": str(target_token.pk),
+            "targetDefense": "GUARDA",
+            "action": {"action_label": "Ataque QA", "attribute": {"name": "Corpo"}, "skill": {"name": "Combate"}},
+        }
+        certain_success = {
+            "success": True, "degree": "success_strong", "total": 20,
+            "light_die": 10, "dark_die": 10,
+        }
+        with patch("gravewright.combat.services.evaluate_kallistis", return_value=certain_success):
+            attack = self.combat_command("attack", attack_payload)["resolution"]["result"]
+        self.assertEqual(attack["damageProfile"]["weaponName"], "Machado")
+        self.assertEqual(attack["damageProfile"]["power"], 0)
+        self.assertEqual(attack["damageProfile"]["bodyBonus"], 3)
+        damage_payload = {
+            "sceneId": str(self.scene.pk),
+            "version": Encounter.objects.get(scene=self.scene).version,
+            "targetId": str(target_token.pk),
+            "attackResolutionId": attack["resolutionId"],
+            "damageEventId": str(uuid.uuid4()),
+        }
+        damage = self.combat_command("damage", damage_payload)["resolution"]["result"]
+        self.assertEqual(damage["damage_calculation"]["raw"], 11)
+        self.assertEqual(damage["damage_calculation"]["final"], 9)
+        self.assertEqual(damage["post_protection_damage"], 9)
+        target.refresh_from_db()
+        self.assertEqual(target.data["runtime"]["resources"]["vitality"]["current"], 61)
+        current_version = Encounter.objects.get(scene=self.scene).version
+        with self.assertRaises(MapError) as forged:
+            self.combat_command("damage", {**damage_payload, "version": current_version, "damageEventId": str(uuid.uuid4()), "rawDamage": 1000})
+        self.assertEqual(forged.exception.code, "invalid_damage_payload")
+        with self.assertRaises(MapError) as duplicate:
+            self.combat_command("damage", {**damage_payload, "version": current_version, "damageEventId": str(uuid.uuid4())})
+        self.assertEqual(duplicate.exception.code, "damage_already_applied")

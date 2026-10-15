@@ -37,7 +37,6 @@ var _status := "Conectando ao Gravewright…"
 var _mission_label: Label
 var _selection_label: Label
 var _resolution_label: Label
-var _damage_amount: SpinBox
 var _role_picker: OptionButton
 var _attribute_picker: OptionButton
 
@@ -531,13 +530,7 @@ func _build_hud() -> void:
     var third := HBoxContainer.new()
     third.add_theme_constant_override("separation", 4)
     column.add_child(third)
-    _damage_amount = SpinBox.new()
-    _damage_amount.min_value = 0
-    _damage_amount.max_value = 100
-    _damage_amount.value = 1
-    _damage_amount.custom_minimum_size.x = 78
-    third.add_child(_damage_amount)
-    var damage_button := _hud_button("Aplicar dano ao selecionado", 190)
+    var damage_button := _hud_button("Aplicar dano do ataque", 170)
     damage_button.pressed.connect(_apply_damage)
     third.add_child(damage_button)
     _resolution_label = Label.new()
@@ -613,9 +606,21 @@ func _apply_damage() -> void:
     if target.is_empty():
         _status = "Selecione o token que receberá dano."
         return
+    var actor_id := str(target.get("actorId", ""))
+    var attack: Dictionary = {}
+    var resolutions: Variant = _combat.get("config", {}).get("resolutions", [])
+    if typeof(resolutions) == TYPE_ARRAY:
+        for index in range(resolutions.size() - 1, -1, -1):
+            var item: Variant = resolutions[index]
+            if typeof(item) == TYPE_DICTIONARY and item.get("kind") == "action" and item.get("targetId") == actor_id and bool(item.get("success", false)) and typeof(item.get("damageProfile")) == TYPE_DICTIONARY and not item.has("damageEventId"):
+                attack = item
+                break
+    if attack.is_empty():
+        _status = "Nenhum ataque bem-sucedido e sem dano registrado contra este alvo."
+        return
     _combat_command("damage", {
         "targetId": str(target.get("id", "")),
-        "rawDamage": int(_damage_amount.value),
+        "attackResolutionId": str(attack.get("id", "")),
         "damageEventId": _uuid_v4(),
     })
 

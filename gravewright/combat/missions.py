@@ -6,7 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from gravewright.actors import runtime as actor_runtime
-from gravewright.actors.models import Actor
+from gravewright.actors.models import Actor, KallistisCharacterLink
 from gravewright.maps.models import SceneObject, TacticalTerrain
 from gravewright.maps.services import MapError, scene as get_scene
 from gravewright.tokens.models import Token
@@ -131,6 +131,13 @@ def _validate_ready(mission):
         runtime = actor_runtime.read(actor.data)
         if runtime.get("people") is None:
             raise MapError("Mission units must be persisted KALLÍSTIS actors with a validated people and heritage profile.", "mission_roster_invalid")
+        link = KallistisCharacterLink.objects.filter(
+            actor=actor, canonical=True, source_state="approved"
+        ).first()
+        fields = actor.data.get("fields", {}) if isinstance(actor.data, dict) else {}
+        snapshot = fields.get("kallistis_source_snapshot", {}) if isinstance(fields, dict) else {}
+        if not link or not isinstance(snapshot, dict) or snapshot.get("completo") is not True:
+            raise MapError("Every mission unit needs a complete, approved canonical KALLÍSTIS character link.", "mission_roster_invalid")
         if participant.role == MissionParticipant.EVACUEE and runtime.get("people", {}).get("id") != "nomos":
             raise MapError("The evacuee must be a persisted KALLÍSTIS Nomos actor.", "mission_roster_invalid")
         from .services import identity
