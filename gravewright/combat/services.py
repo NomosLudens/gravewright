@@ -769,7 +769,7 @@ def command(who, action, p):
     return state(who, str(target.pk))
 
 
-def movement_context(token, who, points, *, gm_override=False):
+def movement_context(token, who, points, *, gm_override=False, costs=None):
     """Validate an active-combat move and return its authoritative allowance."""
     row = Encounter.objects.select_for_update().filter(scene=token.scene, active=True).first()
     if not row:
@@ -782,11 +782,16 @@ def movement_context(token, who, points, *, gm_override=False):
     conditions = {item.get("type") for item in actor_state["conditions"]}
     per_move = max(0, allowance - (2 if mode == "GRID" else 1)) if "LENTO" in conditions else allowance
     allowance = per_move * (2 if entry.get("run_used") else 1)
-    distance = sum(
-        abs(b[0] - a[0]) + abs(b[1] - a[1]) if mode == "GRID"
-        else max(abs(b[0] - a[0]), abs(b[1] - a[1]))
-        for a, b in zip(points, points[1:])
-    )
+    if costs is not None:
+        if mode != "GRID" or not isinstance(costs, list) or len(costs) != len(points) - 1 or any(type(cost) is not int or cost < 0 for cost in costs):
+            raise MapError("Invalid authoritative terrain movement cost.")
+        distance = sum(costs)
+    else:
+        distance = sum(
+            abs(b[0] - a[0]) + abs(b[1] - a[1]) if mode == "GRID"
+            else max(abs(b[0] - a[0]), abs(b[1] - a[1]))
+            for a, b in zip(points, points[1:])
+        )
     if "IMOBILIZADO" in conditions:
         raise MapError("Movement blocked by IMOBILIZADO.", "immobilized")
     override = who.role == "gm" and gm_override is True
