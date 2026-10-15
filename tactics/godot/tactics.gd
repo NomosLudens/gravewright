@@ -21,19 +21,30 @@ var _map: Dictionary = {}
 var _combat: Dictionary = {}
 var _tokens: Array[Dictionary] = []
 var _selected_id := ""
+var _mode := "move"
+var _attack_attribute := "corpo"
+var _mission_role := "ALLY"
 var _terrain_selected := Vector2i(-1, -1)
 var _terrain_by_cell: Dictionary = {}
 var _terrain_type := "NORMAL"
 var _terrain_height := 0
 var _terrain_connect_mode := false
 var _pending_request := ""
+var _pending_resource_request := ""
 var _pending_terrain_request := ""
 var _connected := false
 var _status := "Conectando ao Gravewright…"
+var _mission_label: Label
+var _selection_label: Label
+var _resolution_label: Label
+var _damage_amount: SpinBox
+var _role_picker: OptionButton
+var _attribute_picker: OptionButton
 
 
 func _ready() -> void:
     resized.connect(queue_redraw)
+    _build_hud()
     if not OS.has_feature("web"):
         _status = "Este cliente requer exportação web na origem do Gravewright."
         set_process(false)
@@ -73,6 +84,7 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+    _update_hud()
     _socket.poll()
     var state := _socket.get_ready_state()
     if state == WebSocketPeer.STATE_OPEN:
@@ -125,6 +137,16 @@ func _receive(raw: String) -> void:
                 var combat_state: Variant = payload.get("state", {})
                 if typeof(combat_state) == TYPE_DICTIONARY:
                     _combat = combat_state
+        "resources.ack":
+            if payload.get("requestId") == _pending_resource_request:
+                _pending_resource_request = ""
+                _status = "Ação validada pelo Gravewright. Estado sincronizando…"
+                _send("resources.sync", {"module": "combat", "sceneId": _scene_id})
+        "resources.error":
+            if payload.get("requestId") == _pending_resource_request:
+                _pending_resource_request = ""
+                _status = "Ação recusada: " + str(payload.get("message", "erro do servidor"))
+                _send("resources.sync", {"module": "combat", "sceneId": _scene_id})
         "tokens.state":
             if payload.get("mapId") != _scene_id:
                 return
@@ -167,6 +189,7 @@ func _load_map(data: Dictionary) -> void:
         _tokens.clear()
         _selected_id = ""
         _pending_request = ""
+        _pending_resource_request = ""
     _scene_id = next_scene
     _map.clear()
     _combat.clear()
@@ -330,6 +353,19 @@ func _gui_input(event: InputEvent) -> void:
         return
     var token_hit := _token_at_point(event.position)
     if not token_hit.is_empty():
+        if _mode in ["attack", "ambush"]:
+            if _selected_id.is_empty():
+                if bool(token_hit.get("canControl", false)):
+                    _selected_id = str(token_hit.get("id", ""))
+                    _status = "Atacante selecionado: " + str(token_hit.get("name", ""))
+                else:
+                    _status = "Selecione primeiro uma unidade que você controla."
+            elif str(token_hit.get("id", "")) == _selected_id:
+                _status = "Selecione um alvo adjacente e visível."
+            else:
+                _send_attack(token_hit, _mode == "ambush")
+            queue_redraw()
+            return
         if bool(token_hit.get("canControl", false)):
             _selected_id = str(token_hit.get("id", ""))
             _status = "Unidade selecionada: " + str(token_hit.get("name", ""))
@@ -376,6 +412,9 @@ func _gui_input(event: InputEvent) -> void:
     var selected := _selected_token()
     if selected.is_empty() or not bool(selected.get("canControl", false)):
         return
+    if _mode != "move":
+        _status = "A ação selecionada exige escolher um token-alvo."
+        return
     var start := Vector2i(int(selected.get("gridX", -999)), int(selected.get("gridY", -999)))
     # A deliberately conservative first command: one orthogonal cell.
     if abs(target.x - start.x) + abs(target.y - start.y) != 1:
@@ -412,6 +451,223 @@ func _uuid_v4() -> String:
         hex.substr(0, 8), hex.substr(8, 4), hex.substr(12, 4),
         hex.substr(16, 4), hex.substr(20, 12)
     ]
+
+
+func _build_hud() -> void:
+    var panel := PanelContainer.new()
+    panel.name = "TacticsHud"
+    panel.anchor_left = 0.0
+    panel.anchor_right = 1.0
+    panel.anchor_top = 1.0
+    panel.anchor_bottom = 1.0
+    panel.offset_left = 8.0
+    panel.offset_right = -8.0
+    panel.offset_top = -132.0
+    panel.offset_bottom = -4.0
+    panel.mouse_filter = Control.MOUSE_FILTER_STOP
+    add_child(panel)
+    var column := VBoxContainer.new()
+    column.add_theme_constant_override("separation", 2)
+    panel.add_child(column)
+
+    var first := HBoxContainer.new()
+    first.add_theme_constant_override("separation", 4)
+    column.add_child(first)
+    var move_button := _hud_button("Mover", 72)
+    move_button.pressed.connect(func(): _set_mode("move"))
+    first.add_child(move_button)
+    var attack_button := _hud_button("Atacar", 72)
+    attack_button.pressed.connect(func(): _set_mode("attack"))
+    first.add_child(attack_button)
+    var ambush_button := _hud_button("Emboscada", 94)
+    ambush_button.pressed.connect(func(): _set_mode("ambush"))
+    first.add_child(ambush_button)
+    _attribute_picker = OptionButton.new()
+    _attribute_picker.add_item("Corpo + Combate")
+    _attribute_picker.add_item("Agilidade + Combate")
+    _attribute_picker.custom_minimum_size.x = 150
+    _attribute_picker.item_selected.connect(func(index: int): _attack_attribute = "corpo" if index == 0 else "agilidade")
+    first.add_child(_attribute_picker)
+    var next_button := _hud_button("Próxima ativação", 132)
+    next_button.pressed.connect(_next_activation)
+    first.add_child(next_button)
+    _mission_label = Label.new()
+    _mission_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _mission_label.text = "Missão ainda não criada"
+    first.add_child(_mission_label)
+
+    var second := HBoxContainer.new()
+    second.add_theme_constant_override("separation", 4)
+    column.add_child(second)
+    var create_button := _hud_button("Criar missão", 94)
+    create_button.pressed.connect(func(): _mission_command("mission.create", {"definition": "knossos-evacuation"}))
+    second.add_child(create_button)
+    _role_picker = OptionButton.new()
+    _role_picker.add_item("Aliado")
+    _role_picker.set_item_metadata(0, "ALLY")
+    _role_picker.add_item("Silmari")
+    _role_picker.set_item_metadata(1, "HOSTILE")
+    _role_picker.add_item("Nomos evacuar")
+    _role_picker.set_item_metadata(2, "EVACUEE")
+    _role_picker.custom_minimum_size.x = 136
+    _role_picker.item_selected.connect(func(index: int): _mission_role = str(_role_picker.get_item_metadata(index)))
+    second.add_child(_role_picker)
+    var register_button := _hud_button("Registrar token", 106)
+    register_button.pressed.connect(_register_selected)
+    second.add_child(register_button)
+    var ready_button := _hud_button("Pronto", 66)
+    ready_button.pressed.connect(func(): _mission_command("mission.ready", {}))
+    second.add_child(ready_button)
+    var start_button := _hud_button("Iniciar missão", 100)
+    start_button.pressed.connect(func(): _mission_command("mission.start", {}))
+    second.add_child(start_button)
+    var abort_button := _hud_button("Encerrar", 76)
+    abort_button.pressed.connect(func(): _mission_command("mission.abort", {"reason": "gm_abort"}))
+    second.add_child(abort_button)
+    _selection_label = Label.new()
+    _selection_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    second.add_child(_selection_label)
+
+    var third := HBoxContainer.new()
+    third.add_theme_constant_override("separation", 4)
+    column.add_child(third)
+    _damage_amount = SpinBox.new()
+    _damage_amount.min_value = 0
+    _damage_amount.max_value = 100
+    _damage_amount.value = 1
+    _damage_amount.custom_minimum_size.x = 78
+    third.add_child(_damage_amount)
+    var damage_button := _hud_button("Aplicar dano ao selecionado", 190)
+    damage_button.pressed.connect(_apply_damage)
+    third.add_child(damage_button)
+    _resolution_label = Label.new()
+    _resolution_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    third.add_child(_resolution_label)
+
+
+func _hud_button(label: String, width: float) -> Button:
+    var button := Button.new()
+    button.text = label
+    button.custom_minimum_size = Vector2(width, 34)
+    button.focus_mode = Control.FOCUS_NONE
+    return button
+
+
+func _set_mode(mode: String) -> void:
+    _mode = mode
+    _status = "Modo: " + ("ataque corpo a corpo" if mode == "attack" else "Emboscada (Nível I)" if mode == "ambush" else "movimento") + ". Selecione unidade e alvo."
+    if mode == "move":
+        _selected_id = ""
+    queue_redraw()
+
+
+func _send_resource_command(action: String, data: Dictionary) -> void:
+    if not _pending_resource_request.is_empty():
+        return
+    var request_id := _uuid_v4()
+    var payload := {"module": "combat", "requestId": request_id, "action": action, "data": data}
+    if _send("resources.command", payload):
+        _pending_resource_request = request_id
+        _status = "Enviando " + action + " ao Gravewright…"
+    else:
+        _status = "Não foi possível enviar a ação de combate."
+
+
+func _combat_command(action: String, data: Dictionary = {}) -> void:
+    var payload := {"sceneId": _scene_id, "version": int(_combat.get("version", 0))}
+    payload.merge(data, true)
+    _send_resource_command(action, payload)
+
+
+func _mission_command(action: String, data: Dictionary) -> void:
+    var payload := {"sceneId": _scene_id}
+    if action != "mission.create":
+        var mission: Variant = _combat.get("mission")
+        if typeof(mission) != TYPE_DICTIONARY:
+            _status = "Crie uma missão antes de mudar seu estado."
+            return
+        payload["version"] = int(mission.get("version", 0))
+        payload["combatVersion"] = int(_combat.get("version", 0))
+    payload.merge(data, true)
+    _send_resource_command(action, payload)
+
+
+func _register_selected() -> void:
+    var token := _selected_token()
+    if token.is_empty():
+        _status = "Selecione um token persistido antes de registrá-lo na missão."
+        return
+    _mission_command("mission.participant.add", {
+        "actorId": str(token.get("actorId", "")),
+        "tokenId": str(token.get("id", "")),
+        "role": _mission_role,
+    })
+
+
+func _next_activation() -> void:
+    _combat_command("next")
+
+
+func _apply_damage() -> void:
+    var target := _selected_token()
+    if target.is_empty():
+        _status = "Selecione o token que receberá dano."
+        return
+    _combat_command("damage", {
+        "targetId": str(target.get("id", "")),
+        "rawDamage": int(_damage_amount.value),
+        "damageEventId": _uuid_v4(),
+    })
+
+
+func _send_attack(target: Dictionary, use_ambush: bool) -> void:
+    var attacker := _selected_token()
+    if attacker.is_empty():
+        _status = "Selecione o atacante antes do alvo."
+        return
+    var data := {
+        "sceneId": _scene_id,
+        "version": int(_combat.get("version", 0)),
+        "actorId": str(attacker.get("actorId", "")),
+        "targetId": str(target.get("id", "")),
+        "targetDefense": "GUARDA",
+        "action": {
+            "action_label": "Emboscada" if use_ambush else "Ataque corpo a corpo",
+            "attribute": {"name": "Corpo" if _attack_attribute == "corpo" else "Agilidade"},
+            "skill": {"name": "Combate"},
+        },
+    }
+    if use_ambush:
+        data["technique"] = "Emboscada"
+    _combat_command("attack", data)
+    _selected_id = ""
+    _mode = "move"
+
+
+func _update_hud() -> void:
+    if not is_instance_valid(_mission_label) or not is_instance_valid(_selection_label):
+        return
+    var mission: Variant = _combat.get("mission")
+    if typeof(mission) == TYPE_DICTIONARY:
+        var current := str(_combat.get("current_name", "sem ativação"))
+        _mission_label.text = "%s · %s · Rodada %s · %s" % [str(mission.get("definition", {}).get("title", "Missão")), str(mission.get("state", "")), str(_combat.get("round", 0)), current]
+    else:
+        _mission_label.text = "Missão ainda não criada · Rodada %s · %s" % [str(_combat.get("round", 0)), str(_combat.get("current_name", "sem ativação"))]
+    var selected := _selected_token()
+    _selection_label.text = "Seleção: " + str(selected.get("name", "nenhuma")) + " · " + _status
+    var resolutions: Variant = _combat.get("config", {}).get("resolutions", [])
+    if typeof(resolutions) == TYPE_ARRAY and not resolutions.is_empty():
+        var latest: Variant = resolutions.back()
+        if typeof(latest) == TYPE_DICTIONARY:
+            if latest.get("kind") == "damage":
+                _resolution_label.text = "Dano: %s · proteção %s · Vitalidade %s → %s" % [str(latest.get("post_protection_damage", 0)), str(latest.get("protection_value", 0)), str(latest.get("vitality_before", "?")), str(latest.get("vitality_after", "?"))]
+            else:
+                var status := "sucesso" if bool(latest.get("success", false)) else "falha"
+                var technique: Variant = latest.get("technique", {})
+                var suffix := " · " + str(technique.get("name", "")) if typeof(technique) == TYPE_DICTIONARY and not technique.is_empty() else ""
+                _resolution_label.text = "Ataque %s: total %s vs %s%s" % [status, str(latest.get("total", "?")), str(latest.get("target_defense_value", "?")), suffix]
+    else:
+        _resolution_label.text = "Aguardando resolução de combate do servidor."
 
 
 func _draw() -> void:
@@ -492,9 +748,15 @@ func _draw() -> void:
         if name.is_empty():
             name = "?"
         draw_string(font, center + Vector2(-18, -27), name, HORIZONTAL_ALIGNMENT_CENTER, 90, 12, Color.WHITE)
-    draw_rect(Rect2(0, size.y - 55, size.x, 55), Color("#0b0d12"))
-    draw_string(font, Vector2(15, size.y - 31), _status, HORIZONTAL_ALIGNMENT_LEFT, size.x - 30, 15, Color.WHITE)
-    draw_string(font, Vector2(15, size.y - 10), "Prévia visual; terreno, turno, paredes e custo são confirmados pelo servidor.", HORIZONTAL_ALIGNMENT_LEFT, size.x - 30, 12, Color("#acacba"))
+    var selected := _selected_token()
+    var runtime: Variant = selected.get("runtime", {})
+    if typeof(runtime) == TYPE_DICTIONARY:
+        var vitality: Variant = runtime.get("resources", {}).get("vitality", {})
+        var conditions: Array = runtime.get("conditions", [])
+        draw_string(font, Vector2(20, 80), "%s · Vitalidade %s/%s · Condições %s" % [str(selected.get("name", "")), str(vitality.get("current", "–")), str(vitality.get("max", "–")), str(conditions.size())], HORIZONTAL_ALIGNMENT_LEFT, size.x - 40, 13, Color("#e7d3a1"))
+    var mission: Variant = _combat.get("mission")
+    if typeof(mission) == TYPE_DICTIONARY:
+        draw_string(font, Vector2(20, 103), "Objetivo: evacuar Nomos até a zona · Estado %s" % str(mission.get("state", "")), HORIZONTAL_ALIGNMENT_LEFT, size.x - 40, 13, Color("#f0d19b"))
 
 
 func _terrain_color(terrain_type: String, alternate: bool) -> Color:

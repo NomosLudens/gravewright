@@ -290,7 +290,7 @@ def state(who, scene_id=None):
         {"id": actor_id, "name": visible_by_id[actor_id]["name"], "side": visible_by_id[actor_id].get("side"), "current": slot == row.turn}
         for slot, actor_id in enumerate(order) if actor_id in visible_by_id
     ]
-    return {
+    result = {
         "sceneId": str(target.pk), "active": row.active, "round": row.round, "turn": row.turn,
         "combatants": rows,
         "current_name": next((item["name"] for item in rows if item["is_current"]), ""),
@@ -300,6 +300,9 @@ def state(who, scene_id=None):
         "config": config,
         "initiative_status": "SIDE_ALTERNATION",
     }
+    from . import missions
+    result["mission"] = missions.state(who, str(target.pk)).get("mission")
+    return result
 
 
 def _entry_for_target(row, value):
@@ -326,12 +329,79 @@ def _spend_actor_action(actor):
         spent = rules.spend_action(actor_state["rules"], "action")
     except rules.RuleError as exc:
         raise MapError(str(exc), "action_spent") from None
-    actor_state["rules"] = spent["state"]
+    actor_state["rules"] = spent
     _safe_write(actor, actor_state)
     return actor
 
 
+def _validate_tactical_attack(row, who, scene, attacker, target_actor, attacker_state, action_data):
+    """Apply the supported melee contract only on opt-in tactical scenes."""
+    from gravewright.maps.models import TacticalTerrain
+    if not TacticalTerrain.objects.filter(scene=scene).exists():
+        return False
+    if not row.active:
+        raise MapError("Tactical attacks require an active encounter.", "combat_not_active")
+    attacker_entry = next((item for item in row.combatants if (candidate := actor_for(item)) and candidate.pk == attacker.pk), None)
+    if not attacker_entry or identity(_current_entry(row) or {}) != identity(attacker_entry):
+        raise MapError("Tactical attacks are allowed only during the attacker's activation.", "not_your_turn")
+    if who.role != "gm" and not _controlled(attacker_entry, who):
+        raise MapError("Character not controlled.", "forbidden")
+    target_entry = next((item for item in row.combatants if (candidate := actor_for(item)) and candidate.pk == target_actor.pk), None)
+    if not target_entry:
+        raise MapError("Target must be a combatant in this tactical scene.", "invalid_target")
+    attacker_token = Token.objects.filter(pk=attacker_entry.get("tokenId"), scene=scene).first() if attacker_entry.get("tokenId") else None
+    target_token = Token.objects.filter(pk=target_entry.get("tokenId"), scene=scene).first() if target_entry.get("tokenId") else None
+    if not attacker_token or not target_token or attacker_token.pk == target_token.pk:
+        raise MapError("Tactical attack requires two different persisted tokens in this scene.", "invalid_target")
+    prepared = runtime.authoritative_action(attacker.pk, who, action_data)
+    action_skill = prepared["skill"]["name"]
+    action_attribute = prepared["attribute"]["name"]
+    if action_skill != "combate" or action_attribute not in {"corpo", "agilidade"}:
+        raise MapError("This tactical attack uses the validated melee action: Corpo or Agilidade + Combate.", "invalid_attack_action")
+    if int(attacker_token.grid_x) != attacker_token.grid_x or int(attacker_token.grid_y) != attacker_token.grid_y or int(target_token.grid_x) != target_token.grid_x or int(target_token.grid_y) != target_token.grid_y:
+        raise MapError("Tactical attacks require whole-cell token positions.", "invalid_position")
+    distance = abs(int(attacker_token.grid_x) - int(target_token.grid_x)) + abs(int(attacker_token.grid_y) - int(target_token.grid_y))
+    if distance != 1:
+        raise MapError("This melee attack requires orthogonal adjacency.", "out_of_range")
+    walls = list(scene.elements.filter(kind="walls"))
+    if tokens.blocked(attacker_token, (attacker_token.grid_x, attacker_token.grid_y), (target_token.grid_x, target_token.grid_y), walls):
+        raise MapError("A persisted wall blocks line of effect to the target.", "blocked_line_of_effect")
+    economy = attacker_state["rules"].get("action_economy", {})
+    if economy.get("action", 0) < 1:
+        raise MapError("Action already spent.", "action_spent")
+    return True
+
+
+def _validate_ambush(row, attacker, target_entry, config):
+    """Bind Emboscada to the canonical active KALLÍSTIS Batedor track."""
+    from gravewright.actors.models import KallistisCharacterLink
+    link = KallistisCharacterLink.objects.filter(actor=attacker, canonical=True, source_state="approved").first()
+    source = attacker.data.get("fields", {}).get("kallistis_source_snapshot", {}) if isinstance(attacker.data, dict) else {}
+    tracks = source.get("trilhas", []) if isinstance(source, dict) else []
+    active = source.get("trilhaAtiva", 0) if isinstance(source, dict) else -1
+    if not link or not isinstance(tracks, list) or type(active) is not int or not 0 <= active < len(tracks):
+        raise MapError("Emboscada requires an approved canonical KALLÍSTIS character link.", "technique_unavailable")
+    track = tracks[active]
+    if not isinstance(track, dict) or track.get("oficio") != "Batedor" or type(track.get("marco")) is not int or track["marco"] < 2 or "Emboscada" not in track.get("tecnicas", []):
+        raise MapError("Emboscada requires the active Batedor track, Marco 2, and the learned technique.", "technique_unavailable")
+    current_id = identity(_current_entry(row) or {})
+    target_id = identity(target_entry)
+    order = config.get("activation_order") or []
+    if target_id not in order[row.turn + 1:] or target_id in order[:row.turn]:
+        raise MapError("Emboscada requires a target that has not acted this round.", "invalid_target")
+    uses = config.setdefault("technique_uses", {})
+    use_key = f"emboscada:{row.round}:{current_id}"
+    if use_key in uses:
+        raise MapError("Emboscada has already been used by this character this round.", "technique_already_used")
+    if _actor_runtime(attacker)["resources"]["breath"]["current"] < 1:
+        raise MapError("Insufficient breath for Emboscada.", "insufficient_resource")
+    uses[use_key] = True
+    return use_key
+
+
 def _resolve_action(row, who, payload):
+    target = row.scene
+    config = _config(row)
     attacker = actors.get(payload.get("actorId"), who)
     if who.role != "gm" and not actors.access(attacker, who, True):
         raise MapError("Character not controlled.", "forbidden")
@@ -352,8 +422,17 @@ def _resolve_action(row, who, payload):
     action = payload.get("action")
     if not isinstance(action, dict):
         raise MapError("Structured action is required.")
-    prepared = runtime.authoritative_action(attacker.pk, who, action)
     attacker_state = _actor_runtime(attacker)
+    technique_key = None
+    tactical_attack = (
+        not environmental
+        and _validate_tactical_attack(row, who, target, attacker, target_actor, attacker_state, action)
+    )
+    if payload.get("technique"):
+        if payload.get("technique") != "Emboscada" or not tactical_attack:
+            raise MapError("Only the canonical Emboscada technique is available for this tactical attack.", "technique_unavailable")
+        technique_key = _validate_ambush(row, attacker, target_entry, config)
+    prepared = runtime.authoritative_action(attacker.pk, who, action)
     target_state = _actor_runtime(target_actor)
     modifier = prepared["modifier_total"]
     condition_modifier = 0
@@ -379,9 +458,23 @@ def _resolve_action(row, who, payload):
         "target_defense_value": target_value, "environmental": environmental,
         "grave_wound_applies": payload.get("grave_wound_applies") is True,
     }
-    if row.active and who.role != "gm":
+    if row.active and (who.role != "gm" or tactical_attack):
         attacker = _spend_actor_action(attacker)
-    config = _config(row)
+    if technique_key:
+        attacker_state = _actor_runtime(attacker)
+        spent = rules.change_resource(attacker_state["rules"], "breath", 1, operation="spend")
+        attacker_state["rules"] = spent["state"]
+        attacker_state["resources"] = deepcopy(spent["state"]["resources"])
+        _safe_write(attacker, attacker_state)
+        target_state = _actor_runtime(target_actor)
+        exposed = rules.add_condition(target_state["rules"], "EXPOSTO", source=f"Emboscada:{attacker.pk}")
+        target_state["conditions"] = deepcopy(target_state["rules"]["conditions"])
+        _safe_write(target_actor, target_state)
+        result["technique"] = {
+            "name": "Emboscada", "resource": "breath", "spent": 1,
+            "potency": "LEVEL_I", "damageBaseMultiplier": 2,
+            "condition": exposed["type"], "targetId": str(target_actor.pk),
+        }
     config["resolutions"] = (config["resolutions"] + [{"id": str(uuid4()), "kind": "action", **result}])[-MAX_EVENTS:]
     return {"kind": "action", "attackerId": str(attacker.pk), "targetId": None if environmental else str(target_actor.pk), "result": result}
 
@@ -438,9 +531,18 @@ def _damage(row, who, payload):
 def command(who, action, p):
     target = scene(p.get("sceneId"), who)
     row, created = Encounter.objects.select_for_update().get_or_create(scene=target)
-    if not created:
+    if not created and action.startswith("mission."):
+        if action != "mission.create" and type(p.get("combatVersion")) is int and row.version != p["combatVersion"]:
+            raise MapError("Combat changed. Refresh before editing the mission.", "conflict")
+    elif not created:
         version(row, p)
     config = _config(row)
+    if action.startswith("mission."):
+        from . import missions
+        return {**state(who, str(target.pk)), **missions.command(who, action, p)}
+    from .models import MissionInstance
+    if MissionInstance.objects.filter(scene=target, state__in=(MissionInstance.VICTORY, MissionInstance.DEFEAT, MissionInstance.ABORTED)).exists():
+        raise MapError("The tactical mission has ended; combat commands are closed.", "mission_closed")
     if who.role != "gm" and action not in {"next", "resolve", "attack", "run"}:
         raise MapError("Only the GM can manage combat.", "forbidden")
     if action in {"resolve", "attack"}:
@@ -448,12 +550,16 @@ def command(who, action, p):
         row.config = config
         row.version += 1
         row.save(update_fields=["config", "version"])
+        from . import missions
+        missions.after_combat_command(target.pk, who, action)
         return {**state(who, str(target.pk)), "resolution": result}
     if action == "damage":
         result = _damage(row, who, p)
         row.config = config
         row.version += 1
         row.save(update_fields=["config", "version"])
+        from . import missions
+        missions.after_combat_command(target.pk, who, action)
         return {**state(who, str(target.pk)), "resolution": result}
     if action == "confirm-grave-wound":
         _require_gm(who)
@@ -766,6 +872,8 @@ def command(who, action, p):
     row.config = config
     row.version += 1
     row.save()
+    from . import missions
+    missions.after_combat_command(target.pk, who, action)
     return state(who, str(target.pk))
 
 

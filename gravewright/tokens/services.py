@@ -308,6 +308,10 @@ def command(campaign, user, action, raw, request_id):
         if previous.result.get("movementAudit"):
             result["movementAudit"] = previous.result["movementAudit"]
         return result
+    if action == "move":
+        from gravewright.combat.models import MissionInstance
+        if MissionInstance.objects.filter(scene=scene, state__in=(MissionInstance.VICTORY, MissionInstance.DEFEAT, MissionInstance.ABORTED)).exists():
+            raise maps.MapError("The tactical mission has ended; movement commands are closed.", "mission_closed")
     created = []
     movement_audit = None
     if action == "place":
@@ -346,6 +350,8 @@ def command(campaign, user, action, raw, request_id):
             }
         t.version += 1
         t.save()
+        from gravewright.combat import missions
+        missions.after_token_move(t, who, request_id)
         from gravewright.maps.zones import movement_events
         movement_events(scene,t,before)
     else:
