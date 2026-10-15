@@ -237,7 +237,11 @@ def command(campaign, user, action, data, request_id):
         result = save_sheet(who, data)
     else:
         manage(who)
-        if action == "actor.create":
+        if action == "actor.qa_fixture.create":
+            from .qa_fixtures import create as create_qa_fixture
+
+            result = create_qa_fixture(who, data.get("fixtureKey"), data.get("playerId"))
+        elif action == "actor.create":
             clean = normalize(data.get("data", {}))
             aid = clean["pdf"]["asset"]
             if (

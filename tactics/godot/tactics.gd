@@ -34,6 +34,7 @@ var _pending_resource_request := ""
 var _pending_terrain_request := ""
 var _connected := false
 var _status := "Conectando ao Gravewright…"
+var _hud_panel: PanelContainer
 var _mission_label: Label
 var _selection_label: Label
 var _resolution_label: Label
@@ -75,6 +76,10 @@ func _ready() -> void:
 
     var protocol := "wss://" if origin.get("protocol") == "https:" else "ws://"
     var url: String = protocol + str(origin.get("host", "")) + "/ws/tables/" + _campaign_id + "/"
+    # The first authenticated sync batches terrain, actors, tokens and combat
+    # snapshots. Godot's 64 KiB default can silently drop one of those frames.
+    _socket.inbound_buffer_size = 1024 * 1024
+    _socket.outbound_buffer_size = 256 * 1024
     var error := _socket.connect_to_url(url)
     if error != OK:
         _status = "Falha ao iniciar WebSocket: " + str(error)
@@ -100,6 +105,13 @@ func _process(_delta: float) -> void:
         _tokens.clear()
         set_process(false)
     queue_redraw()
+
+
+func _input(event: InputEvent) -> void:
+    if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
+        if is_instance_valid(_hud_panel):
+            _hud_panel.visible = not _hud_panel.visible
+        get_viewport().set_input_as_handled()
 
 
 func _send(kind: String, payload: Dictionary) -> bool:
@@ -230,6 +242,9 @@ func _terrain_cell(x: int, y: int) -> Dictionary:
 
 
 func _terrain_editable() -> bool:
+    var mission: Variant = _combat.get("mission")
+    if typeof(mission) == TYPE_DICTIONARY and mission.get("state") == "ACTIVE":
+        return false
     return bool(_terrain().get("canEdit", false))
 
 
@@ -455,6 +470,7 @@ func _uuid_v4() -> String:
 func _build_hud() -> void:
     var panel := PanelContainer.new()
     panel.name = "TacticsHud"
+    panel.tooltip_text = "Pressione H para ocultar ou mostrar os controles e alcançar as células sob o painel."
     panel.anchor_left = 0.0
     panel.anchor_right = 1.0
     panel.anchor_top = 1.0
@@ -463,7 +479,8 @@ func _build_hud() -> void:
     panel.offset_right = -8.0
     panel.offset_top = -132.0
     panel.offset_bottom = -4.0
-    panel.mouse_filter = Control.MOUSE_FILTER_STOP
+    panel.mouse_filter = Control.MOUSE_FILTER_PASS
+    _hud_panel = panel
     add_child(panel)
     var column := VBoxContainer.new()
     column.add_theme_constant_override("separation", 2)

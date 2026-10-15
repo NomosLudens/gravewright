@@ -396,16 +396,25 @@ def _damage_profile(attacker, *, technique, degree):
 
 
 def _validate_ambush(row, attacker, target_entry, config):
-    """Bind Emboscada to the canonical active KALLÍSTIS Batedor track."""
-    from gravewright.actors.models import KallistisCharacterLink
-    link = KallistisCharacterLink.objects.filter(actor=attacker, canonical=True, source_state="approved").first()
+    """Bind Emboscada to a source-approved or explicitly validated QA Batedor."""
+    from gravewright.actors.provenance import canonical_link
+    link = canonical_link(attacker)
     source = attacker.data.get("fields", {}).get("kallistis_source_snapshot", {}) if isinstance(attacker.data, dict) else {}
     tracks = source.get("trilhas", []) if isinstance(source, dict) else []
     active = source.get("trilhaAtiva", 0) if isinstance(source, dict) else -1
-    if not link or not isinstance(tracks, list) or type(active) is not int or not 0 <= active < len(tracks):
-        raise MapError("Emboscada requires an approved canonical KALLÍSTIS character link.", "technique_unavailable")
-    track = tracks[active]
-    if not isinstance(track, dict) or track.get("oficio") != "Batedor" or type(track.get("marco")) is not int or track["marco"] < 2 or "Emboscada" not in track.get("tecnicas", []):
+    if link:
+        if not isinstance(tracks, list) or type(active) is not int or not 0 <= active < len(tracks):
+            raise MapError("Emboscada requires an approved canonical KALLÍSTIS character link.", "technique_unavailable")
+        track = tracks[active]
+        valid_track = isinstance(track, dict) and track.get("oficio") == "Batedor" and type(track.get("marco")) is int and track["marco"] >= 2 and "Emboscada" in track.get("tecnicas", [])
+    else:
+        from gravewright.actors.provenance import validate_qa_sheet
+        sheet = attacker.data.get("fields", {}).get("qa_character_sheet", {}) if isinstance(attacker.data, dict) else {}
+        qa_tracks = sheet.get("tracks", []) if isinstance(sheet, dict) else []
+        qa_active = sheet.get("activeTrack", -1) if isinstance(sheet, dict) else -1
+        track = qa_tracks[qa_active] if isinstance(qa_tracks, list) and type(qa_active) is int and 0 <= qa_active < len(qa_tracks) else {}
+        valid_track = validate_qa_sheet(attacker) and isinstance(track, dict) and track.get("profession") == "Batedor" and type(track.get("milestone")) is int and track["milestone"] >= 2 and "Emboscada" in track.get("techniques", [])
+    if not valid_track:
         raise MapError("Emboscada requires the active Batedor track, Marco 2, and the learned technique.", "technique_unavailable")
     current_id = identity(_current_entry(row) or {})
     target_id = identity(target_entry)

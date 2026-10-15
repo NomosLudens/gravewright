@@ -34,18 +34,25 @@ WEAPONS = {
 
 
 def equipped_weapon(actor):
-    """Resolve weapon facts only from an approved linked KALLISTIS sheet."""
-    from gravewright.actors.models import KallistisCharacterLink
+    """Resolve weapon facts from an approved source sheet or guarded QA sheet."""
+    from gravewright.actors.provenance import canonical_link
 
-    if not KallistisCharacterLink.objects.filter(
-        actor=actor, canonical=True, source_state="approved"
-    ).exists():
-        return None
+    canonical = canonical_link(actor) is not None
     fields = actor.data.get("fields", {}) if isinstance(actor.data, dict) else {}
-    snapshot = fields.get("kallistis_source_snapshot", {}) if isinstance(fields, dict) else {}
-    equipment = snapshot.get("equipamento", {}) if isinstance(snapshot, dict) else {}
-    name = equipment.get("arma") if isinstance(equipment, dict) else None
+    if canonical:
+        snapshot = fields.get("kallistis_source_snapshot", {}) if isinstance(fields, dict) else {}
+        equipment = snapshot.get("equipamento", {}) if isinstance(snapshot, dict) else {}
+        name = equipment.get("arma") if isinstance(equipment, dict) else None
+        proficient = equipment.get("proficienciaConfirmada") is True if isinstance(equipment, dict) else False
+    else:
+        from gravewright.actors.provenance import validate_qa_sheet
+        sheet = fields.get("qa_character_sheet") if isinstance(fields, dict) else None
+        if not validate_qa_sheet(actor):
+            return None
+        equipment = sheet.get("equipment", {})
+        name = equipment.get("weapon") if isinstance(equipment, dict) else None
+        proficient = equipment.get("proficiencyConfirmed") is True if isinstance(equipment, dict) else False
     item = WEAPONS.get(name)
-    if not item or equipment.get("proficienciaConfirmada") is not True:
+    if not item or not proficient:
         return None
     return {"name": name, **item}

@@ -259,6 +259,12 @@ if DATABASE_ECHO:
 
 # Django source releases; empty until this distribution publishes compatible artifacts.
 GRAVEWRIGHT_RELEASES_REPOSITORY = os.environ.get("GRAVEWRIGHT_RELEASES_REPOSITORY", "Gravewright/gravewright")
+GRAVEWRIGHT_TACTICAL_QA_FIXTURES_ENABLED = env_bool(
+    "GRAVEWRIGHT_TACTICAL_QA_FIXTURES_ENABLED", False
+)
+GRAVEWRIGHT_TACTICAL_QA_FIXTURE_ROOT = os.environ.get(
+    "GRAVEWRIGHT_TACTICAL_QA_FIXTURE_ROOT", ""
+).strip()
 KALLISTIS_VTT_CONSUME_URL = os.environ.get("KALLISTIS_VTT_CONSUME_URL", "").strip()
 KALLISTIS_VTT_SERVICE_SECRET = os.environ.get("KALLISTIS_VTT_SERVICE_SECRET", "")
 KALLISTIS_VTT_CHARACTER_READ_URL = os.environ.get(

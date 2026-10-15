@@ -6,7 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from gravewright.actors import runtime as actor_runtime
-from gravewright.actors.models import Actor, KallistisCharacterLink
+from gravewright.actors.models import Actor
 from gravewright.maps.models import SceneObject, TacticalTerrain
 from gravewright.maps.services import MapError, scene as get_scene
 from gravewright.tokens.models import Token
@@ -131,13 +131,24 @@ def _validate_ready(mission):
         runtime = actor_runtime.read(actor.data)
         if runtime.get("people") is None:
             raise MapError("Mission units must be persisted KALLÍSTIS actors with a validated people and heritage profile.", "mission_roster_invalid")
-        link = KallistisCharacterLink.objects.filter(
-            actor=actor, canonical=True, source_state="approved"
-        ).first()
+        from gravewright.actors.provenance import canonical_link, validate_qa_sheet
+        link = canonical_link(actor)
         fields = actor.data.get("fields", {}) if isinstance(actor.data, dict) else {}
         snapshot = fields.get("kallistis_source_snapshot", {}) if isinstance(fields, dict) else {}
-        if not link or not isinstance(snapshot, dict) or snapshot.get("completo") is not True:
-            raise MapError("Every mission unit needs a complete, approved canonical KALLÍSTIS character link.", "mission_roster_invalid")
+        canonical_ok = bool(link and isinstance(snapshot, dict) and snapshot.get("completo") is True)
+        qa_ok = validate_qa_sheet(actor)
+        if not canonical_ok and not qa_ok:
+            raise MapError("Mission units require either complete approved KALLÍSTIS provenance or a mechanically valid local NON_CANONICAL QA record.", "mission_roster_invalid")
+        if qa_ok:
+            provenance = fields.get("gravewright_provenance", {})
+            category = provenance.get("category")
+            if participant.role == MissionParticipant.ALLY and category != "qa_fixture":
+                raise MapError("QA allies must use player-accessible qa_fixture records.", "mission_roster_invalid")
+            if participant.role in {MissionParticipant.HOSTILE, MissionParticipant.EVACUEE}:
+                if category != "scenario_npc" or actor.permissions:
+                    raise MapError("QA adversaries and evacuees must be GM-controlled scenario NPCs.", "mission_roster_invalid")
+                if participant.role == MissionParticipant.HOSTILE and provenance.get("faction") != "Silmari":
+                    raise MapError("QA hostiles must use the mission's declared Silmari scenario faction.", "mission_roster_invalid")
         if participant.role == MissionParticipant.EVACUEE and runtime.get("people", {}).get("id") != "nomos":
             raise MapError("The evacuee must be a persisted KALLÍSTIS Nomos actor.", "mission_roster_invalid")
         from .services import identity

@@ -69,6 +69,8 @@ export const FRONTEND_CONTRACT = {
       "configure": "configure",
       "setInitiative": "initiative",
       "rollInitiative": "roll",
+      "rollSideInitiative": "roll-initiative",
+      "chooseFirstSide": "choose-first-side",
       "toggle": "toggle",
       "moveUp": "order-up",
       "moveDown": "order-down",
