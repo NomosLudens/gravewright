@@ -239,16 +239,40 @@ func _project(cell: Vector2) -> Vector2:
 
 
 func _point_to_cell(point: Vector2) -> Vector2i:
+    if bool(_terrain().get("initialized", false)):
+        var dims := _grid_dimensions()
+        var selected := Vector2i(-1, -1)
+        # Match the same painter order used by _draw(): later polygons are
+        # visually on top and must win where elevated floors overlap.
+        for y in range(dims.y):
+            for x in range(dims.x):
+                var cell := _terrain_cell(x, y)
+                var lift := Vector2(0, int(cell.get("elevation", 0)) * ELEVATION_PIXELS)
+                var polygon := PackedVector2Array([
+                    _project(Vector2(x, y)) - lift,
+                    _project(Vector2(x + 1, y)) - lift,
+                    _project(Vector2(x + 1, y + 1)) - lift,
+                    _project(Vector2(x, y + 1)) - lift,
+                ])
+                if Geometry2D.is_point_in_polygon(point, polygon):
+                    selected = Vector2i(x, y)
+        return selected
     var p := point - _origin()
     var u := p.x / HALF_WIDTH
     var v := p.y / HALF_HEIGHT
     return Vector2i(floori((u + v) / 2.0), floori((v - u) / 2.0))
 
 
-func _token_on_cell(cell: Vector2i) -> Dictionary:
-    for entry in _tokens:
-        if floori(float(entry.get("gridX", -999))) == cell.x and floori(float(entry.get("gridY", -999))) == cell.y:
-            return entry
+func _token_at_point(point: Vector2) -> Dictionary:
+    # Tokens are drawn after the terrain, so test them first in reverse draw order.
+    for index in range(_tokens.size() - 1, -1, -1):
+        var token := _tokens[index]
+        var x := float(token.get("gridX", -999))
+        var y := float(token.get("gridY", -999))
+        var center := _project(Vector2(x + 0.5, y + 0.5))
+        center.y -= float(token.get("elevation", 0)) * ELEVATION_PIXELS
+        if Rect2(center + Vector2(-9, -20), Vector2(18, 19)).has_point(point):
+            return token
     return {}
 
 
@@ -301,6 +325,17 @@ func _gui_input(event: InputEvent) -> void:
             _terrain_height += 1
         else:
             _terrain_connect_mode = not _terrain_connect_mode
+            _terrain_selected = Vector2i(-1, -1)
+        queue_redraw()
+        return
+    var token_hit := _token_at_point(event.position)
+    if not token_hit.is_empty():
+        if bool(token_hit.get("canControl", false)):
+            _selected_id = str(token_hit.get("id", ""))
+            _status = "Unidade selecionada: " + str(token_hit.get("name", ""))
+        else:
+            _selected_id = ""
+            _status = "Você não controla essa unidade."
         queue_redraw()
         return
     var target := _point_to_cell(event.position)
@@ -336,16 +371,6 @@ func _gui_input(event: InputEvent) -> void:
             "elevation": next_elevation
         })
         _terrain_height = 0
-        queue_redraw()
-        return
-    var hit := _token_on_cell(target)
-    if not hit.is_empty():
-        if bool(hit.get("canControl", false)):
-            _selected_id = str(hit.get("id", ""))
-            _status = "Unidade selecionada: " + str(hit.get("name", ""))
-        else:
-            _selected_id = ""
-            _status = "Você não controla essa unidade."
         queue_redraw()
         return
     var selected := _selected_token()

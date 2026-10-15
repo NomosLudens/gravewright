@@ -1,6 +1,6 @@
 # Gravewright Tactics — Gate 4 QA
 
-**Status: PARTIAL — G4 is not approved.** The backend terrain model and authenticated WebSocket flow passed local QA. Browser rendering and visual compatibility remain unverified because the desktop browser bridge could not initialize.
+**Status: PARTIAL — G4 is not approved.** G4.1 replaced the unavailable desktop bridge with local Chrome/Playwright and visually verified Godot terrain, editing, reload, and live Pixi token projection. A valid reverse Pixi movement remains pending because the QA player's active movement allowance is exhausted; the QA map also has no raster tiles.
 
 ## Preserved checkout
 
@@ -30,15 +30,31 @@
 - GM terrain edit request `19b4f5d8-d44f-4e49-93e0-725e3151ce7c` was acknowledged. The player received terrain version 8 with 256 cells. Database readback confirmed the token at `(2,1)`, elevation `0`, revision `3`, and the edited `DIFICIL` cell cost `2`.
 - Automated negative checks cover uncontrolled movement, off-turn movement, excess movement allowance, impassable terrain, missing height connection, wall crossing without explicit GM override, stale token/terrain revisions, unauthorized scene access, player terrain edits, duplicate requests, and rollback of rejected moves.
 
-## Blocking evidence
+## Evidência histórica do bloqueio inicial
 
-`cua_repl` found no available browser surface. Repeated attempts to enumerate or open the local QA page failed before navigation with `Unable to load browser request-header policy`; the bridge's policy service response was blocked by Cloudflare with HTTP 403. A final recheck again returned no browsers and the same policy error. Therefore no browser could render the Godot export or traditional PixiJS canvas during this run.
+No primeiro registro de G4, `cua_repl` não encontrou browser e a política externa falhou com HTTP 403 antes da navegação. G4.1 superou esse bloqueio usando Chrome local com Playwright; os resultados atuais e as pendências estão documentados abaixo.
 
-Still unverified:
+## G4.1 — validação visual local sem CUA (15/10/2026)
 
-- Godot's rendered Knossos terrain, elevation, wall, stair, selection, and reach visuals in an authenticated browser.
-- Terrain editing through the rendered GM controls and visual update in the player browser.
-- Actual browser reload in Godot, PixiJS canvas representation of the same position, and browser console cleanliness.
-- Visual token movement by a second browser participant. The WebSocket transport replication itself passed over two real authenticated sessions.
+**Status: PARTIAL — a validação visual Godot passou no ambiente QA; a validação integral PixiJS e o movimento reverso válido continuam pendentes.** O Chrome local foi controlado com Playwright em dois contextos independentes, sem usar `cua_repl`, sem expor o Daphne fora de `127.0.0.1:3001` e sem abrir o banco operacional.
 
-Do not mark G4 PASS or start G5 until those browser-level checks complete.
+- Checkout/branch/HEAD verificados: `/home/tonyus-dev/Portifolio/gravewright`, `feat/tactics-godot-transport-20261014`, `fe1108911833c7a7e955b64b9c4d08eacf4fd4e6`.
+- O fluxo anterior com login normal de GM e jogador carregou a rota autorizada `/game/<campanha-QA>/tactics/` e recebeu estado real pelo WebSocket: `table.joined`, `maps.state`, `maps.layers`, `tokens.state`, `maps.ack` e `session.ping`/`session.pong`. A projeção contém 256 células; GM recebeu `canEdit=true` e jogador `canEdit=false`.
+- As capturas foram inspecionadas visualmente. O tabuleiro isométrico mostra células coloridas, faces de desnível, conexões em escada, obstáculos/paredes, seleção e tokens. O clique em pisos elevados e a seleção do token elevado funcionaram. Edição visual do GM foi projetada no jogador e sobreviveu ao reload.
+- Movimento Godot real anterior recebeu `tokens.ack`, foi observado no outro contexto autenticado e persistiu após reload. O estado QA foi reutilizado e acumulou mudanças em execuções anteriores; no momento do último registro, o token controlado estava em `(5,2)`, elevação 4, versão 7, com o orçamento de movimento da ativação já consumido.
+- No PixiJS, rota autorizada `/game/<campanha-QA>/` carregou e `tokens.state` correspondeu ao token de Godot. O arrasto real em direção à célula `(4,2)` enviou request `4311efa8-b738-4272-a64e-46609feb2ba6`, token versão 7, com caminho ortogonal inteiro `[(5,2),(4,2)]`. O backend respondeu `tokens.error: movement_exceeded`; posição e revisão persistidas permaneceram inalteradas. A leitura do QA SQLite confirmou `(5,2)`, elevação `4`, revisão `7`, terreno versão `78`, `movement_used=6`, combate ativo na rodada `1`, turno `0`. Antes da correção, os pontos fracionários do arrasto eram incompatíveis com a validação de célula tática. A correção converte o caminho apenas em cenas com `tacticalTerrain.initialized`; cenas legadas preservam o caminho anterior.
+- Limitação Pixi: o mapa QA não tem imagens raster de fundo, portanto os pedidos de tiles retornam 404; a grade e os tokens são renderizados no canvas. Esse 404 do fixture QA não é erro WebSocket, mas impede atestar visualmente a compatibilidade de textura da mesa tradicional.
+- Evidências: [diretório de capturas e logs](evidence/gravewright-g4.1-2026-10-15/), em especial `godot-gm-levels-and-stair.png`, `godot-player-selected-raised-token.png`, `godot-player-reload.png`, `pixijs-before-drag-patched.png`, `pixijs-after-drag-patched.png`, `browser-results.json` e `pixi-patched-drag-results.json`.
+
+### Correções desta validação
+
+- Godot agora seleciona polígonos de terreno na mesma ordem de desenho, incluindo elevações sobrepostas, e atinge tokens pela caixa visual projetada. Limpar a seleção anterior ao alternar o modo de conexão evita reutilizar um ponto antigo como origem da escada.
+- PixiJS arredonda pontos de arrasto para células e interpola passos ortogonais no cliente tático. O servidor continua autoridade sobre movimento, turno e orçamento; a rejeição `movement_exceeded` confirma que a tentativa não alterou o estado.
+- O roteiro Playwright usa contextos separados e login normal, evita repetir edições já persistidas, distingue ausência de tiles do fixture QA e não navega por controles auxiliares que abriam preferências.
+
+### Pendências para G4 PASS
+
+- A evidência Pixi comprovou recepção do estado e envio do formato de caminho compatível, mas não um movimento aceito no Pixi: o orçamento da ativação já estava esgotado. É necessária uma ativação QA com orçamento disponível para confirmar `tokens.ack`, sincronização reversa com Godot, persistência e reload via Pixi.
+- Abrir uma cena QA com textura raster real (ou gerar esse asset pela UI autorizada) para conferir a sobreposição Pixi com o tabuleiro texturizado. Não foi fabricada imagem para mascarar a ausência do asset.
+- Regressão após as correções: Django completo **405/405**, conjunto focado **14/14**, Godot 4.6.3 export Web Compatibility concluído, e `git diff --check` sem apontamentos.
+- O script `tests/e2e/tactics_g4_1_visual.py` foi reexecutado com as duas sessões reais e sem reaplicar alterações já persistidas. Confirmou reloads e comparação Pixi/Godot; não repetiu o movimento bloqueado nem converteu `movement_exceeded` em sucesso.

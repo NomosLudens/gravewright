@@ -771,6 +771,23 @@ function tokenController(element, options) {
     else
       emit("preview", void 0);
   }
+  function tacticalCellPath(points) {
+    if (!points?.length) return points ?? [];
+    const route = [{ gridX: Math.round(points[0].gridX), gridY: Math.round(points[0].gridY) }];
+    let current = { ...route[0] };
+    for (const point of points.slice(1)) {
+      const x = Math.round(point.gridX), y = Math.round(point.gridY);
+      while (current.gridX !== x) {
+        current = { ...current, gridX: current.gridX + Math.sign(x - current.gridX) };
+        route.push({ ...current });
+      }
+      while (current.gridY !== y) {
+        current = { ...current, gridY: current.gridY + Math.sign(y - current.gridY) };
+        route.push({ ...current });
+      }
+    }
+    return route;
+  }
   function saveMoves(from, to, paths, record, after) {
     animate(merged(to));
     void run(async () => {
@@ -785,7 +802,9 @@ function tokenController(element, options) {
             gridX: t.gridX,
             gridY: t.gridY,
             expectedVersion: old.version,
-            path: paths.get(t.id)
+            path: props.tacticalTerrain?.initialized
+              ? tacticalCellPath(paths.get(t.id))
+              : paths.get(t.id)
           });
           accepted.push(result);
           starts.push(old);
