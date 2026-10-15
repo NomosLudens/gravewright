@@ -1,0 +1,237 @@
+{
+  "date": "2026-10-15",
+  "environment": {
+    "checkout": "/home/tonyus-dev/Portifolio/gravewright",
+    "branch": "feat/tactics-godot-transport-20261014",
+    "head": "478b93be191479f45f074183da4cdee9ac96be23",
+    "qa_origin": "http://127.0.0.1:3001",
+    "qa_campaign": "Knossos QA - G4",
+    "qa_campaign_id": "12279004-3006-48e4-8a28-95e62aea9465",
+    "credentials_or_cookies_saved": false
+  },
+  "combat_activation": {
+    "action": "combat/next-round, invoked from the authenticated GM combat panel",
+    "request_id": "aa1c8947-fed4-4498-a9a1-defe05428f8b",
+    "state_before": {
+      "active": true,
+      "round": 1,
+      "turn": 0,
+      "version": 13,
+      "batedor_movement_used": 6
+    },
+    "state_after": {
+      "active": true,
+      "round": 2,
+      "turn": 0,
+      "version": 14,
+      "active_combatant": "Batedor QA",
+      "movement_used": 0,
+      "player_can_control": true
+    },
+    "side_initiative_order_preserved": [
+      "Batedor QA (friendly)",
+      "Silmari QA (hostile)"
+    ],
+    "movement_allowance_changed": false,
+    "receipt_result_version": 14,
+    "websocket_ack_frame_captured": false,
+    "note": "The UI command was processed under this valid request ID and its committed receipt plus fresh combat projection confirm round 2; the first Playwright frame listener missed the resources.ack packet."
+  },
+  "pixi_to_gravewright_to_godot": {
+    "authenticated_routes": {
+      "pixi": "/game/12279004-3006-48e4-8a28-95e62aea9465",
+      "godot_gm": "/game/12279004-3006-48e4-8a28-95e62aea9465/tactics/"
+    },
+    "source": {
+      "position": [
+        5,
+        2
+      ],
+      "elevation": 4,
+      "token_revision": 8
+    },
+    "requested_destination": [
+      4,
+      2
+    ],
+    "serialized_path": [
+      {
+        "gridX": 5,
+        "gridY": 2
+      },
+      {
+        "gridX": 4,
+        "gridY": 2
+      }
+    ],
+    "path_note": "One real Pixi pointer drag, rounded/interpolated by the tactical scene path code to one orthogonal step.",
+    "request_id": "fc36654f-0886-4c2a-842f-a8cfa26586d2",
+    "ack": "tokens.ack",
+    "destination_validation": {
+      "traversable": true,
+      "terrain": "NORMAL",
+      "movement_cost": 1,
+      "stair_connection": [
+        [
+          5,
+          2
+        ],
+        [
+          4,
+          2
+        ]
+      ],
+      "wall_block": false
+    },
+    "persisted_state": {
+      "position": [
+        4,
+        2
+      ],
+      "elevation": 3,
+      "token_revision": 9
+    },
+    "godot_live_update_without_reload": true,
+    "reload_readback": {
+      "pixi": [
+        4,
+        2
+      ],
+      "godot": [
+        4,
+        2
+      ]
+    },
+    "visual_evidence": [
+      "pixi-after-pixi-to-godot.png",
+      "godot-gm-after-pixi-live.png",
+      "player-reload-after-pixi-move.png",
+      "gm-reload-after-pixi-move.png"
+    ]
+  },
+  "godot_to_gravewright_to_pixi": {
+    "authenticated_routes": {
+      "godot_player": "/game/12279004-3006-48e4-8a28-95e62aea9465/tactics/",
+      "pixi_gm": "/game/12279004-3006-48e4-8a28-95e62aea9465"
+    },
+    "source": {
+      "position": [
+        4,
+        2
+      ],
+      "elevation": 3,
+      "token_revision": 9
+    },
+    "requested_destination": [
+      3,
+      2
+    ],
+    "request_id": "7dc3fb5b-ee55-439a-aef5-f1e51bb22c75",
+    "ack": "tokens.ack",
+    "destination_validation": {
+      "traversable": true,
+      "terrain": "NORMAL",
+      "movement_cost": 1,
+      "stair_connection": [
+        [
+          4,
+          2
+        ],
+        [
+          3,
+          2
+        ]
+      ],
+      "wall_block": false
+    },
+    "persisted_state": {
+      "position": [
+        3,
+        2
+      ],
+      "elevation": 2,
+      "token_revision": 10
+    },
+    "pixi_live_update": true,
+    "reload_readback": {
+      "pixi": [
+        3,
+        2
+      ],
+      "godot": [
+        3,
+        2
+      ]
+    },
+    "combat_movement_used_after_both_moves": "2/6",
+    "visual_evidence": [
+      "player-after-godot-reverse-move.png",
+      "gm-after-godot-reverse-move.png",
+      "player-reload-after-godot-move.png",
+      "gm-reload-after-godot-move.png"
+    ]
+  },
+  "raster_compatibility": {
+    "upload_route": "/api/containers/12279004-3006-48e4-8a28-95e62aea9465/scene-upload",
+    "upload_authorized_ui": "GM authenticated scene upload form",
+    "upload_http": 201,
+    "scene": "G4 QA raster - NOT CANON",
+    "scene_id": "fdbb3ac5-5580-47f8-b76d-94f613b44fc2",
+    "asset": {
+      "label": "QA ONLY - NOT CANON",
+      "format": "PNG",
+      "width": 1120,
+      "height": 1120
+    },
+    "grid_size": 70,
+    "tile_count": 14,
+    "levels_of_detail": {
+      "lod_0": 9,
+      "lod_1": 4,
+      "lod_2": 1
+    },
+    "manifest_http": 200,
+    "tile_http": 200,
+    "raster_tile_requests_after_activation": {
+      "count": 18,
+      "all_status_200": true
+    },
+    "pixi_grid_overlay_aligned": true,
+    "qa_token_placed_via_actor_directory_drag": {
+      "id": "e565d023-4f84-41b8-8ed5-e9902bed34c7",
+      "name": "Batedor QA",
+      "grid": [
+        0,
+        8
+      ],
+      "persisted": true
+    },
+    "second_authenticated_pixijs_context_observed_token": true,
+    "console_errors_during_final_raster_pair": 0,
+    "evidence": [
+      "pixi-qa-raster-rendered.png",
+      "pixi-raster-grid-token-alignment.png",
+      "pixi-player-raster-token.png"
+    ]
+  },
+  "qa_scene_restoration": {
+    "original_scene": "Knossos - invasão Silmari (QA)",
+    "original_scene_id": "38c749d2-f1ec-4b5c-8fc5-c668fe45c1ec",
+    "ui_flow": "Navigate to original scene, then Activate from its scene context menu",
+    "request_id": "67ed9eac-266b-4fc1-ba18-836895671a7e",
+    "maps_ack_received": true,
+    "broadcast_readback_original_scene": true,
+    "raster_qa_scene_and_14_tiles_preserved": true
+  },
+  "known_qa_fixture_incident": {
+    "description": "Before uploading the test image, the original combat scene had no raster tiles and produced expected tile 404s. The raster scene itself produced no tile 404s after activation; its requested tiles returned 200.",
+    "terrain_projection_revision": "78 to 80 during two GM canvas clicks used while calibrating the owner/editor input path; the recorded cells and stair connections remained identical. No combat allowance or campaign outside the isolated QA database was changed."
+  },
+  "automated_validation": {
+    "django_full": "405/405 passed",
+    "godot": "4.6.3.stable.official.7d41c59c4; headless import passed; Web Compatibility release export passed",
+    "git_diff_check": "passed",
+    "django_focused_reference": "14/14 passed (terrain, token, combat)",
+    "django_focused_plus_raster": "15/15 passed (the 14-test reference set plus authorized tile delivery)"
+  }
+}

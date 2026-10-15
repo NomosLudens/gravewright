@@ -1,6 +1,6 @@
 # Gravewright Tactics — Gate 4 QA
 
-**Status: PARTIAL — G4 is not approved.** G4.1 replaced the unavailable desktop bridge with local Chrome/Playwright and visually verified Godot terrain, editing, reload, and live Pixi token projection. A valid reverse Pixi movement remains pending because the QA player's active movement allowance is exhausted; the QA map also has no raster tiles.
+**Status: PASS — G4 is approved.** G4.2 completed authenticated, two-way PixiJS/Godot movement with persisted reload readback, then uploaded and rendered a QA-only raster with aligned grid and token overlay. Evidence and final regression results are recorded in `docs/evidence/gravewright-g4.2-2026-10-15/`.
 
 ## Preserved checkout
 
@@ -52,7 +52,23 @@ No primeiro registro de G4, `cua_repl` não encontrou browser e a política exte
 - PixiJS arredonda pontos de arrasto para células e interpola passos ortogonais no cliente tático. O servidor continua autoridade sobre movimento, turno e orçamento; a rejeição `movement_exceeded` confirma que a tentativa não alterou o estado.
 - O roteiro Playwright usa contextos separados e login normal, evita repetir edições já persistidas, distingue ausência de tiles do fixture QA e não navega por controles auxiliares que abriam preferências.
 
-### Pendências para G4 PASS
+### G4.2 — integração PixiJS ↔ Godot concluída (15/10/2026)
+
+**Status: PASS.** A validação usou exclusivamente o SQLite isolado `/tmp/gravewright-tactics-qa-20261015/gravewright.sqlite3`, a campanha `Knossos QA - G4`, login normal e dois contextos autenticados independentes. O Daphne ficou limitado a `127.0.0.1:3001`; a porta operacional `3000` e o banco operacional não foram usados.
+
+- Pela interface de combate do mestre, o comando `combat/next-round` recebeu o request ID `aa1c8947-fed4-4498-a9a1-defe05428f8b`. A leitura posterior confirmou combate ativo, rodada 2, turno 0, Batedor QA como ativação atual, controle do jogador e orçamento `0/6`. A ordem friendly/hostile existente permaneceu intacta.
+- No PixiJS, um arrasto real moveu o Batedor de `(5,2)`, elevação 4, revisão 8, para `(4,2)`, elevação 3, revisão 9. O caminho foi um passo ortogonal pela escada persistida, custo 1; o request `fc36654f-0886-4c2a-842f-a8cfa26586d2` recebeu `tokens.ack`. O Godot do mestre conectado mostrou a nova posição sem reload. O Pixi e o Godot recuperaram essa posição após reload.
+- No sentido inverso, o jogador controlou o Batedor no Godot e o moveu de `(4,2)`, elevação 3, revisão 9, para `(3,2)`, elevação 2, revisão 10. A escada, o piso transitável e o custo 1 foram validados pelo servidor. O request `7dc3fb5b-ee55-439a-aef5-f1e51bb22c75` recebeu `tokens.ack`; o Pixi do mestre observou a atualização ao vivo. Ambos recarregaram em `(3,2)`. O gasto total ficou em `2/6`; o limite não foi alterado.
+- O raster foi enviado pelo formulário autenticado `/api/containers/12279004-3006-48e4-8a28-95e62aea9465/scene-upload`, HTTP 201. A cena `G4 QA raster - NOT CANON` (`fdbb3ac5-5580-47f8-b76d-94f613b44fc2`) contém a imagem explicitamente marcada QA-only, 1120×1120, grade 70 px e 14 tiles persistidas nos LODs 0–2. O manifesto e os tiles responderam HTTP 200; 18 requisições de tile observadas após ativar a cena terminaram em 200. O Pixi exibiu raster, grade e token Batedor QA, colocado pelo arrasto real da ficha no diretório de personagens; o segundo contexto autenticado viu o mesmo token. O console não registrou erros na validação final do par raster.
+- O mapa de combate original não tinha tiles e produziu 404 esperados antes do upload. Nenhuma tile da cena raster produziu 404. A cena raster e seu token continuam preservados na campanha descartável, fora do broadcast.
+- O broadcast retornou à cena `Knossos - invasão Silmari (QA)` pela interface: navegar até a cena original e então usar `Activate`. O `maps.ack` `67ed9eac-266b-4fc1-ba18-836895671a7e` e a leitura do banco confirmaram o broadcast original.
+- Incidente de calibração: dois cliques feitos no Godot com sessão de mestre foram interpretados como comandos de edição de terreno. As revisões avançaram de 78 a 80, mas comparação de células e conexões confirmou conteúdo idêntico. Nenhum movimento ou regra foi forçado, nenhuma economia de movimento mudou e nenhum dado fora da campanha QA foi tocado.
+
+**Regressão final:** Django completo **405/405**; conjunto focado de referência em terreno, tokens e combate **14/14**; o mesmo conjunto mais o teste de upload/entrega de tiles raster autorizada **15/15**. Godot `4.6.3.stable.official.7d41c59c4` importou em modo headless e exportou Web Compatibility; `git diff --check` passou. A execução focada inicial foi cancelada quando Django pediu confirmação para substituir o banco de testes existente; foi repetida com `--keepdb`, preservando-o. Nenhum código de produto mudou nesta etapa.
+
+Evidências detalhadas, capturas, IDs e a leitura final do ambiente estão em `docs/evidence/gravewright-g4.2-2026-10-15/`. **G5 — Vertical Slice 01: Batalha de Knossos** está pronto para iniciar; esta validação não antecipou sua implementação.
+
+### Pendências registradas em G4.1 — encerradas por G4.2
 
 - A evidência Pixi comprovou recepção do estado e envio do formato de caminho compatível, mas não um movimento aceito no Pixi: o orçamento da ativação já estava esgotado. É necessária uma ativação QA com orçamento disponível para confirmar `tokens.ack`, sincronização reversa com Godot, persistência e reload via Pixi.
 - Abrir uma cena QA com textura raster real (ou gerar esse asset pela UI autorizada) para conferir a sobreposição Pixi com o tabuleiro texturizado. Não foi fabricada imagem para mascarar a ausência do asset.
