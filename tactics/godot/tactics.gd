@@ -33,6 +33,12 @@ var _pending_request := ""
 var _pending_resource_request := ""
 var _pending_terrain_request := ""
 var _connected := false
+var _socket_url := ""
+var _reconnect_attempts := 0
+var _reconnect_elapsed := 0.0
+var _reconnect_in_progress := false
+var _reconnect_failure_elapsed := 0.0
+const MAX_RECONNECT_ATTEMPTS := 5
 var _status := "Conectando ao Gravewright…"
 var _hud_panel: PanelContainer
 var _mission_label: Label
@@ -40,6 +46,10 @@ var _selection_label: Label
 var _resolution_label: Label
 var _role_picker: OptionButton
 var _attribute_picker: OptionButton
+var _friendly_representative: OptionButton
+var _hostile_representative: OptionButton
+var _combat_admin_row: HBoxContainer
+var _combat_admin_label: Label
 
 
 func _ready() -> void:
@@ -75,16 +85,24 @@ func _ready() -> void:
         return
 
     var protocol := "wss://" if origin.get("protocol") == "https:" else "ws://"
-    var url: String = protocol + str(origin.get("host", "")) + "/ws/tables/" + _campaign_id + "/"
+    _socket_url = protocol + str(origin.get("host", "")) + "/ws/tables/" + _campaign_id + "/"
+    _connect_socket()
+    queue_redraw()
+
+
+func _connect_socket() -> void:
+    _socket = WebSocketPeer.new()
     # The first authenticated sync batches terrain, actors, tokens and combat
     # snapshots. Godot's 64 KiB default can silently drop one of those frames.
     _socket.inbound_buffer_size = 1024 * 1024
     _socket.outbound_buffer_size = 256 * 1024
-    var error := _socket.connect_to_url(url)
+    var error := _socket.connect_to_url(_socket_url)
     if error != OK:
-        _status = "Falha ao iniciar WebSocket: " + str(error)
-        set_process(false)
-    queue_redraw()
+        _reconnect_in_progress = false
+        _status = "Falha ao conectar ao Gravewright: " + str(error)
+        return
+    _reconnect_in_progress = true
+    _reconnect_failure_elapsed = 0.0
 
 
 func _process(_delta: float) -> void:
@@ -94,16 +112,42 @@ func _process(_delta: float) -> void:
     if state == WebSocketPeer.STATE_OPEN:
         if not _connected:
             _connected = true
+            _reconnect_in_progress = false
+            _reconnect_attempts = 0
+            _reconnect_elapsed = 0.0
             _status = "Conectado. Consultando mapas autorizados…"
             _send("maps.sync", {})
         while _socket.get_available_packet_count() > 0:
             _receive(_socket.get_packet().get_string_from_utf8())
     elif state == WebSocketPeer.STATE_CLOSED:
-        _status = "Conexão encerrada (" + str(_socket.get_close_code()) + "). Reabra após confirmar a sessão."
-        _selected_id = ""
-        _pending_request = ""
-        _tokens.clear()
-        set_process(false)
+        if _connected:
+            _connected = false
+            _reconnect_in_progress = false
+            _reconnect_elapsed = 0.0
+            _reconnect_failure_elapsed = 0.0
+            # A command may have reached the server before its acknowledgement
+            # was lost. Drop local pending IDs; never replay mutable commands.
+            _pending_request = ""
+            _pending_resource_request = ""
+            _pending_terrain_request = ""
+            _status = "Conexão caiu. Tentando retomar sem repetir comandos…"
+        if _reconnect_in_progress:
+            _reconnect_failure_elapsed += _delta
+            if _reconnect_failure_elapsed >= 2.0:
+                _reconnect_in_progress = false
+                _reconnect_elapsed = 0.0
+        if not _reconnect_in_progress:
+            if _reconnect_attempts >= MAX_RECONNECT_ATTEMPTS:
+                _status = "Reconexão interrompida após %s tentativas. Recarregue para iniciar uma nova sessão." % MAX_RECONNECT_ATTEMPTS
+                set_process(false)
+            else:
+                _reconnect_elapsed += _delta
+                var wait_seconds := minf(0.5 * pow(2.0, float(_reconnect_attempts)), 8.0)
+                if _reconnect_elapsed >= wait_seconds:
+                    _reconnect_attempts += 1
+                    _reconnect_elapsed = 0.0
+                    _status = "Reconectando (%s/%s)…" % [_reconnect_attempts, MAX_RECONNECT_ATTEMPTS]
+                    _connect_socket()
     queue_redraw()
 
 
@@ -477,7 +521,7 @@ func _build_hud() -> void:
     panel.anchor_bottom = 1.0
     panel.offset_left = 8.0
     panel.offset_right = -8.0
-    panel.offset_top = -132.0
+    panel.offset_top = -174.0
     panel.offset_bottom = -4.0
     panel.mouse_filter = Control.MOUSE_FILTER_PASS
     _hud_panel = panel
@@ -544,6 +588,33 @@ func _build_hud() -> void:
     _selection_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     second.add_child(_selection_label)
 
+    _combat_admin_row = HBoxContainer.new()
+    _combat_admin_row.add_theme_constant_override("separation", 4)
+    column.add_child(_combat_admin_row)
+    _friendly_representative = OptionButton.new()
+    _friendly_representative.custom_minimum_size.x = 150
+    _friendly_representative.tooltip_text = "Representante aliado para a iniciativa por lados."
+    _combat_admin_row.add_child(_friendly_representative)
+    _hostile_representative = OptionButton.new()
+    _hostile_representative.custom_minimum_size.x = 150
+    _hostile_representative.tooltip_text = "Representante Silmari para a iniciativa por lados."
+    _combat_admin_row.add_child(_hostile_representative)
+    var roll_sides := _hud_button("Rolar iniciativa", 118)
+    roll_sides.pressed.connect(_roll_side_initiative)
+    _combat_admin_row.add_child(roll_sides)
+    var friendly_first := _hud_button("Aliados primeiro", 122)
+    friendly_first.pressed.connect(func(): _combat_command("choose-first-side", {"side": "friendly"}))
+    _combat_admin_row.add_child(friendly_first)
+    var hostile_first := _hud_button("Silmari primeiro", 122)
+    hostile_first.pressed.connect(func(): _combat_command("choose-first-side", {"side": "hostile"}))
+    _combat_admin_row.add_child(hostile_first)
+    var start_combat := _hud_button("Iniciar combate", 112)
+    start_combat.pressed.connect(func(): _combat_command("start"))
+    _combat_admin_row.add_child(start_combat)
+    _combat_admin_label = Label.new()
+    _combat_admin_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _combat_admin_row.add_child(_combat_admin_label)
+
     var third := HBoxContainer.new()
     third.add_theme_constant_override("separation", 4)
     column.add_child(third)
@@ -587,6 +658,47 @@ func _combat_command(action: String, data: Dictionary = {}) -> void:
     var payload := {"sceneId": _scene_id, "version": int(_combat.get("version", 0))}
     payload.merge(data, true)
     _send_resource_command(action, payload)
+
+
+func _roll_side_initiative() -> void:
+    var friendly_id := _selected_representative_id(_friendly_representative)
+    var hostile_id := _selected_representative_id(_hostile_representative)
+    if friendly_id.is_empty() or hostile_id.is_empty():
+        _status = "Escolha um representante vivo de cada lado."
+        return
+    _combat_command("roll-initiative", {
+        "friendlyRepresentative": friendly_id,
+        "hostileRepresentative": hostile_id,
+    })
+
+
+func _selected_representative_id(picker: OptionButton) -> String:
+    if picker == null or picker.item_count == 0 or picker.selected < 0:
+        return ""
+    return str(picker.get_item_metadata(picker.selected))
+
+
+func _refresh_representative_picker(picker: OptionButton, side: String) -> void:
+    var representatives: Array[Dictionary] = []
+    for row in _combat.get("combatants", []):
+        if typeof(row) == TYPE_DICTIONARY and row.get("side") == side and not bool(row.get("defeated", false)):
+            representatives.append(row)
+    var signature_parts: Array[String] = []
+    for row in representatives:
+        signature_parts.append(str(row.get("id", "")) + ":" + str(row.get("name", "")))
+    var signature := "|".join(signature_parts)
+    var key := side + ":" + signature
+    if picker == null:
+        return
+    var previous := str(picker.get_meta("signature", ""))
+    if previous == key:
+        return
+    picker.clear()
+    for row in representatives:
+        var index := picker.item_count
+        picker.add_item(str(row.get("name", "Representante")))
+        picker.set_item_metadata(index, str(row.get("id", "")))
+    picker.set_meta("signature", key)
 
 
 func _mission_command(action: String, data: Dictionary) -> void:
@@ -670,6 +782,23 @@ func _update_hud() -> void:
     if not is_instance_valid(_mission_label) or not is_instance_valid(_selection_label):
         return
     var mission: Variant = _combat.get("mission")
+    var gm_controls := bool(_terrain().get("canEdit", false)) and not bool(_combat.get("active", false))
+    if is_instance_valid(_combat_admin_row):
+        _combat_admin_row.visible = gm_controls
+    _refresh_representative_picker(_friendly_representative, "friendly")
+    _refresh_representative_picker(_hostile_representative, "hostile")
+    var initiative: Variant = _combat.get("config", {}).get("side_initiative", {})
+    var has_roll: bool = typeof(initiative) == TYPE_DICTIONARY and initiative.has("winner")
+    var chosen_side := str(_combat.get("config", {}).get("first_side", ""))
+    if is_instance_valid(_combat_admin_label):
+        _combat_admin_label.text = "Iniciativa %s · primeiro lado: %s" % [str(initiative.get("winner", "pendente")), chosen_side if not chosen_side.is_empty() else "pendente"]
+    if is_instance_valid(_combat_admin_row):
+        for child in _combat_admin_row.get_children():
+            if child is Button:
+                match child.text:
+                    "Rolar iniciativa": child.disabled = bool(_combat.get("active", false)) or _friendly_representative.item_count == 0 or _hostile_representative.item_count == 0
+                    "Aliados primeiro", "Silmari primeiro": child.disabled = bool(_combat.get("active", false)) or not has_roll
+                    "Iniciar combate": child.disabled = bool(_combat.get("active", false)) or chosen_side not in ["friendly", "hostile"]
     if typeof(mission) == TYPE_DICTIONARY:
         var current := str(_combat.get("current_name", "sem ativação"))
         _mission_label.text = "%s · %s · Rodada %s · %s" % [str(mission.get("definition", {}).get("title", "Missão")), str(mission.get("state", "")), str(_combat.get("round", 0)), current]
