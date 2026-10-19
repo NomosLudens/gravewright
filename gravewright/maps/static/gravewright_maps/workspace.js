@@ -572,7 +572,7 @@ async function navigate(map, privateView = true) {
       state.is_gm,
       layerState,
     );
-    const {createTokens}=await import('/static/gravewright_tokens/workspace-gate03c.js');
+    const {createTokens}=await import('/static/gravewright_tokens/workspace-gate03c.js?v=20261019-gate-fix');
     if(version!==generation)return;
     tokens=createTokens(boardNode.querySelector('.game-board__surface'),board,map,state.is_gm,layerState);
     window.gravewrightRealtime.mapLayers(map.id);
