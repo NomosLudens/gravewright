@@ -1,9 +1,11 @@
 """QA provenance must never grant canonical KALLISTIS authority."""
 
+import os
+import tempfile
 from unittest.mock import patch
 from uuid import uuid4
 
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.conf import settings
 
 from gravewright.actors.models import Actor, KallistisCharacterLink
@@ -14,11 +16,84 @@ from gravewright.actors.provenance import (
     SHEET_KEY,
     canonical_link,
     is_canonical,
+    qa_fixture_environment_enabled,
     qa_sheet,
+    _safe_absolute_path,
     validate_qa_sheet,
 )
 from gravewright.accounts.models import User
 from gravewright.campaigns.models import Campaign, Membership
+
+
+class QaFixtureEnvironmentGuardTests(SimpleTestCase):
+    """The official fixture guard accepts only the explicit isolated roots."""
+
+    persistent_root = "/home/tonyus-dev/.local/share/gravewright/playtest-g5"
+    product_database = "/home/tonyus-dev/Portifolio/gravewright/data/gravewright.sqlite3"
+
+    def settings_for(self, root=None, database=None, test_database=None, media=None):
+        root = root or self.persistent_root
+        test_database = test_database or f"{root}/database/test-gravewright.sqlite3"
+        return override_settings(
+            GRAVEWRIGHT_TACTICAL_QA_FIXTURES_ENABLED=True,
+            GRAVEWRIGHT_TACTICAL_QA_FIXTURE_ROOT=root,
+            DATABASES={"default": {
+                "ENGINE": "django.db.backends.sqlite3",
+                "NAME": database or f"{root}/database/gravewright.sqlite3",
+                "TEST": {"NAME": test_database},
+            }},
+            MEDIA_ROOT=media or f"{root}/media",
+            DEBUG=True,
+            ALLOWED_HOSTS=["127.0.0.1", "localhost", "[::1]"],
+            KALLISTIS_VTT_CONSUME_URL="",
+            KALLISTIS_VTT_SERVICE_SECRET="",
+            KALLISTIS_VTT_CHARACTER_READ_URL="",
+            KALLISTIS_ORIGIN="",
+            GRAVEWRIGHT_MARKETPLACE_URL="",
+            GRAVEWRIGHT_PUBLIC_ORIGIN="",
+        )
+
+    def enabled_for(self, **kwargs):
+        with self.settings_for(**kwargs), patch.dict(
+            os.environ, {"GRAVEWRIGHT_DATABASE": f"{kwargs.get('root', self.persistent_root)}/database/gravewright.sqlite3"}
+        ):
+            return qa_fixture_environment_enabled()
+
+    def test_explicit_persistent_qa_layout_is_accepted(self):
+        self.assertTrue(self.enabled_for())
+
+    def test_legacy_disposable_qa_layout_remains_accepted(self):
+        root = "/tmp/gravewright-tactics-qa-20261015/g5.3"
+        with self.settings_for(
+            root=root,
+            database=f"{root}/gravewright.sqlite3",
+            test_database=f"{root}/test-gravewright.sqlite3",
+            media=f"{root}/media",
+        ), patch.dict(os.environ, {"GRAVEWRIGHT_DATABASE": f"{root}/gravewright.sqlite3"}):
+            self.assertTrue(qa_fixture_environment_enabled())
+
+    def test_arbitrary_persistent_root_is_rejected(self):
+        root = "/home/tonyus-dev/.local/share/gravewright/other-qa"
+        self.assertFalse(self.enabled_for(root=root))
+
+    def test_product_sqlite_is_rejected(self):
+        self.assertFalse(self.enabled_for(database=self.product_database))
+
+    def test_root_traversal_is_rejected(self):
+        root = f"{self.persistent_root}/../playtest-g5"
+        self.assertFalse(self.enabled_for(root=root))
+
+    def test_database_outside_authorized_root_is_rejected(self):
+        self.assertFalse(self.enabled_for(database="/tmp/not-the-qa-database.sqlite3"))
+
+    def test_media_outside_authorized_root_is_rejected(self):
+        self.assertFalse(self.enabled_for(media="/home/tonyus-dev/Portifolio/gravewright/media"))
+
+    def test_symlinked_path_component_is_rejected(self):
+        with tempfile.TemporaryDirectory(prefix="gravewright-guard-") as temporary:
+            link = os.path.join(temporary, "escape")
+            os.symlink("/tmp", link)
+            self.assertIsNone(_safe_absolute_path(os.path.join(link, "outside.sqlite3")))
 
 
 class NonCanonicalFixtureBoundaryTests(TestCase):

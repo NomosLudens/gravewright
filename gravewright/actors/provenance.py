@@ -14,37 +14,80 @@ PROVENANCE_SCHEMA = "gravewright.actor-provenance.v1"
 CANONICAL = "CANONICAL"
 NON_CANONICAL = "NON_CANONICAL"
 
+# Fixture data is confined to these operator-owned QA roots. The persistent
+# G5.5 root is explicit; the single legacy /tmp root remains for the existing
+# disposable G5.3 runner. A settings value cannot authorize an arbitrary path.
+_QA_ROOT_LAYOUTS = {
+    Path("/home/tonyus-dev/.local/share/gravewright/playtest-g5"): (
+        Path("database/gravewright.sqlite3"),
+        Path("database/test-gravewright.sqlite3"),
+        Path("media"),
+    ),
+    Path("/tmp/gravewright-tactics-qa-20261015/g5.3"): (
+        Path("gravewright.sqlite3"),
+        Path("test-gravewright.sqlite3"),
+        Path("media"),
+    ),
+}
+
+
+def _safe_absolute_path(value):
+    """Return a canonical absolute path, rejecting traversal and symlinks."""
+    if not isinstance(value, (str, os.PathLike)):
+        return None
+    raw = Path(value)
+    if not raw.is_absolute() or ".." in raw.parts:
+        return None
+    current = Path(raw.anchor)
+    for part in raw.parts[1:]:
+        current /= part
+        try:
+            if current.is_symlink():
+                return None
+        except OSError:
+            return None
+    try:
+        canonical = raw.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return None
+    return canonical if canonical == raw else None
+
 
 class ProvenanceError(ValueError):
     pass
 
 
 def qa_fixture_environment_enabled():
-    """QA fixture authority requires explicit local settings and confined paths."""
+    """Allow fixtures only in the two named, isolated QA directory layouts."""
     if getattr(settings, "GRAVEWRIGHT_TACTICAL_QA_FIXTURES_ENABLED", False) is not True:
         return False
-    root_value = getattr(settings, "GRAVEWRIGHT_TACTICAL_QA_FIXTURE_ROOT", "")
-    if not root_value:
+    root = _safe_absolute_path(
+        getattr(settings, "GRAVEWRIGHT_TACTICAL_QA_FIXTURE_ROOT", "")
+    )
+    if root not in _QA_ROOT_LAYOUTS:
         return False
-    root = Path(root_value).resolve()
-    if not root.is_relative_to(Path("/tmp").resolve()) or root == Path("/tmp").resolve():
-        return False
+
+    database_rel, test_database_rel, media_rel = _QA_ROOT_LAYOUTS[root]
+    expected_database = root / database_rel
+    expected_test_database = root / test_database_rel
+    expected_media = root / media_rel
     database = settings.DATABASES.get("default", {})
-    if not database.get("ENGINE", "").endswith("sqlite3"):
+    if database.get("ENGINE") != "django.db.backends.sqlite3":
         return False
-    db_path = Path(database.get("NAME", "")).resolve()
-    test_path = Path(database.get("TEST", {}).get("NAME", "")).resolve()
-    test_database = db_path == test_path and db_path.name.startswith("test-")
+    db_path = _safe_absolute_path(database.get("NAME", ""))
+    test_path = _safe_absolute_path(database.get("TEST", {}).get("NAME", ""))
+    configured_db = _safe_absolute_path(os.environ.get("GRAVEWRIGHT_DATABASE", ""))
+    if configured_db != expected_database or test_path != expected_test_database:
+        return False
+    test_database = db_path == expected_test_database
+    if db_path not in {expected_database, expected_test_database}:
+        return False
+    if test_database and not db_path.name.startswith("test-"):
+        return False
     if not settings.DEBUG and not test_database:
         return False
-    media_path = Path(settings.MEDIA_ROOT).resolve()
-    try:
-        configured_db = Path(os.environ["GRAVEWRIGHT_DATABASE"]).resolve()
-    except (KeyError, TypeError):
-        return False
-    if db_path not in {configured_db, test_path} or not db_path.is_relative_to(root):
-        return False
-    if not test_path.is_relative_to(root) or not media_path.is_relative_to(root):
+    media_path = _safe_absolute_path(settings.MEDIA_ROOT)
+    if media_path != expected_media:
         return False
     loopback_hosts = {"127.0.0.1", "localhost", "[::1]"}
     allowed_hosts = loopback_hosts | ({"testserver"} if test_database else set())
