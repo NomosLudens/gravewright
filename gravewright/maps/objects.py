@@ -161,6 +161,13 @@ def layer_state(scene, who):
             **(env.fog if env else {}),
         },
     }
+    from .terrain import project as terrain_project
+    tactical_terrain = terrain_project(scene)
+    result["tacticalTerrain"] = {
+        **(tactical_terrain or {"schemaVersion": 1, "initialized": False}),
+        "initialized": tactical_terrain is not None,
+        "canEdit": who.role == "gm",
+    }
     for obj in scene.elements.all():
         if obj.kind in result:
             result[obj.kind].append(entry(obj))
@@ -219,6 +226,12 @@ def apply(scene, who, area, action, p):
         raise MapError('Dynamic lighting is disabled.', 'forbidden')
     env, _ = SceneState.objects.get_or_create(scene=scene)
     result = {}
+    if area == "terrain":
+        from .terrain import apply as apply_terrain
+        result = apply_terrain(scene, action, p)
+        env.version += 1
+        env.save()
+        return result
     if area == "zones":
         from .zones import apply as zones
         result=zones(scene,who,action,p)

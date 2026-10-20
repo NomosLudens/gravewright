@@ -1,0 +1,165 @@
+{
+  "campaign": "Knossos QA - G4",
+  "upload": {
+    "status": 201,
+    "name": "G4 QA raster - NOT CANON",
+    "scene_id": "fdbb3ac5-5580-47f8-b76d-94f613b44fc2",
+    "dimensions": [
+      1120,
+      1120
+    ],
+    "tile_status": 200,
+    "tile_content_type": "image/webp",
+    "manifest_status": 200,
+    "manifest": {
+      "mapId": "fdbb3ac5-5580-47f8-b76d-94f613b44fc2",
+      "blockId": "a668b59a-58fd-43ab-8ced-5a50b8352439",
+      "width": 1120,
+      "height": 1120,
+      "tileSize": 512,
+      "maxLod": 2,
+      "levels": [
+        {
+          "lod": 0,
+          "width": 1120,
+          "height": 1120,
+          "columns": 3,
+          "rows": 3
+        },
+        {
+          "lod": 1,
+          "width": 560,
+          "height": 560,
+          "columns": 2,
+          "rows": 2
+        },
+        {
+          "lod": 2,
+          "width": 280,
+          "height": 280,
+          "columns": 1,
+          "rows": 1
+        }
+      ],
+      "tileUrlTemplate": "/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/{lod}/{x}/{y}.webp"
+    },
+    "grid_size": 70,
+    "image_label": "QA ONLY - NOT CANON",
+    "token_overlay_issue": "TimeoutError: Locator.drag_to: Timeout 15000ms exceeded.\nCall log:\n  - waiting for locator(\".actor-directory__actor\").filter(has_text=\"Batedor QA\").first\n    - locator resolved to <button type=\"button\" data-v-gwentry=\"\" draggable=\"false\" class=\"directory-entry act",
+    "grid_token_overlay_visible": false,
+    "original_broadcast_restored_via_ui": false
+  },
+  "screenshots": [
+    "pixi-qa-raster-rendered.png"
+  ],
+  "tile_http": [
+    {
+      "status": 404,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/0/1.webp"
+    },
+    {
+      "status": 404,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/2/0.webp"
+    },
+    {
+      "status": 404,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/1/1.webp"
+    },
+    {
+      "status": 404,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/0/2.webp"
+    },
+    {
+      "status": 404,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/1/0.webp"
+    },
+    {
+      "status": 404,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/2/1.webp"
+    },
+    {
+      "status": 404,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/2/2.webp"
+    },
+    {
+      "status": 404,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/0/0.webp"
+    },
+    {
+      "status": 404,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/1/2.webp"
+    },
+    {
+      "status": 404,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/1/2.webp"
+    },
+    {
+      "status": 404,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/0/0.webp"
+    },
+    {
+      "status": 404,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/2/2.webp"
+    },
+    {
+      "status": 200,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/1/1.webp"
+    },
+    {
+      "status": 200,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/2/0.webp"
+    },
+    {
+      "status": 200,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/0/2.webp"
+    },
+    {
+      "status": 200,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/2/1.webp"
+    },
+    {
+      "status": 200,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/1/0.webp"
+    },
+    {
+      "status": 200,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/0/1.webp"
+    },
+    {
+      "status": 200,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/0/0.webp"
+    },
+    {
+      "status": 200,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/2/2.webp"
+    },
+    {
+      "status": 200,
+      "path": "http://127.0.0.1:3001/api/maps/<scene>/tiles/0/1/2.webp"
+    }
+  ],
+  "console_errors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "page_errors": [
+    "Error"
+  ],
+  "stage_status": "Superseded as a partial upload-stage capture; the later authenticated custom-pointer scene drop completed the token overlay.",
+  "superseded_by": "g4.2-raster-alignment-results.json and g4.2-browser-results.json",
+  "final_broadcast_restoration": {
+    "verified": true,
+    "request_id": "67ed9eac-266b-4fc1-ba18-836895671a7e",
+    "readback": "Knossos - invasão Silmari (QA)"
+  }
+}

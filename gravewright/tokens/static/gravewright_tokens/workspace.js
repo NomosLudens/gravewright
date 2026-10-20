@@ -2,7 +2,7 @@ import { onForeignDrop } from "/static/gravewright_actors/tree-drag.js";
 import { tokenController } from "./controller.js";
 import { getPath } from "/static/gravewright_web/vendor/datastar-1.0.3.js";
 import { node, patchSVG } from "/static/gravewright_maps/layers.js";
-import { clone, icon, context } from "/static/gravewright_actors/workspace-gate03c.js";
+import { clone, icon, context } from "/static/gravewright_actors/workspace-gate03c.js?v=20261019-gate-fix";
 import { openSheet } from "/static/gravewright_pdf_system/sheet.js";
 export function createTokens(surface, board, map, gm, initial) {
   const campaign = document.getElementById("table-workspace").dataset.tableId,
@@ -66,6 +66,7 @@ export function createTokens(surface, board, map, gm, initial) {
       mapId: map.id,
       systemId: "gravewright-pdf-system",
       scene: map,
+      tacticalTerrain: state.tacticalTerrain,
       gm,
       cell: g.cell,
       width: Math.max(0, map.width - g.x),

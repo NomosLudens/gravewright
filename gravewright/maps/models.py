@@ -118,6 +118,53 @@ class SceneObject(models.Model):
         indexes = [models.Index(fields=["scene", "kind"], name="map_objects_kind")]
 
 
+class TacticalTerrain(models.Model):
+    """Opt-in, versioned tactical grid; legacy scenes have no terrain row."""
+    scene = models.OneToOneField(
+        Scene, related_name="tactical_terrain", primary_key=True, on_delete=models.CASCADE
+    )
+    width = models.PositiveSmallIntegerField(default=16)
+    height = models.PositiveSmallIntegerField(default=16)
+    version = models.PositiveIntegerField(default=1)
+    schema_version = models.PositiveSmallIntegerField(default=1)
+
+
+class TerrainCell(models.Model):
+    NORMAL = "NORMAL"
+    DIFICIL = "DIFICIL"
+    SEVERO = "SEVERO"
+    INTRANSPONIVEL = "INTRANSPONIVEL"
+    TERRAIN_TYPES = [
+        (NORMAL, "Normal"),
+        (DIFICIL, "Difficult"),
+        (SEVERO, "Severe"),
+        (INTRANSPONIVEL, "Impassable"),
+    ]
+    terrain = models.ForeignKey(TacticalTerrain, related_name="cells", on_delete=models.CASCADE)
+    x = models.PositiveSmallIntegerField()
+    y = models.PositiveSmallIntegerField()
+    terrain_type = models.CharField(max_length=16, choices=TERRAIN_TYPES, default=NORMAL)
+    elevation = models.SmallIntegerField(default=0)
+    traversable = models.BooleanField(default=True)
+    movement_cost = models.PositiveSmallIntegerField(default=1)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["terrain", "x", "y"], name="tactical_cell_unique")]
+
+
+class TerrainConnection(models.Model):
+    STAIR = "STAIR"
+    RAMP = "RAMP"
+    CONNECTION_TYPES = [(STAIR, "Stair"), (RAMP, "Ramp")]
+    terrain = models.ForeignKey(TacticalTerrain, related_name="connections", on_delete=models.CASCADE)
+    cell_a = models.ForeignKey(TerrainCell, related_name="connections_a", on_delete=models.CASCADE)
+    cell_b = models.ForeignKey(TerrainCell, related_name="connections_b", on_delete=models.CASCADE)
+    kind = models.CharField(max_length=8, choices=CONNECTION_TYPES)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["terrain", "cell_a", "cell_b"], name="tactical_connection_unique")]
+
+
 class MapAsset(models.Model):
     folder = models.ForeignKey(
         "AssetFolder", null=True, blank=True, on_delete=models.SET_NULL
