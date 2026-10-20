@@ -37,19 +37,30 @@ var _reconnect_in_progress := false
 var _reconnect_failure_elapsed := 0.0
 const MAX_RECONNECT_ATTEMPTS := 5
 var _status := "Conectando ao Gravewright…"
+var _status_hold_seconds := 0.0
+var _responsive_layout_signature := ""
+var _hud_collapsed := false
 var _hud_panel: PanelContainer
+var _hud_toggle_button: Button
+var _hud_scroll: ScrollContainer
 var _world_viewport: SubViewport
 var _world_camera: Camera3D
 var _world_root: Node3D
 var _world_geometry: Node3D
 var _terrain_toolbar_control: HFlowContainer
+var _brand_title: Label
+var _brand_subtitle: Label
 var _terrain_tools: Array[Button] = []
 var _terrain_initialize_button: Button
 var _mission_label: Label
 var _selection_label: Label
 var _resolution_label: Label
+var _action_row: HFlowContainer
 var _mission_admin_row: HFlowContainer
 var _damage_button: Button
+var _move_mode_button: Button
+var _attack_mode_button: Button
+var _ambush_mode_button: Button
 var _role_picker: OptionButton
 var _attribute_picker: OptionButton
 var _friendly_representative: OptionButton
@@ -123,16 +134,16 @@ func _build_world() -> void:
     header.name = "TacticsBrandHeader"
     header.add_theme_constant_override("separation", 1)
     header.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    var title := Label.new()
-    title.text = "GRAVEWRIGHT  /  TACTICS"
-    title.add_theme_font_size_override("font_size", 18)
-    title.add_theme_color_override("font_color", Color("#a783d3"))
-    header.add_child(title)
-    var subtitle := Label.new()
-    subtitle.text = "KALLISTIS  ·  CAMPO TÁTICO"
-    subtitle.add_theme_font_size_override("font_size", 10)
-    subtitle.add_theme_color_override("font_color", Color("#b9b5c0"))
-    header.add_child(subtitle)
+    _brand_title = Label.new()
+    _brand_title.text = "GRAVEWRIGHT  /  TACTICS"
+    _brand_title.add_theme_font_size_override("font_size", 18)
+    _brand_title.add_theme_color_override("font_color", Color("#a783d3"))
+    header.add_child(_brand_title)
+    _brand_subtitle = Label.new()
+    _brand_subtitle.text = "KALLISTIS  ·  CAMPO TÁTICO"
+    _brand_subtitle.add_theme_font_size_override("font_size", 10)
+    _brand_subtitle.add_theme_color_override("font_color", Color("#b9b5c0"))
+    header.add_child(_brand_subtitle)
     header_card.add_child(header)
     add_child(header_card)
 
@@ -365,6 +376,7 @@ func _connect_socket() -> void:
 
 
 func _process(_delta: float) -> void:
+    _status_hold_seconds = maxf(0.0, _status_hold_seconds - _delta)
     _update_hud()
     _socket.poll()
     var state := _socket.get_ready_state()
@@ -413,7 +425,7 @@ func _process(_delta: float) -> void:
 func _input(event: InputEvent) -> void:
     if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
         if is_instance_valid(_hud_panel):
-            _hud_panel.visible = not _hud_panel.visible
+            _set_hud_collapsed(not _hud_collapsed)
         get_viewport().set_input_as_handled()
 
 
@@ -421,6 +433,36 @@ func _send(kind: String, payload: Dictionary) -> bool:
     if _socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
         return false
     return _socket.send_text(JSON.stringify({"type": kind, "payload": payload})) == OK
+
+
+func _set_feedback(message: String, duration: float) -> void:
+    _status = message
+    _status_hold_seconds = duration
+
+
+func _friendly_server_error(code: String, message: String) -> String:
+    match code:
+        "invalid_weapon":
+            return "Ataque não executado: o personagem precisa de ficha KALLÍSTIS aprovada e arma canônica confirmada."
+        "not_your_turn", "token_not_current":
+            return "Ação recusada: aguarde a ativação deste personagem."
+        "out_of_range":
+            return "Alvo fora de alcance: ataque corpo a corpo exige célula ortogonal adjacente."
+        "combat_not_active":
+            return "O combate ainda não começou. O Mestre precisa resolver a iniciativa e iniciá-lo."
+        "invalid_target":
+            return "Alvo inválido: escolha um participante desta batalha."
+        "blocked_line_of_effect":
+            return "Ataque bloqueado: há uma parede entre os personagens."
+        "forbidden":
+            return "Ação recusada: sua conta não controla este personagem."
+        "action_spent":
+            return "Ação já utilizada nesta ativação. Aguarde o próximo turno."
+        "mission_not_ready":
+            return "A missão precisa estar pronta antes de ser iniciada."
+    if message.to_lower().contains("turn"):
+        return "Ação recusada: aguarde a ativação deste personagem."
+    return "Ação recusada pelo servidor: " + message
 
 
 func _receive(raw: String) -> void:
@@ -456,12 +498,12 @@ func _receive(raw: String) -> void:
         "resources.ack":
             if payload.get("requestId") == _pending_resource_request:
                 _pending_resource_request = ""
-                _status = "Ação validada pelo Gravewright. Estado sincronizando…"
+                _set_feedback("Ação confirmada pelo Gravewright. Atualizando o estado…", 5.0)
                 _send("resources.sync", {"module": "combat", "sceneId": _scene_id})
         "resources.error":
             if payload.get("requestId") == _pending_resource_request:
                 _pending_resource_request = ""
-                _status = "Ação recusada: " + str(payload.get("message", "erro do servidor"))
+                _set_feedback(_friendly_server_error(str(payload.get("code", "")), str(payload.get("message", "erro do servidor"))), 10.0)
                 _send("resources.sync", {"module": "combat", "sceneId": _scene_id})
         "tokens.state":
             if payload.get("mapId") != _scene_id:
@@ -470,31 +512,31 @@ func _receive(raw: String) -> void:
             for entry in payload.get("tokens", []):
                 if typeof(entry) == TYPE_DICTIONARY:
                     _tokens.append(entry)
-            if _pending_request.is_empty():
+            if _pending_request.is_empty() and _status_hold_seconds <= 0.0:
                 _status = "Estado real sincronizado. Unidades visíveis: " + str(_tokens.size())
             _sync_world()
         "tokens.ack":
             if payload.get("requestId") == _pending_request:
                 _pending_request = ""
-                _status = "Comando confirmado pelo Gravewright. Atualizando…"
+                _set_feedback("Movimento confirmado pelo Gravewright. Atualizando posição…", 5.0)
                 _send("tokens.sync", {"mapId": _scene_id})
         "maps.ack":
             if payload.get("requestId") == _pending_terrain_request:
                 _pending_terrain_request = ""
-                _status = "Terreno validado e salvo pelo servidor."
+                _set_feedback("Terreno salvo pelo servidor.", 5.0)
                 _send("maps.layers", {"mapId": _scene_id})
         "maps.error":
             if payload.get("requestId") == _pending_terrain_request:
                 _pending_terrain_request = ""
-                _status = "Edição de terreno recusada: " + str(payload.get("message", "erro do servidor"))
+                _set_feedback(_friendly_server_error(str(payload.get("code", "")), str(payload.get("message", "erro do servidor"))), 10.0)
                 _send("maps.layers", {"mapId": _scene_id})
         "tokens.error":
             if payload.get("requestId") == _pending_request:
                 _pending_request = ""
-                _status = "Movimento recusado: " + str(payload.get("message", "erro do servidor"))
+                _set_feedback(_friendly_server_error(str(payload.get("code", "")), str(payload.get("message", "erro do servidor"))), 10.0)
                 _send("tokens.sync", {"mapId": _scene_id})
         "error":
-            _status = "Servidor: " + str(payload.get("message", payload.get("code", "erro")))
+            _set_feedback("Servidor: " + str(payload.get("message", payload.get("code", "erro"))), 10.0)
         "table.joined":
             _status = "Sessão autorizada. Carregando campanha…"
 
@@ -651,9 +693,9 @@ func _gui_input(event: InputEvent) -> void:
                     _selected_id = str(token_hit.get("id", ""))
                     _status = "Atacante selecionado: " + str(token_hit.get("name", ""))
                 else:
-                    _status = "Selecione primeiro uma unidade que você controla."
+                    _set_feedback("Selecione primeiro uma unidade que você controla.", 6.0)
             elif str(token_hit.get("id", "")) == _selected_id:
-                _status = "Selecione um alvo adjacente e visível."
+                _set_feedback("Selecione um alvo adjacente e visível.", 6.0)
             else:
                 _send_attack(token_hit, _mode == "ambush")
             queue_redraw()
@@ -664,7 +706,7 @@ func _gui_input(event: InputEvent) -> void:
             _status = "Unidade selecionada: " + str(token_hit.get("name", ""))
         else:
             _selected_id = ""
-            _status = "Você não controla essa unidade."
+            _set_feedback("Você não controla essa unidade.", 6.0)
         queue_redraw()
         _sync_world()
         return
@@ -709,12 +751,12 @@ func _gui_input(event: InputEvent) -> void:
     if selected.is_empty() or not bool(selected.get("canControl", false)):
         return
     if _mode != "move":
-        _status = "A ação selecionada exige escolher um token-alvo."
+        _set_feedback("Toque em um token-alvo, não em uma célula vazia.", 8.0)
         return
     var start := Vector2i(int(selected.get("gridX", -999)), int(selected.get("gridY", -999)))
     # A deliberately conservative first command: one orthogonal cell.
     if abs(target.x - start.x) + abs(target.y - start.y) != 1:
-        _status = "Neste incremento, mova apenas uma célula ortogonal."
+        _set_feedback("Movimento não enviado: escolha uma célula ortogonal adjacente.", 8.0)
         return
     var request_id := _uuid_v4()
     var command := {
@@ -807,43 +849,70 @@ func _build_hud() -> void:
     panel.add_theme_stylebox_override("panel", panel_style)
     _hud_panel = panel
     add_child(panel)
+    var panel_column := VBoxContainer.new()
+    panel_column.add_theme_constant_override("separation", 5)
+    panel.add_child(panel_column)
+    _hud_toggle_button = _hud_button("⌄  Recolher controles", 150)
+    _hud_toggle_button.custom_minimum_size.x = 0.0
+    _hud_toggle_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _hud_toggle_button.pressed.connect(func(): _set_hud_collapsed(not _hud_collapsed))
+    panel_column.add_child(_hud_toggle_button)
+    _hud_scroll = ScrollContainer.new()
+    _hud_scroll.name = "TacticsHudScroll"
+    _hud_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _hud_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    _hud_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    _hud_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+    panel_column.add_child(_hud_scroll)
     var column := VBoxContainer.new()
-    column.add_theme_constant_override("separation", 3)
-    panel.add_child(column)
+    column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    column.add_theme_constant_override("separation", 5)
+    _hud_scroll.add_child(column)
+    _terrain_toolbar_control.reparent(column)
+    _terrain_toolbar_control.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    column.move_child(_terrain_toolbar_control, 0)
 
     _mission_label = Label.new()
     _mission_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    _mission_label.clip_text = true
+    _mission_label.clip_text = false
+    _mission_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    _mission_label.custom_minimum_size.y = 24
     _mission_label.add_theme_font_size_override("font_size", 13)
     _mission_label.add_theme_color_override("font_color", Color("#d5c5ea"))
     _mission_label.text = "Missão ainda não criada"
     column.add_child(_mission_label)
 
-    var first := HFlowContainer.new()
-    first.add_theme_constant_override("h_separation", 4)
-    first.add_theme_constant_override("v_separation", 3)
-    column.add_child(first)
-    var move_button := _hud_button("Mover", 62)
-    move_button.pressed.connect(func(): _set_mode("move"))
-    first.add_child(move_button)
-    var attack_button := _hud_button("Atacar", 62)
-    attack_button.pressed.connect(func(): _set_mode("attack"))
-    first.add_child(attack_button)
-    var ambush_button := _hud_button("Emboscada", 82)
-    ambush_button.pressed.connect(func(): _set_mode("ambush"))
-    first.add_child(ambush_button)
+    _action_row = HFlowContainer.new()
+    _action_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _action_row.add_theme_constant_override("h_separation", 4)
+    _action_row.add_theme_constant_override("v_separation", 3)
+    column.add_child(_action_row)
+    _move_mode_button = _hud_button("Mover", 62)
+    _move_mode_button.toggle_mode = true
+    _move_mode_button.pressed.connect(func(): _set_mode("move"))
+    _action_row.add_child(_move_mode_button)
+    _attack_mode_button = _hud_button("Atacar", 62)
+    _attack_mode_button.toggle_mode = true
+    _attack_mode_button.pressed.connect(func(): _set_mode("attack"))
+    _action_row.add_child(_attack_mode_button)
+    _ambush_mode_button = _hud_button("Emboscada", 82)
+    _ambush_mode_button.toggle_mode = true
+    _ambush_mode_button.pressed.connect(func(): _set_mode("ambush"))
+    _action_row.add_child(_ambush_mode_button)
     _attribute_picker = OptionButton.new()
     _attribute_picker.add_item("Corpo + Combate")
     _attribute_picker.add_item("Agilidade + Combate")
     _attribute_picker.custom_minimum_size = Vector2(132, 27)
     _style_hud_control(_attribute_picker)
     _attribute_picker.item_selected.connect(func(index: int): _attack_attribute = "corpo" if index == 0 else "agilidade")
-    first.add_child(_attribute_picker)
+    _action_row.add_child(_attribute_picker)
     var next_button := _hud_button("Próxima ativação", 112)
+    next_button.tooltip_text = "Encerra a ativação atual e passa ao próximo participante."
     next_button.pressed.connect(_next_activation)
-    first.add_child(next_button)
+    _action_row.add_child(next_button)
 
     _mission_admin_row = HFlowContainer.new()
+    _mission_admin_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     _mission_admin_row.add_theme_constant_override("h_separation", 4)
     _mission_admin_row.add_theme_constant_override("v_separation", 3)
     column.add_child(_mission_admin_row)
@@ -875,6 +944,7 @@ func _build_hud() -> void:
     _mission_admin_row.add_child(abort_button)
 
     _combat_admin_row = HFlowContainer.new()
+    _combat_admin_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     _combat_admin_row.add_theme_constant_override("h_separation", 4)
     _combat_admin_row.add_theme_constant_override("v_separation", 3)
     column.add_child(_combat_admin_row)
@@ -889,42 +959,51 @@ func _build_hud() -> void:
     _style_hud_control(_hostile_representative)
     _combat_admin_row.add_child(_hostile_representative)
     var roll_sides := _hud_button("Rolar iniciativa", 104)
+    roll_sides.tooltip_text = "Role iniciativa usando um representante vivo de cada lado."
     roll_sides.pressed.connect(_roll_side_initiative)
     _combat_admin_row.add_child(roll_sides)
     var friendly_first := _hud_button("Aliados primeiro", 104)
+    friendly_first.tooltip_text = "Disponível depois que a iniciativa for rolada."
     friendly_first.pressed.connect(func(): _combat_command("choose-first-side", {"side": "friendly"}))
     _combat_admin_row.add_child(friendly_first)
     var hostile_first := _hud_button("Silmari primeiro", 104)
+    hostile_first.tooltip_text = "Disponível depois que a iniciativa for rolada."
     hostile_first.pressed.connect(func(): _combat_command("choose-first-side", {"side": "hostile"}))
     _combat_admin_row.add_child(hostile_first)
     var start_combat := _hud_button("Iniciar combate", 100)
+    start_combat.tooltip_text = "Disponível após rolar iniciativa e escolher o primeiro lado."
     start_combat.pressed.connect(func(): _combat_command("start"))
     _combat_admin_row.add_child(start_combat)
     _combat_admin_label = Label.new()
-    _combat_admin_label.clip_text = true
+    _combat_admin_label.clip_text = false
+    _combat_admin_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     _combat_admin_label.custom_minimum_size.x = 110
     _combat_admin_label.add_theme_font_size_override("font_size", 11)
     _combat_admin_label.add_theme_color_override("font_color", Color("#bca4d8"))
     _combat_admin_row.add_child(_combat_admin_label)
 
-    var third := HBoxContainer.new()
+    var third := VBoxContainer.new()
     third.add_theme_constant_override("separation", 8)
     column.add_child(third)
+    var damage_row := HBoxContainer.new()
+    damage_row.add_theme_constant_override("separation", 8)
+    third.add_child(damage_row)
     _damage_button = _hud_button("Aplicar dano", 102)
     _damage_button.pressed.connect(_apply_damage)
-    third.add_child(_damage_button)
+    damage_row.add_child(_damage_button)
     _selection_label = Label.new()
     _selection_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    _selection_label.clip_text = true
+    _selection_label.clip_text = false
+    _selection_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    _selection_label.custom_minimum_size.y = 30
     _selection_label.add_theme_font_size_override("font_size", 11)
     _selection_label.add_theme_color_override("font_color", Color("#c6c2cf"))
-    _selection_label.size_flags_stretch_ratio = 2.0
     third.add_child(_selection_label)
     _resolution_label = Label.new()
     _resolution_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    _resolution_label.size_flags_stretch_ratio = 1.0
-    _resolution_label.custom_minimum_size.x = 110
-    _resolution_label.clip_text = true
+    _resolution_label.clip_text = false
+    _resolution_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    _resolution_label.custom_minimum_size.y = 20
     _resolution_label.add_theme_font_size_override("font_size", 11)
     _resolution_label.add_theme_color_override("font_color", Color("#c7a9e9"))
     third.add_child(_resolution_label)
@@ -963,9 +1042,19 @@ func _hud_button(label: String, width: float) -> Button:
     return button
 
 
+func _set_hud_collapsed(collapsed: bool) -> void:
+    _hud_collapsed = collapsed
+    if is_instance_valid(_hud_scroll):
+        _hud_scroll.visible = not collapsed
+    if is_instance_valid(_hud_toggle_button):
+        _hud_toggle_button.text = "⌃  Mostrar controles" if collapsed else "⌄  Recolher controles"
+    _responsive_layout_signature = ""
+    _update_hud()
+
+
 func _set_mode(mode: String) -> void:
     _mode = mode
-    _status = "Modo: " + ("ataque corpo a corpo" if mode == "attack" else "Emboscada (Nível I)" if mode == "ambush" else "movimento") + ". Selecione unidade e alvo."
+    _set_feedback("Modo: " + ("ataque corpo a corpo" if mode == "attack" else "Emboscada (Nível I)" if mode == "ambush" else "movimento") + ". Selecione unidade e alvo.", 5.0)
     if mode == "move":
         _selected_id = ""
     _sync_world()
@@ -1128,7 +1217,11 @@ func _update_hud() -> void:
     if is_instance_valid(_damage_button):
         _damage_button.visible = gm_role and combat_active
     if is_instance_valid(_hud_panel):
-        _hud_panel.offset_top = -156.0 if gm_controls else -116.0 if gm_role else -88.0
+        _apply_responsive_hud(gm_controls, gm_role)
+    if is_instance_valid(_move_mode_button):
+        _move_mode_button.button_pressed = _mode == "move"
+        _attack_mode_button.button_pressed = _mode == "attack"
+        _ambush_mode_button.button_pressed = _mode == "ambush"
     _refresh_representative_picker(_friendly_representative, "friendly")
     _refresh_representative_picker(_hostile_representative, "hostile")
     var initiative: Variant = _combat.get("config", {}).get("side_initiative", {})
@@ -1149,8 +1242,12 @@ func _update_hud() -> void:
     else:
         _mission_label.text = "Missão ainda não criada · Rodada %s · %s" % [str(_combat.get("round", 0)), str(_combat.get("current_name", "sem ativação"))]
     var selected := _selected_token()
-    _selection_label.text = "Seleção: " + str(selected.get("name", "nenhuma")) + " · " + _status
-    _selection_label.tooltip_text = _selection_label.text
+    var feedback_text := "Seleção: " + str(selected.get("name", "nenhuma")) + " · " + _status
+    if _selection_label.text != feedback_text:
+        _selection_label.text = feedback_text
+        _selection_label.tooltip_text = feedback_text
+        var has_error := _status.contains("recusada") or _status.contains("não executado") or _status.contains("fora de alcance") or _status.contains("não começou") or _status.contains("já utilizada") or _status.contains("bloqueado") or _status.contains("não enviado") or _status.contains("toque em um token") or _status.contains("não controla") or _status.contains("não foi possível") or _status.contains("servidor:")
+        _selection_label.add_theme_color_override("font_color", Color("#efb1b8") if has_error else Color("#d0c8dc"))
     var resolutions: Variant = _combat.get("config", {}).get("resolutions", [])
     if typeof(resolutions) == TYPE_ARRAY and not resolutions.is_empty():
         var latest: Variant = resolutions.back()
@@ -1165,6 +1262,49 @@ func _update_hud() -> void:
     else:
         _resolution_label.text = "Sem resultado recente"
     _resolution_label.tooltip_text = _resolution_label.text
+
+
+func _apply_responsive_hud(gm_controls: bool, gm_role: bool) -> void:
+    var scale := maxf(0.1, get_viewport().get_stretch_transform().get_scale().x)
+    var screen_size := Vector2(DisplayServer.window_get_size())
+    var compact := screen_size.x < 760.0 or screen_size.y < 560.0
+    var signature := "%s:%s:%s:%s:%s:%s" % [str(roundi(size.x)), str(roundi(size.y)), str(roundi(scale * 100.0)), str(gm_controls), str(gm_role), str(_hud_collapsed)]
+    if signature == _responsive_layout_signature:
+        return
+    _responsive_layout_signature = signature
+    if _hud_collapsed:
+        _hud_panel.offset_top = -60.0 / scale
+    elif compact:
+        _hud_panel.offset_top = -screen_size.y * 0.52 / scale
+    else:
+        _hud_panel.offset_top = -204.0 if gm_controls else -158.0 if gm_role else -132.0
+    var touch_height := 44.0 / scale if compact else 30.0
+    var font_size := roundi((13.0 if compact else 12.0) / scale)
+    _mission_label.custom_minimum_size.y = (40.0 if compact else 24.0) / scale
+    _mission_label.add_theme_font_size_override("font_size", roundi((14.0 if compact else 13.0) / scale))
+    for row in [_terrain_toolbar_control, _action_row, _mission_admin_row, _combat_admin_row]:
+        if not is_instance_valid(row):
+            continue
+        for child in row.get_children():
+            if child is Control:
+                var minimum: Vector2 = child.custom_minimum_size
+                minimum.y = touch_height
+                if not child.has_meta("responsive_base_width"):
+                    child.set_meta("responsive_base_width", child.custom_minimum_size.x)
+                var base_width := float(child.get_meta("responsive_base_width"))
+                if base_width > 0.0:
+                    minimum.x = base_width / scale if compact else base_width
+                child.custom_minimum_size = minimum
+                if child is Button or child is OptionButton:
+                    child.add_theme_font_size_override("font_size", font_size)
+    _selection_label.custom_minimum_size.y = (48.0 if compact else 30.0) / scale
+    _resolution_label.custom_minimum_size.y = (32.0 if compact else 20.0) / scale
+    _selection_label.add_theme_font_size_override("font_size", roundi((13.0 if compact else 11.0) / scale))
+    _resolution_label.add_theme_font_size_override("font_size", roundi((12.0 if compact else 11.0) / scale))
+    _hud_toggle_button.custom_minimum_size.y = touch_height
+    _hud_toggle_button.add_theme_font_size_override("font_size", font_size)
+    _brand_title.add_theme_font_size_override("font_size", roundi(18.0 / scale) if compact else 18)
+    _brand_subtitle.add_theme_font_size_override("font_size", roundi(10.0 / scale) if compact else 10)
 
 
 func _draw() -> void:
