@@ -2,17 +2,14 @@ extends Control
 ## Read Gravewright's authorized campaign snapshots and request movements.
 ## Never invent actors, persist state locally, or move a token before server confirmation.
 
-const HALF_WIDTH := 24.0
-const HALF_HEIGHT := 12.0
-const ELEVATION_PIXELS := 8.0
+const LEVEL_HEIGHT := 0.45
+const TILE_THICKNESS := 0.14
 const MAX_CELLS := 32
 
-const GROUND := Color("#25252c")
-const GROUND_ALT := Color("#2b2c34")
-const BORDER := Color("#53515a")
-const EMBER := Color("#ff893e")
-const FRIENDLY := Color("#7ed7d0")
-const HOSTILE := Color("#e77b79")
+const GROUND := Color("#24232b")
+const GROUND_ALT := Color("#2b2933")
+const FRIENDLY := Color("#c8c5d0")
+const HOSTILE := Color("#9b78bd")
 
 var _socket := WebSocketPeer.new()
 var _campaign_id := ""
@@ -41,19 +38,29 @@ var _reconnect_failure_elapsed := 0.0
 const MAX_RECONNECT_ATTEMPTS := 5
 var _status := "Conectando ao Gravewright…"
 var _hud_panel: PanelContainer
+var _world_viewport: SubViewport
+var _world_camera: Camera3D
+var _world_root: Node3D
+var _world_geometry: Node3D
+var _terrain_toolbar_control: HFlowContainer
+var _terrain_tools: Array[Button] = []
+var _terrain_initialize_button: Button
 var _mission_label: Label
 var _selection_label: Label
 var _resolution_label: Label
+var _mission_admin_row: HFlowContainer
+var _damage_button: Button
 var _role_picker: OptionButton
 var _attribute_picker: OptionButton
 var _friendly_representative: OptionButton
 var _hostile_representative: OptionButton
-var _combat_admin_row: HBoxContainer
+var _combat_admin_row: HFlowContainer
 var _combat_admin_label: Label
 
 
 func _ready() -> void:
-    resized.connect(queue_redraw)
+    resized.connect(_resize_world)
+    _build_world()
     _build_hud()
     if not OS.has_feature("web"):
         _status = "Este cliente requer exportação web na origem do Gravewright."
@@ -88,6 +95,258 @@ func _ready() -> void:
     _socket_url = protocol + str(origin.get("host", "")) + "/ws/tables/" + _campaign_id + "/"
     _connect_socket()
     queue_redraw()
+
+
+func _build_world() -> void:
+    var container := SubViewportContainer.new()
+    container.name = "TacticalWorldView"
+    container.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    container.stretch = true
+    add_child(container)
+    move_child(container, 0)
+
+    var header_card := PanelContainer.new()
+    header_card.name = "TacticsBrandHeader"
+    header_card.position = Vector2(14.0, 10.0)
+    var header_style := StyleBoxFlat.new()
+    header_style.bg_color = Color("#17161de8")
+    header_style.border_color = Color("#4a4057")
+    header_style.set_border_width_all(1)
+    header_style.set_corner_radius_all(7)
+    header_style.content_margin_left = 8
+    header_style.content_margin_right = 8
+    header_style.content_margin_top = 5
+    header_style.content_margin_bottom = 5
+    header_card.add_theme_stylebox_override("panel", header_style)
+    var header := VBoxContainer.new()
+    header.name = "TacticsBrandHeader"
+    header.add_theme_constant_override("separation", 1)
+    header.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    var title := Label.new()
+    title.text = "GRAVEWRIGHT  /  TACTICS"
+    title.add_theme_font_size_override("font_size", 18)
+    title.add_theme_color_override("font_color", Color("#a783d3"))
+    header.add_child(title)
+    var subtitle := Label.new()
+    subtitle.text = "KALLISTIS  ·  CAMPO TÁTICO"
+    subtitle.add_theme_font_size_override("font_size", 10)
+    subtitle.add_theme_color_override("font_color", Color("#b9b5c0"))
+    header.add_child(subtitle)
+    header_card.add_child(header)
+    add_child(header_card)
+
+    _world_viewport = SubViewport.new()
+    _world_viewport.size = Vector2i(maxi(1, int(size.x)), maxi(1, int(size.y)))
+    _world_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+    _world_viewport.transparent_bg = true
+    container.add_child(_world_viewport)
+
+    _world_root = Node3D.new()
+    _world_viewport.add_child(_world_root)
+    var environment := Environment.new()
+    environment.background_mode = Environment.BG_COLOR
+    environment.background_color = Color(0.0, 0.0, 0.0, 0.0)
+    environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+    environment.ambient_light_color = Color("#9a8aa8")
+    environment.ambient_light_energy = 0.55
+    var world_environment := WorldEnvironment.new()
+    world_environment.environment = environment
+    _world_root.add_child(world_environment)
+
+    var sun := DirectionalLight3D.new()
+    sun.rotation_degrees = Vector3(-52.0, -28.0, 0.0)
+    sun.light_color = Color("#ddd8e6")
+    sun.light_energy = 0.9
+    sun.shadow_enabled = true
+    _world_root.add_child(sun)
+
+    _world_camera = Camera3D.new()
+    _world_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+    _world_camera.current = true
+    _world_root.add_child(_world_camera)
+    _world_geometry = Node3D.new()
+    _world_geometry.name = "ServerBackedMapGeometry"
+    _world_root.add_child(_world_geometry)
+    _resize_world()
+
+
+func _resize_world() -> void:
+    if not is_instance_valid(_world_viewport):
+        return
+    _world_viewport.size = Vector2i(maxi(1, int(size.x)), maxi(1, int(size.y)))
+    _position_world_camera()
+
+
+func _position_world_camera() -> void:
+    if not is_instance_valid(_world_camera):
+        return
+    var dims := _grid_dimensions()
+    var max_elevation := 0.0
+    for cell in _terrain().get("cells", []):
+        if typeof(cell) == TYPE_DICTIONARY:
+            max_elevation = maxf(max_elevation, absf(float(cell.get("elevation", 0))))
+    var target := Vector3(0.0, max_elevation * LEVEL_HEIGHT * 0.5, 0.0)
+    _world_camera.size = maxf(9.0, float(maxi(dims.x, dims.y)) * 1.12)
+    _world_camera.position = target + Vector3(_world_camera.size * 0.85, _world_camera.size * 1.25, _world_camera.size * 0.85)
+    _world_camera.look_at(target, Vector3.UP)
+
+
+func _world_material(color: Color, roughness: float = 0.92) -> StandardMaterial3D:
+    var material := StandardMaterial3D.new()
+    material.albedo_color = color
+    material.roughness = roughness
+    return material
+
+
+func _world_box(parent: Node3D, center: Vector3, dimensions: Vector3, color: Color, casts_shadow: bool = true) -> MeshInstance3D:
+    var box := BoxMesh.new()
+    box.size = dimensions
+    var instance := MeshInstance3D.new()
+    instance.mesh = box
+    instance.material_override = _world_material(color)
+    instance.position = center
+    if not casts_shadow:
+        instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    parent.add_child(instance)
+    return instance
+
+
+func _sync_world() -> void:
+    if not is_instance_valid(_world_geometry):
+        return
+    for child in _world_geometry.get_children():
+        child.queue_free()
+    _position_world_camera()
+    if _map.is_empty():
+        return
+    var dims := _grid_dimensions()
+    _world_box(_world_geometry, Vector3(0, -1.2, 0), Vector3(dims.x + 4.0, 0.2, dims.y + 4.0), Color("#18161e"), false)
+    var selected := _selected_token()
+    var reach := _movement_reach()
+    for y in range(dims.y):
+        for x in range(dims.x):
+            var cell := _terrain_cell(x, y)
+            var elevation := int(cell.get("elevation", 0)) if not cell.is_empty() else 0
+            var top := float(elevation) * LEVEL_HEIGHT
+            var bottom := minf(-TILE_THICKNESS, top - TILE_THICKNESS)
+            var height := top - bottom
+            var ground := _terrain_color(str(cell.get("terrain_type", "")), (x + y) % 2 == 0) if not cell.is_empty() else GROUND if (x + y) % 2 == 0 else GROUND_ALT
+            if not selected.is_empty() and int(selected.get("gridX", -999)) == x and int(selected.get("gridY", -999)) == y:
+                ground = Color("#58416e")
+            var center := Vector3(float(x) - float(dims.x) * 0.5 + 0.5, (top + bottom) * 0.5, float(y) - float(dims.y) * 0.5 + 0.5)
+            _world_box(_world_geometry, center, Vector3(0.96, height, 0.96), ground)
+            if reach > 0 and not selected.is_empty():
+                var distance := absi(x - int(selected.get("gridX", -999))) + absi(y - int(selected.get("gridY", -999)))
+                var preview_reachable := distance == 1
+                if bool(_terrain().get("initialized", false)):
+                    preview_reachable = distance == 1 and _preview_step_allowed(selected, cell, reach)
+                if preview_reachable:
+                    _world_box(_world_geometry, Vector3(center.x, top + 0.015, center.z), Vector3(0.76, 0.025, 0.76), Color("#7a4bc2aa"), false)
+            if _terrain_selected == Vector2i(x, y):
+                _world_box(_world_geometry, Vector3(center.x, top + 0.035, center.z), Vector3(0.84, 0.035, 0.84), Color("#b69ad8cc"), false)
+    _sync_world_walls(dims)
+    _sync_world_connections(dims)
+    for token in _tokens:
+        var x := int(token.get("gridX", -999))
+        var y := int(token.get("gridY", -999))
+        if x < 0 or y < 0 or x >= dims.x or y >= dims.y:
+            continue
+        var cell := _terrain_cell(x, y)
+        var top := float(token.get("elevation", cell.get("elevation", 0))) * LEVEL_HEIGHT
+        var center := Vector3(float(x) - float(dims.x) * 0.5 + 0.5, top + 0.38, float(y) - float(dims.y) * 0.5 + 0.5)
+        var token_root := Node3D.new()
+        token_root.position = center
+        _world_geometry.add_child(token_root)
+        var base := CylinderMesh.new()
+        base.top_radius = 0.36
+        base.bottom_radius = 0.4
+        base.height = 0.08
+        var base_instance := MeshInstance3D.new()
+        base_instance.mesh = base
+        base_instance.material_override = _world_material(Color("#7a4bc2") if str(token.get("id", "")) == _selected_id else Color("#716b7b"))
+        token_root.add_child(base_instance)
+        var body := CapsuleMesh.new()
+        body.radius = 0.22
+        body.height = 0.58
+        var body_instance := MeshInstance3D.new()
+        body_instance.mesh = body
+        body_instance.position.y = 0.38
+        var body_color := HOSTILE if token.get("disposition") == "hostile" else FRIENDLY
+        body_instance.material_override = _world_material(body_color, 0.78)
+        token_root.add_child(body_instance)
+        var head := SphereMesh.new()
+        head.radius = 0.17
+        head.height = 0.34
+        var head_instance := MeshInstance3D.new()
+        head_instance.mesh = head
+        head_instance.position.y = 0.78
+        head_instance.material_override = _world_material(body_color.lightened(0.12), 0.72)
+        token_root.add_child(head_instance)
+        if str(token.get("id", "")) == _selected_id:
+            var name := Label3D.new()
+            name.text = str(token.get("name", ""))
+            name.font_size = 18
+            name.pixel_size = 0.006
+            name.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+            name.modulate = Color("#f0edf4")
+            name.outline_size = 5
+            name.position.y = 1.05
+            token_root.add_child(name)
+
+
+func _sync_world_walls(dims: Vector2i) -> void:
+    var layers: Variant = _map.get("layers", {})
+    if typeof(layers) != TYPE_DICTIONARY:
+        return
+    var cell_size := maxf(1.0, float(_map.get("gridSize", 70)) * float(_map.get("imageScale", 1)))
+    var offset_x := float(_map.get("gridOffsetX", 0)) * float(_map.get("imageScale", 1))
+    var offset_y := float(_map.get("gridOffsetY", 0)) * float(_map.get("imageScale", 1))
+    for wall in layers.get("walls", []):
+        if typeof(wall) != TYPE_DICTIONARY or wall.get("movement_behavior", "block") == "pass":
+            continue
+        if wall.get("kind") == "door" and wall.get("door_state") == "open":
+            continue
+        var first := Vector3((float(wall.get("x1", 0)) - offset_x) / cell_size - float(dims.x) * 0.5, 0.4, (float(wall.get("y1", 0)) - offset_y) / cell_size - float(dims.y) * 0.5)
+        var second := Vector3((float(wall.get("x2", 0)) - offset_x) / cell_size - float(dims.x) * 0.5, 0.4, (float(wall.get("y2", 0)) - offset_y) / cell_size - float(dims.y) * 0.5)
+        var delta := second - first
+        if delta.length() < 0.001:
+            continue
+        var wall_mesh := BoxMesh.new()
+        wall_mesh.size = Vector3(0.12, 0.8, delta.length()) if absf(delta.x) > absf(delta.z) else Vector3(delta.length(), 0.8, 0.12)
+        var wall_instance := MeshInstance3D.new()
+        wall_instance.mesh = wall_mesh
+        wall_instance.material_override = _world_material(Color("#77717f"))
+        wall_instance.position = (first + second) * 0.5
+        if absf(delta.x) > absf(delta.z):
+            wall_instance.rotation.y = atan2(delta.x, delta.z)
+        else:
+            wall_instance.rotation.y = atan2(delta.x, delta.z)
+        _world_geometry.add_child(wall_instance)
+
+
+func _sync_world_connections(dims: Vector2i) -> void:
+    for connection in _terrain().get("connections", []):
+        if typeof(connection) != TYPE_DICTIONARY:
+            continue
+        var from: Variant = connection.get("from", [])
+        var to: Variant = connection.get("to", [])
+        if typeof(from) != TYPE_ARRAY or typeof(to) != TYPE_ARRAY or from.size() != 2 or to.size() != 2:
+            continue
+        var from_cell := Vector2i(int(from[0]), int(from[1]))
+        var to_cell := Vector2i(int(to[0]), int(to[1]))
+        if from_cell.x < 0 or from_cell.y < 0 or to_cell.x < 0 or to_cell.y < 0 or from_cell.x >= dims.x or to_cell.x >= dims.x or from_cell.y >= dims.y or to_cell.y >= dims.y:
+            continue
+        var from_data := _terrain_cell(from_cell.x, from_cell.y)
+        var to_data := _terrain_cell(to_cell.x, to_cell.y)
+        var start := Vector3(float(from_cell.x) - float(dims.x) * 0.5 + 0.5, float(from_data.get("elevation", 0)) * LEVEL_HEIGHT, float(from_cell.y) - float(dims.y) * 0.5 + 0.5)
+        var finish := Vector3(float(to_cell.x) - float(dims.x) * 0.5 + 0.5, float(to_data.get("elevation", 0)) * LEVEL_HEIGHT, float(to_cell.y) - float(dims.y) * 0.5 + 0.5)
+        var along_x := from_cell.x != to_cell.x
+        for step in range(3):
+            var point := start.lerp(finish, float(step + 1) / 4.0)
+            point.y += 0.08
+            var step_size := Vector3(0.30, 0.12, 0.70) if along_x else Vector3(0.70, 0.12, 0.30)
+            _world_box(_world_geometry, point, step_size, Color("#82758f"))
 
 
 func _connect_socket() -> void:
@@ -186,12 +445,14 @@ func _receive(raw: String) -> void:
                     for cell in grid.get("cells", []):
                         if typeof(cell) == TYPE_DICTIONARY:
                             _terrain_by_cell[Vector2i(int(cell.get("x", -1)), int(cell.get("y", -1)))] = cell
+                _sync_world()
                 queue_redraw()
         "resources.state":
             if payload.get("module") == "combat" and payload.get("sceneId") == _scene_id:
                 var combat_state: Variant = payload.get("state", {})
                 if typeof(combat_state) == TYPE_DICTIONARY:
                     _combat = combat_state
+                    _sync_world()
         "resources.ack":
             if payload.get("requestId") == _pending_resource_request:
                 _pending_resource_request = ""
@@ -211,6 +472,7 @@ func _receive(raw: String) -> void:
                     _tokens.append(entry)
             if _pending_request.is_empty():
                 _status = "Estado real sincronizado. Unidades visíveis: " + str(_tokens.size())
+            _sync_world()
         "tokens.ack":
             if payload.get("requestId") == _pending_request:
                 _pending_request = ""
@@ -248,14 +510,17 @@ func _load_map(data: Dictionary) -> void:
     _scene_id = next_scene
     _map.clear()
     _combat.clear()
+    _terrain_by_cell.clear()
     for entry in data.get("maps", []):
         if typeof(entry) == TYPE_DICTIONARY and entry.get("id") == _scene_id:
             _map = entry
             break
     if _scene_id.is_empty() or _map.is_empty():
         _status = "Nenhum mapa ativo está disponível para esta sessão."
+        _sync_world()
         return
     _status = "Mapa: " + str(_map.get("name", "sem nome")) + ". Lendo unidades…"
+    _sync_world()
     _send("tokens.sync", {"mapId": _scene_id})
     _send("maps.layers", {"mapId": _scene_id})
     _send("resources.sync", {"module": "combat", "sceneId": _scene_id})
@@ -308,51 +573,39 @@ func _send_terrain(action: String, data: Dictionary) -> void:
         _status = "Não foi possível enviar a edição de terreno."
 
 
-func _origin() -> Vector2:
-    return Vector2(size.x * 0.5, 86.0)
-
-
-func _project(cell: Vector2) -> Vector2:
-    return _origin() + Vector2(
-        (cell.x - cell.y) * HALF_WIDTH,
-        (cell.x + cell.y) * HALF_HEIGHT
-    )
-
-
 func _point_to_cell(point: Vector2) -> Vector2i:
-    if bool(_terrain().get("initialized", false)):
-        var dims := _grid_dimensions()
-        var selected := Vector2i(-1, -1)
-        # Match the same painter order used by _draw(): later polygons are
-        # visually on top and must win where elevated floors overlap.
-        for y in range(dims.y):
-            for x in range(dims.x):
-                var cell := _terrain_cell(x, y)
-                var lift := Vector2(0, int(cell.get("elevation", 0)) * ELEVATION_PIXELS)
-                var polygon := PackedVector2Array([
-                    _project(Vector2(x, y)) - lift,
-                    _project(Vector2(x + 1, y)) - lift,
-                    _project(Vector2(x + 1, y + 1)) - lift,
-                    _project(Vector2(x, y + 1)) - lift,
-                ])
-                if Geometry2D.is_point_in_polygon(point, polygon):
-                    selected = Vector2i(x, y)
-        return selected
-    var p := point - _origin()
-    var u := p.x / HALF_WIDTH
-    var v := p.y / HALF_HEIGHT
-    return Vector2i(floori((u + v) / 2.0), floori((v - u) / 2.0))
+    if not is_instance_valid(_world_camera):
+        return Vector2i(-1, -1)
+    var ray_origin := _world_camera.project_ray_origin(point)
+    var ray_direction := _world_camera.project_ray_normal(point)
+    if absf(ray_direction.y) < 0.0001:
+        return Vector2i(-1, -1)
+    var dims := _grid_dimensions()
+    var selected := Vector2i(-1, -1)
+    var nearest := INF
+    for y in range(dims.y):
+        for x in range(dims.x):
+            var elevation := float(_terrain_cell(x, y).get("elevation", 0))
+            var plane_y := elevation * LEVEL_HEIGHT
+            var distance := (plane_y - ray_origin.y) / ray_direction.y
+            if distance < 0.0 or distance >= nearest:
+                continue
+            var hit := ray_origin + ray_direction * distance
+            var local_x := hit.x + float(dims.x) * 0.5
+            var local_z := hit.z + float(dims.y) * 0.5
+            if local_x >= float(x) and local_x <= float(x + 1) and local_z >= float(y) and local_z <= float(y + 1):
+                selected = Vector2i(x, y)
+                nearest = distance
+    return selected
 
 
 func _token_at_point(point: Vector2) -> Dictionary:
-    # Tokens are drawn after the terrain, so test them first in reverse draw order.
+    var cell := _point_to_cell(point)
+    if cell.x < 0 or cell.y < 0:
+        return {}
     for index in range(_tokens.size() - 1, -1, -1):
         var token := _tokens[index]
-        var x := float(token.get("gridX", -999))
-        var y := float(token.get("gridY", -999))
-        var center := _project(Vector2(x + 0.5, y + 0.5))
-        center.y -= float(token.get("elevation", 0)) * ELEVATION_PIXELS
-        if Rect2(center + Vector2(-9, -20), Vector2(18, 19)).has_point(point):
+        if int(token.get("gridX", -999)) == cell.x and int(token.get("gridY", -999)) == cell.y:
             return token
     return {}
 
@@ -385,29 +638,10 @@ func _gui_input(event: InputEvent) -> void:
         return
     if event.button_index == MOUSE_BUTTON_RIGHT:
         _selected_id = ""
+        _sync_world()
         queue_redraw()
         return
     if event.button_index != MOUSE_BUTTON_LEFT or _map.is_empty() or not _pending_request.is_empty():
-        return
-    if _terrain_editable() and event.position.y < 90.0:
-        if not bool(_terrain().get("initialized", false)):
-            _send_terrain("initialize", {"width": 16, "height": 16})
-        elif event.position.x < 102.0:
-            _terrain_type = "NORMAL"
-        elif event.position.x < 184.0:
-            _terrain_type = "DIFICIL"
-        elif event.position.x < 266.0:
-            _terrain_type = "SEVERO"
-        elif event.position.x < 348.0:
-            _terrain_type = "INTRANSPONIVEL"
-        elif event.position.x < 402.0:
-            _terrain_height -= 1
-        elif event.position.x < 456.0:
-            _terrain_height += 1
-        else:
-            _terrain_connect_mode = not _terrain_connect_mode
-            _terrain_selected = Vector2i(-1, -1)
-        queue_redraw()
         return
     var token_hit := _token_at_point(event.position)
     if not token_hit.is_empty():
@@ -423,6 +657,7 @@ func _gui_input(event: InputEvent) -> void:
             else:
                 _send_attack(token_hit, _mode == "ambush")
             queue_redraw()
+            _sync_world()
             return
         if bool(token_hit.get("canControl", false)):
             _selected_id = str(token_hit.get("id", ""))
@@ -431,6 +666,7 @@ func _gui_input(event: InputEvent) -> void:
             _selected_id = ""
             _status = "Você não controla essa unidade."
         queue_redraw()
+        _sync_world()
         return
     var target := _point_to_cell(event.position)
     var dims := _grid_dimensions()
@@ -441,6 +677,7 @@ func _gui_input(event: InputEvent) -> void:
             if _terrain_selected.x < 0:
                 _terrain_selected = target
                 _status = "Selecione a célula ortogonal de destino da escadaria."
+                _sync_world()
             else:
                 var from_cell := _terrain_cell(_terrain_selected.x, _terrain_selected.y)
                 var to_cell := _terrain_cell(target.x, target.y)
@@ -457,6 +694,7 @@ func _gui_input(event: InputEvent) -> void:
         if cell.is_empty():
             return
         _terrain_selected = target
+        _sync_world()
         var next_elevation := clampi(int(cell.get("elevation", 0)) + _terrain_height, -20, 20)
         _send_terrain("cell", {
             "expectedVersion": int(_terrain().get("version", 0)),
@@ -512,56 +750,106 @@ func _uuid_v4() -> String:
 
 
 func _build_hud() -> void:
+    _terrain_toolbar_control = HFlowContainer.new()
+    _terrain_toolbar_control.name = "TerrainTools"
+    _terrain_toolbar_control.position = Vector2(20.0, 66.0)
+    _terrain_toolbar_control.add_theme_constant_override("h_separation", 4)
+    _terrain_toolbar_control.add_theme_constant_override("v_separation", 3)
+    add_child(_terrain_toolbar_control)
+    _terrain_initialize_button = _hud_button("Preparar terreno", 132)
+    _terrain_initialize_button.pressed.connect(func(): _send_terrain("initialize", {"width": 16, "height": 16}))
+    _terrain_toolbar_control.add_child(_terrain_initialize_button)
+    var terrain_labels := ["Normal", "Difícil", "Severo", "Bloqueio"]
+    var terrain_types := ["NORMAL", "DIFICIL", "SEVERO", "INTRANSPONIVEL"]
+    for index in range(terrain_labels.size()):
+        var terrain_type: String = terrain_types[index]
+        var terrain_button := _hud_button(terrain_labels[index], 72)
+        terrain_button.pressed.connect(func(): _terrain_type = terrain_type)
+        _terrain_tools.append(terrain_button)
+        _terrain_toolbar_control.add_child(terrain_button)
+    var lower_button := _hud_button("Altura −", 72)
+    lower_button.pressed.connect(func(): _terrain_height = maxi(-20, _terrain_height - 1))
+    _terrain_tools.append(lower_button)
+    _terrain_toolbar_control.add_child(lower_button)
+    var higher_button := _hud_button("Altura +", 72)
+    higher_button.pressed.connect(func(): _terrain_height = mini(20, _terrain_height + 1))
+    _terrain_tools.append(higher_button)
+    _terrain_toolbar_control.add_child(higher_button)
+    var stairs_button := _hud_button("Escada", 66)
+    stairs_button.pressed.connect(func():
+        _terrain_connect_mode = not _terrain_connect_mode
+        _terrain_selected = Vector2i(-1, -1)
+    )
+    _terrain_tools.append(stairs_button)
+    _terrain_toolbar_control.add_child(stairs_button)
+
     var panel := PanelContainer.new()
     panel.name = "TacticsHud"
-    panel.tooltip_text = "Pressione H para ocultar ou mostrar os controles e alcançar as células sob o painel."
+    panel.tooltip_text = "Controles táticos. Pressione H para recolher o painel."
     panel.anchor_left = 0.0
     panel.anchor_right = 1.0
     panel.anchor_top = 1.0
     panel.anchor_bottom = 1.0
-    panel.offset_left = 8.0
-    panel.offset_right = -8.0
-    panel.offset_top = -174.0
-    panel.offset_bottom = -4.0
+    panel.offset_left = 14.0
+    panel.offset_right = -14.0
+    panel.offset_top = -156.0
+    panel.offset_bottom = -10.0
     panel.mouse_filter = Control.MOUSE_FILTER_PASS
+    var panel_style := StyleBoxFlat.new()
+    panel_style.bg_color = Color("#17161dee")
+    panel_style.border_color = Color("#544b61")
+    panel_style.set_border_width_all(1)
+    panel_style.set_corner_radius_all(9)
+    panel_style.content_margin_left = 9
+    panel_style.content_margin_right = 9
+    panel_style.content_margin_top = 7
+    panel_style.content_margin_bottom = 7
+    panel.add_theme_stylebox_override("panel", panel_style)
     _hud_panel = panel
     add_child(panel)
     var column := VBoxContainer.new()
-    column.add_theme_constant_override("separation", 2)
+    column.add_theme_constant_override("separation", 3)
     panel.add_child(column)
 
-    var first := HBoxContainer.new()
-    first.add_theme_constant_override("separation", 4)
+    _mission_label = Label.new()
+    _mission_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _mission_label.clip_text = true
+    _mission_label.add_theme_font_size_override("font_size", 13)
+    _mission_label.add_theme_color_override("font_color", Color("#d5c5ea"))
+    _mission_label.text = "Missão ainda não criada"
+    column.add_child(_mission_label)
+
+    var first := HFlowContainer.new()
+    first.add_theme_constant_override("h_separation", 4)
+    first.add_theme_constant_override("v_separation", 3)
     column.add_child(first)
-    var move_button := _hud_button("Mover", 72)
+    var move_button := _hud_button("Mover", 62)
     move_button.pressed.connect(func(): _set_mode("move"))
     first.add_child(move_button)
-    var attack_button := _hud_button("Atacar", 72)
+    var attack_button := _hud_button("Atacar", 62)
     attack_button.pressed.connect(func(): _set_mode("attack"))
     first.add_child(attack_button)
-    var ambush_button := _hud_button("Emboscada", 94)
+    var ambush_button := _hud_button("Emboscada", 82)
     ambush_button.pressed.connect(func(): _set_mode("ambush"))
     first.add_child(ambush_button)
     _attribute_picker = OptionButton.new()
     _attribute_picker.add_item("Corpo + Combate")
     _attribute_picker.add_item("Agilidade + Combate")
-    _attribute_picker.custom_minimum_size.x = 150
+    _attribute_picker.custom_minimum_size = Vector2(132, 27)
+    _style_hud_control(_attribute_picker)
     _attribute_picker.item_selected.connect(func(index: int): _attack_attribute = "corpo" if index == 0 else "agilidade")
     first.add_child(_attribute_picker)
-    var next_button := _hud_button("Próxima ativação", 132)
+    var next_button := _hud_button("Próxima ativação", 112)
     next_button.pressed.connect(_next_activation)
     first.add_child(next_button)
-    _mission_label = Label.new()
-    _mission_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    _mission_label.text = "Missão ainda não criada"
-    first.add_child(_mission_label)
 
-    var second := HBoxContainer.new()
-    second.add_theme_constant_override("separation", 4)
-    column.add_child(second)
-    var create_button := _hud_button("Criar missão", 94)
+    _mission_admin_row = HFlowContainer.new()
+    _mission_admin_row.add_theme_constant_override("h_separation", 4)
+    _mission_admin_row.add_theme_constant_override("v_separation", 3)
+    column.add_child(_mission_admin_row)
+    var create_button := _hud_button("Criar missão", 86)
     create_button.pressed.connect(func(): _mission_command("mission.create", {"definition": "knossos-evacuation"}))
-    second.add_child(create_button)
+    _mission_admin_row.add_child(create_button)
     _role_picker = OptionButton.new()
     _role_picker.add_item("Aliado")
     _role_picker.set_item_metadata(0, "ALLY")
@@ -569,68 +857,109 @@ func _build_hud() -> void:
     _role_picker.set_item_metadata(1, "HOSTILE")
     _role_picker.add_item("Nomos evacuar")
     _role_picker.set_item_metadata(2, "EVACUEE")
-    _role_picker.custom_minimum_size.x = 136
+    _role_picker.custom_minimum_size = Vector2(126, 27)
+    _style_hud_control(_role_picker)
     _role_picker.item_selected.connect(func(index: int): _mission_role = str(_role_picker.get_item_metadata(index)))
-    second.add_child(_role_picker)
-    var register_button := _hud_button("Registrar token", 106)
+    _mission_admin_row.add_child(_role_picker)
+    var register_button := _hud_button("Registrar token", 98)
     register_button.pressed.connect(_register_selected)
-    second.add_child(register_button)
-    var ready_button := _hud_button("Pronto", 66)
+    _mission_admin_row.add_child(register_button)
+    var ready_button := _hud_button("Pronto", 58)
     ready_button.pressed.connect(func(): _mission_command("mission.ready", {}))
-    second.add_child(ready_button)
-    var start_button := _hud_button("Iniciar missão", 100)
+    _mission_admin_row.add_child(ready_button)
+    var start_button := _hud_button("Iniciar missão", 92)
     start_button.pressed.connect(func(): _mission_command("mission.start", {}))
-    second.add_child(start_button)
-    var abort_button := _hud_button("Encerrar", 76)
+    _mission_admin_row.add_child(start_button)
+    var abort_button := _hud_button("Encerrar", 66)
     abort_button.pressed.connect(func(): _mission_command("mission.abort", {"reason": "gm_abort"}))
-    second.add_child(abort_button)
-    _selection_label = Label.new()
-    _selection_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    second.add_child(_selection_label)
+    _mission_admin_row.add_child(abort_button)
 
-    _combat_admin_row = HBoxContainer.new()
-    _combat_admin_row.add_theme_constant_override("separation", 4)
+    _combat_admin_row = HFlowContainer.new()
+    _combat_admin_row.add_theme_constant_override("h_separation", 4)
+    _combat_admin_row.add_theme_constant_override("v_separation", 3)
     column.add_child(_combat_admin_row)
     _friendly_representative = OptionButton.new()
-    _friendly_representative.custom_minimum_size.x = 150
+    _friendly_representative.custom_minimum_size = Vector2(132, 27)
     _friendly_representative.tooltip_text = "Representante aliado para a iniciativa por lados."
+    _style_hud_control(_friendly_representative)
     _combat_admin_row.add_child(_friendly_representative)
     _hostile_representative = OptionButton.new()
-    _hostile_representative.custom_minimum_size.x = 150
+    _hostile_representative.custom_minimum_size = Vector2(132, 27)
     _hostile_representative.tooltip_text = "Representante Silmari para a iniciativa por lados."
+    _style_hud_control(_hostile_representative)
     _combat_admin_row.add_child(_hostile_representative)
-    var roll_sides := _hud_button("Rolar iniciativa", 118)
+    var roll_sides := _hud_button("Rolar iniciativa", 104)
     roll_sides.pressed.connect(_roll_side_initiative)
     _combat_admin_row.add_child(roll_sides)
-    var friendly_first := _hud_button("Aliados primeiro", 122)
+    var friendly_first := _hud_button("Aliados primeiro", 104)
     friendly_first.pressed.connect(func(): _combat_command("choose-first-side", {"side": "friendly"}))
     _combat_admin_row.add_child(friendly_first)
-    var hostile_first := _hud_button("Silmari primeiro", 122)
+    var hostile_first := _hud_button("Silmari primeiro", 104)
     hostile_first.pressed.connect(func(): _combat_command("choose-first-side", {"side": "hostile"}))
     _combat_admin_row.add_child(hostile_first)
-    var start_combat := _hud_button("Iniciar combate", 112)
+    var start_combat := _hud_button("Iniciar combate", 100)
     start_combat.pressed.connect(func(): _combat_command("start"))
     _combat_admin_row.add_child(start_combat)
     _combat_admin_label = Label.new()
-    _combat_admin_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _combat_admin_label.clip_text = true
+    _combat_admin_label.custom_minimum_size.x = 110
+    _combat_admin_label.add_theme_font_size_override("font_size", 11)
+    _combat_admin_label.add_theme_color_override("font_color", Color("#bca4d8"))
     _combat_admin_row.add_child(_combat_admin_label)
 
     var third := HBoxContainer.new()
-    third.add_theme_constant_override("separation", 4)
+    third.add_theme_constant_override("separation", 8)
     column.add_child(third)
-    var damage_button := _hud_button("Aplicar dano do ataque", 170)
-    damage_button.pressed.connect(_apply_damage)
-    third.add_child(damage_button)
+    _damage_button = _hud_button("Aplicar dano", 102)
+    _damage_button.pressed.connect(_apply_damage)
+    third.add_child(_damage_button)
+    _selection_label = Label.new()
+    _selection_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _selection_label.clip_text = true
+    _selection_label.add_theme_font_size_override("font_size", 11)
+    _selection_label.add_theme_color_override("font_color", Color("#c6c2cf"))
+    _selection_label.size_flags_stretch_ratio = 2.0
+    third.add_child(_selection_label)
     _resolution_label = Label.new()
     _resolution_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _resolution_label.size_flags_stretch_ratio = 1.0
+    _resolution_label.custom_minimum_size.x = 110
+    _resolution_label.clip_text = true
+    _resolution_label.add_theme_font_size_override("font_size", 11)
+    _resolution_label.add_theme_color_override("font_color", Color("#c7a9e9"))
     third.add_child(_resolution_label)
+
+
+func _style_hud_control(control: Control) -> void:
+    control.add_theme_font_size_override("font_size", 12)
+    control.add_theme_color_override("font_color", Color("#e5e2eb"))
 
 
 func _hud_button(label: String, width: float) -> Button:
     var button := Button.new()
     button.text = label
-    button.custom_minimum_size = Vector2(width, 34)
+    button.custom_minimum_size = Vector2(width, 27)
     button.focus_mode = Control.FOCUS_NONE
+    button.add_theme_font_size_override("font_size", 12)
+    button.add_theme_color_override("font_color", Color("#e5e2eb"))
+    button.add_theme_color_override("font_hover_color", Color("#ffffff"))
+    button.add_theme_color_override("font_pressed_color", Color("#d8c2f4"))
+    var normal := StyleBoxFlat.new()
+    normal.bg_color = Color("#26242d")
+    normal.border_color = Color("#514b5a")
+    normal.set_border_width_all(1)
+    normal.set_corner_radius_all(5)
+    normal.content_margin_left = 6
+    normal.content_margin_right = 6
+    var hover := normal.duplicate() as StyleBoxFlat
+    hover.bg_color = Color("#38313f")
+    hover.border_color = Color("#8e69bd")
+    var pressed := normal.duplicate() as StyleBoxFlat
+    pressed.bg_color = Color("#463455")
+    button.add_theme_stylebox_override("normal", normal)
+    button.add_theme_stylebox_override("hover", hover)
+    button.add_theme_stylebox_override("pressed", pressed)
+    _style_hud_control(button)
     return button
 
 
@@ -639,6 +968,7 @@ func _set_mode(mode: String) -> void:
     _status = "Modo: " + ("ataque corpo a corpo" if mode == "attack" else "Emboscada (Nível I)" if mode == "ambush" else "movimento") + ". Selecione unidade e alvo."
     if mode == "move":
         _selected_id = ""
+    _sync_world()
     queue_redraw()
 
 
@@ -782,9 +1112,23 @@ func _update_hud() -> void:
     if not is_instance_valid(_mission_label) or not is_instance_valid(_selection_label):
         return
     var mission: Variant = _combat.get("mission")
-    var gm_controls := bool(_terrain().get("canEdit", false)) and not bool(_combat.get("active", false))
+    var gm_role := bool(_terrain().get("canEdit", false))
+    var combat_active := bool(_combat.get("active", false))
+    var gm_controls := gm_role and not combat_active
+    if is_instance_valid(_terrain_toolbar_control):
+        _terrain_toolbar_control.visible = _terrain_editable()
+    if is_instance_valid(_terrain_initialize_button):
+        _terrain_initialize_button.visible = not bool(_terrain().get("initialized", false))
+    for terrain_button in _terrain_tools:
+        terrain_button.visible = bool(_terrain().get("initialized", false))
+    if is_instance_valid(_mission_admin_row):
+        _mission_admin_row.visible = gm_role
     if is_instance_valid(_combat_admin_row):
         _combat_admin_row.visible = gm_controls
+    if is_instance_valid(_damage_button):
+        _damage_button.visible = gm_role and combat_active
+    if is_instance_valid(_hud_panel):
+        _hud_panel.offset_top = -156.0 if gm_controls else -116.0 if gm_role else -88.0
     _refresh_representative_picker(_friendly_representative, "friendly")
     _refresh_representative_picker(_hostile_representative, "hostile")
     var initiative: Variant = _combat.get("config", {}).get("side_initiative", {})
@@ -806,6 +1150,7 @@ func _update_hud() -> void:
         _mission_label.text = "Missão ainda não criada · Rodada %s · %s" % [str(_combat.get("round", 0)), str(_combat.get("current_name", "sem ativação"))]
     var selected := _selected_token()
     _selection_label.text = "Seleção: " + str(selected.get("name", "nenhuma")) + " · " + _status
+    _selection_label.tooltip_text = _selection_label.text
     var resolutions: Variant = _combat.get("config", {}).get("resolutions", [])
     if typeof(resolutions) == TYPE_ARRAY and not resolutions.is_empty():
         var latest: Variant = resolutions.back()
@@ -818,134 +1163,24 @@ func _update_hud() -> void:
                 var suffix := " · " + str(technique.get("name", "")) if typeof(technique) == TYPE_DICTIONARY and not technique.is_empty() else ""
                 _resolution_label.text = "Ataque %s: total %s vs %s%s" % [status, str(latest.get("total", "?")), str(latest.get("target_defense_value", "?")), suffix]
     else:
-        _resolution_label.text = "Aguardando resolução de combate do servidor."
+        _resolution_label.text = "Sem resultado recente"
+    _resolution_label.tooltip_text = _resolution_label.text
 
 
 func _draw() -> void:
-    draw_rect(Rect2(Vector2.ZERO, size), Color("#14161c"))
-    var font: Font = ThemeDB.fallback_font
-    draw_string(font, Vector2(20, 30), "GRAVEWRIGHT  /  TACTICS", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, EMBER)
-    draw_string(font, Vector2(20, 55), "VTT tático • movimento validado pelo servidor", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.WHITE)
+    draw_rect(Rect2(Vector2.ZERO, size), Color("#111015"))
     if _map.is_empty():
-        draw_string(font, Vector2(20, 130), _status, HORIZONTAL_ALIGNMENT_LEFT, size.x - 40, 17, Color.WHITE)
-        return
-    if _terrain_editable():
-        var grid := _terrain()
-        if not bool(grid.get("initialized", false)):
-            draw_rect(Rect2(20, 64, 250, 25), Color("#34323c"))
-            draw_string(font, Vector2(26, 82), "Criar terreno tático 16 × 16", HORIZONTAL_ALIGNMENT_LEFT, 240, 13, Color("#f5d18c"))
-        else:
-            _draw_terrain_toolbar(font)
-    var dims := _grid_dimensions()
-    var reach := _movement_reach()
-    for y in range(dims.y):
-        for x in range(dims.x):
-            var cell := _terrain_cell(x, y)
-            var elevation := int(cell.get("elevation", 0)) if not cell.is_empty() else 0
-            var lift := Vector2(0, elevation * ELEVATION_PIXELS)
-            var floor_a := _project(Vector2(x, y))
-            var floor_b := _project(Vector2(x + 1, y))
-            var floor_c := _project(Vector2(x + 1, y + 1))
-            var floor_d := _project(Vector2(x, y + 1))
-            var a := floor_a - lift
-            var b := floor_b - lift
-            var c := floor_c - lift
-            var d := floor_d - lift
-            var ground := _terrain_color(str(cell.get("terrain_type", "")), (x + y) % 2 == 0)
-            if cell.is_empty():
-                ground = GROUND if (x + y) % 2 == 0 else GROUND_ALT
-            var token := _selected_token()
-            if not token.is_empty() and int(token.get("gridX", -999)) == x and int(token.get("gridY", -999)) == y:
-                ground = Color("#81512f")
-            if elevation > 0:
-                draw_colored_polygon(PackedVector2Array([floor_a, floor_b, b, a]), Color("#4b4541"))
-                draw_colored_polygon(PackedVector2Array([floor_d, floor_c, c, d]), Color("#36343a"))
-            draw_colored_polygon(PackedVector2Array([a, b, c, d]), ground)
-            var selected := _selected_token()
-            if reach > 0 and not selected.is_empty():
-                var distance := absi(x - int(selected.get("gridX", -999))) + absi(y - int(selected.get("gridY", -999)))
-                var preview_reachable := distance > 0 and distance <= reach
-                if bool(_terrain().get("initialized", false)):
-                    preview_reachable = distance == 1 and _preview_step_allowed(selected, cell, reach)
-                if preview_reachable:
-                    draw_colored_polygon(PackedVector2Array([a, b, c, d]), Color("#7774d844"))
-            if str(cell.get("terrain_type", "")) == "INTRANSPONIVEL":
-                draw_colored_polygon(PackedVector2Array([a + Vector2(0, -3), b + Vector2(0, -3), c + Vector2(0, -3), d + Vector2(0, -3)]), Color("#4d4950"))
-                draw_line(a + Vector2(0, -3), c + Vector2(0, -3), Color("#bd776e"), 3.0)
-                draw_line(b + Vector2(0, -3), d + Vector2(0, -3), Color("#bd776e"), 3.0)
-            if _terrain_selected == Vector2i(x, y):
-                for edge in [[a, b], [b, c], [c, d], [d, a]]:
-                    draw_line(edge[0], edge[1], EMBER, 3.0)
-            for edge in [[a, b], [b, c], [c, d], [d, a]]:
-                draw_line(edge[0], edge[1], BORDER, 1.0)
-    _draw_terrain_walls()
-    _draw_terrain_connections()
-    for token in _tokens:
-        var x := float(token.get("gridX", -999))
-        var y := float(token.get("gridY", -999))
-        if x < 0 or y < 0 or x >= dims.x or y >= dims.y:
-            continue
-        var ground_center := _project(Vector2(x + 0.5, y + 0.5))
-        var elevation := float(token.get("elevation", 0))
-        var center := ground_center - Vector2(0, elevation * ELEVATION_PIXELS)
-        var tint := HOSTILE if token.get("disposition") == "hostile" else FRIENDLY
-        var outline := EMBER if str(token.get("id", "")) == _selected_id else Color("#17181c")
-        if elevation != 0:
-            draw_line(ground_center, center, Color("#d1c7a6"), 2.0)
-            draw_circle(ground_center, 5.0, Color("#10111688"))
-        draw_rect(Rect2(center + Vector2(-9, -20), Vector2(18, 19)), outline)
-        draw_rect(Rect2(center + Vector2(-7, -18), Vector2(14, 15)), tint)
-        var name := str(token.get("name", ""))
-        if name.is_empty():
-            name = "?"
-        draw_string(font, center + Vector2(-18, -27), name, HORIZONTAL_ALIGNMENT_CENTER, 90, 12, Color.WHITE)
-    var selected := _selected_token()
-    var runtime: Variant = selected.get("runtime", {})
-    if typeof(runtime) == TYPE_DICTIONARY:
-        var vitality: Variant = runtime.get("resources", {}).get("vitality", {})
-        var conditions: Array = runtime.get("conditions", [])
-        draw_string(font, Vector2(20, 80), "%s · Vitalidade %s/%s · Condições %s" % [str(selected.get("name", "")), str(vitality.get("current", "–")), str(vitality.get("max", "–")), str(conditions.size())], HORIZONTAL_ALIGNMENT_LEFT, size.x - 40, 13, Color("#e7d3a1"))
-    var mission: Variant = _combat.get("mission")
-    if typeof(mission) == TYPE_DICTIONARY:
-        draw_string(font, Vector2(20, 103), "Objetivo: evacuar Nomos até a zona · Estado %s" % str(mission.get("state", "")), HORIZONTAL_ALIGNMENT_LEFT, size.x - 40, 13, Color("#f0d19b"))
+        var font: Font = ThemeDB.fallback_font
+        draw_string(font, Vector2(20, 112), _status, HORIZONTAL_ALIGNMENT_LEFT, size.x - 40, 15, Color("#d2ced8"))
 
 
 func _terrain_color(terrain_type: String, alternate: bool) -> Color:
     match terrain_type:
-        "NORMAL": return Color("#716852") if alternate else Color("#665e4c")
-        "DIFICIL": return Color("#93704c") if alternate else Color("#846445")
-        "SEVERO": return Color("#72534d") if alternate else Color("#674a47")
-        "INTRANSPONIVEL": return Color("#42424a") if alternate else Color("#393940")
+        "NORMAL": return Color("#4b4853") if alternate else Color("#403e49")
+        "DIFICIL": return Color("#62546f") if alternate else Color("#564861")
+        "SEVERO": return Color("#4d3c57") if alternate else Color("#403247")
+        "INTRANSPONIVEL": return Color("#34323b") if alternate else Color("#2c2a32")
         _: return GROUND if alternate else GROUND_ALT
-
-
-func _draw_terrain_toolbar(font: Font) -> void:
-    var labels := ["N Normal", "2 Difícil", "3 Severo", "4 Bloqueio", "H−", "H+", "Escada"]
-    var colors := [Color("#766b59"), Color("#9b7248"), Color("#74534e"), Color("#44434b"), Color("#383c48"), Color("#383c48"), Color("#414b48")]
-    var x := 20.0
-    for i in range(labels.size()):
-        var width := 82.0 if i < 4 else 54.0
-        draw_rect(Rect2(x, 64, width - 3, 22), colors[i])
-        draw_string(font, Vector2(x + 4, 80), labels[i], HORIZONTAL_ALIGNMENT_LEFT, width - 6, 11, Color.WHITE)
-        x += width
-    draw_string(font, Vector2(x + 4, 80), "Conexão: " + ("STAIR" if not _terrain_connect_mode else "clique 2 células"), HORIZONTAL_ALIGNMENT_LEFT, 180, 11, Color("#f4d18a"))
-
-
-func _draw_terrain_walls() -> void:
-    var layers: Variant = _map.get("layers", {})
-    if typeof(layers) != TYPE_DICTIONARY:
-        return
-    var cell_size := maxf(1.0, float(_map.get("gridSize", 70)) * float(_map.get("imageScale", 1)))
-    var offset_x := float(_map.get("gridOffsetX", 0)) * float(_map.get("imageScale", 1))
-    var offset_y := float(_map.get("gridOffsetY", 0)) * float(_map.get("imageScale", 1))
-    for wall in layers.get("walls", []):
-        if typeof(wall) != TYPE_DICTIONARY or wall.get("movement_behavior", "block") == "pass":
-            continue
-        if wall.get("kind") == "door" and wall.get("door_state") == "open":
-            continue
-        var a := _project(Vector2((float(wall.get("x1", 0)) - offset_x) / cell_size, (float(wall.get("y1", 0)) - offset_y) / cell_size))
-        var b := _project(Vector2((float(wall.get("x2", 0)) - offset_x) / cell_size, (float(wall.get("y2", 0)) - offset_y) / cell_size))
-        draw_line(a, b, Color("#d29a66"), 3.0)
 
 
 func _preview_step_allowed(token: Dictionary, target: Dictionary, remaining: int) -> bool:
@@ -975,24 +1210,3 @@ func _preview_step_allowed(token: Dictionary, target: Dictionary, remaining: int
         if not found:
             return false
     return true
-
-
-func _draw_terrain_connections() -> void:
-    var center := Vector2.ZERO
-    for connection in _terrain().get("connections", []):
-        if typeof(connection) != TYPE_DICTIONARY:
-            continue
-        var from: Variant = connection.get("from", [])
-        var to: Variant = connection.get("to", [])
-        if typeof(from) != TYPE_ARRAY or typeof(to) != TYPE_ARRAY or from.size() != 2 or to.size() != 2:
-            continue
-        var first := Vector2(int(from[0]), int(from[1]))
-        var second := Vector2(int(to[0]), int(to[1]))
-        var first_cell := _terrain_cell(int(first.x), int(first.y))
-        var second_cell := _terrain_cell(int(second.x), int(second.y))
-        var first_lift := Vector2(0, int(first_cell.get("elevation", 0)) * ELEVATION_PIXELS)
-        var second_lift := Vector2(0, int(second_cell.get("elevation", 0)) * ELEVATION_PIXELS)
-        center = ((_project(first + Vector2(0.5, 0.5)) - first_lift) + (_project(second + Vector2(0.5, 0.5)) - second_lift)) * 0.5
-        for step in range(3):
-            var offset := Vector2(-5.0 + step * 5.0, float(step * 2))
-            draw_line(center + offset + Vector2(-5, 2), center + offset + Vector2(5, -2), Color("#f2d18e"), 2.0)
