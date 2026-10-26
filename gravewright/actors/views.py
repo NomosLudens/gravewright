@@ -14,6 +14,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from gravewright.campaigns.models import Campaign
 from gravewright.journals.services import JournalError
 from gravewright.maps.services import MapError
+from gravewright.campaigns.systems import asset_content_type, asset_provider, asset_provider_for
 
 from . import services
 from .models import Asset
@@ -27,10 +28,11 @@ from .kallistis_import import (
 )
 
 
-def publish(campaign):
+def publish(campaign_id):
+    campaign_id = getattr(campaign_id, "pk", campaign_id)
     layer = get_channel_layer()
     for kind in ("room.actors", "room.tokens", "room.map_layers"):
-        async_to_sync(layer.group_send)(f"table.{campaign.pk.hex}", {"type": kind})
+        async_to_sync(layer.group_send)(f"table.{campaign_id.hex}", {"type": kind})
 
 
 @require_GET
@@ -64,23 +66,27 @@ def upload(request, campaign_id):
     asset = None
     try:
         who = services.member(campaign_id, request.user.pk)
-        kind = request.POST.get("kind", "pdf")
+        file = request.FILES.get("file")
+        kind = request.POST.get("kind")
+        provider = asset_provider_for(kind=kind) if kind else (
+            asset_provider(who.campaign.system)
+            or asset_provider_for(content_type=getattr(file, 'content_type', None))
+        )
+        if kind is None and provider:
+            kind = provider['kind']
         actor = None
-        if kind == "pdf":
+        if provider:
             services.manage(who)
         elif kind in ("portrait", "token"):
             actor = services.get(request.POST.get("actorId"), who, True)
         else:
             raise MapError("Invalid image kind.")
-        file = request.FILES.get("file")
-        if not file or file.size > 10_000_000:
+        if provider:
+            raw, ext = provider['validate_upload'](file)
+        elif not file or file.size > 10_000_000:
             raise MapError("The file must be no larger than 10 MB.")
-        raw = file.read()
-        if kind == "pdf":
-            if not raw.startswith(b"%PDF-"):
-                raise MapError("Choose a PDF document.")
-            ext = ".pdf"
         else:
+            raw = file.read()
             with Image.open(BytesIO(raw)) as image:
                 if (
                     image.format not in {"PNG", "JPEG", "WEBP"}
@@ -102,7 +108,7 @@ def upload(request, campaign_id):
             else:
                 services.manage(who)
             folder=None
-            if kind=="pdf" and request.POST.get("folder_id"):
+            if provider and request.POST.get("folder_id"):
                 from gravewright.maps.models import AssetFolder
                 from gravewright.journals.services import identifier
                 folder=AssetFolder.objects.filter(pk=identifier(request.POST["folder_id"]),campaign_id=campaign_id).first()
@@ -144,15 +150,8 @@ def asset(request, asset_id):
         item = Asset.objects.select_related("actor").get(pk=asset_id)
         who = services.member(item.campaign_id, request.user.pk)
         if item.actor and not services.access(item.actor, who):
-            from gravewright.maps.models import Broadcast
-
-            scene_id = (
-                Broadcast.objects.filter(
-                    campaign_id=item.campaign_id, scene__visibility="players"
-                )
-                .values_list("scene_id", flat=True)
-                .first()
-            )
+            from gravewright.maps.library_services import active_scene
+            scene_id = active_scene(who)
             # Rendering a visible token authorizes its image, not the actor's sheet.
             if (
                 item.kind not in ("token", "portrait")
@@ -163,12 +162,12 @@ def asset(request, asset_id):
                 raise Http404
         response = FileResponse(
             item.file.open("rb"),
-            content_type="application/pdf" if item.kind == "pdf" else "image/png",
+            content_type=asset_content_type(item.kind),
         )
         response["Cache-Control"] = "private, no-store"
         response["X-Content-Type-Options"] = "nosniff"
         return response
-    except Asset.DoesNotExist, JournalError, FileNotFoundError:
+    except Asset.DoesNotExist, JournalError, MapError, FileNotFoundError:
         raise Http404 from None
 @require_GET
 def kallistis_import_options(request):

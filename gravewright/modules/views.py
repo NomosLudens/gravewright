@@ -1,9 +1,11 @@
-"""Django transport for the original signed browser-module contract."""
+"""Django transport for browser packages and trusted server app packages."""
 
 import json
 import asyncio
 import mimetypes
+import re
 from datetime import timedelta
+from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -29,6 +31,15 @@ from .packages import (
     safe_path,
     trusted_keys,
 )
+from scripts.gravewright_runner import (
+    DEFAULT_MARKETPLACE_URL,
+    RunnerError,
+    install_default_marketplace,
+)
+
+
+def module_directory():
+    return str(settings.GRAVEWRIGHT_MODULES_ROOT or Path(settings.MEDIA_ROOT) / 'modules')
 
 
 class HTTPSRedirects(HTTPRedirectHandler):
@@ -155,17 +166,63 @@ def marketplace_status(request):
     )
 
 
+def default_marketplace_state():
+    try:
+        keys_ready = bool(trusted_keys())
+    except MarketplaceConfigurationError:
+        keys_ready = False
+    url = settings.GRAVEWRIGHT_MARKETPLACE_URL
+    return {
+        "configured": bool(url and keys_ready),
+        "default": url == DEFAULT_MARKETPLACE_URL and keys_ready,
+        "catalogUrl": url,
+    }
+
+
+@require_http_methods(["GET", "POST"])
+@owner
+def default_marketplace(request):
+    if request.method == "POST":
+        directory = Path(getattr(settings, "RUNNER_DATA", settings.BASE_DIR))
+        try:
+            result = install_default_marketplace(directory)
+        except RunnerError:
+            raise ModuleFailure("unavailable") from None
+        settings.GRAVEWRIGHT_MARKETPLACE_URL = result["GRAVEWRIGHT_MARKETPLACE_URL"]
+        settings.GRAVEWRIGHT_MARKETPLACE_KEYS_FILE = result["GRAVEWRIGHT_MARKETPLACE_KEYS_FILE"]
+        audit(request, "marketplace.default_install")
+    return JsonResponse(default_marketplace_state(), headers={"Cache-Control": "no-store"})
+
+
 @require_GET
 @owner
 def marketplace(request):
-    return JsonResponse(
-        [
-            r
-            for r in catalog(host())
-            if compatible(r["sdk"]) and r.get("status") != "revoked"
-        ],
-        safe=False,
-    )
+    records = [
+        r
+        for r in catalog(host(require_trust=True))
+        if compatible(r["sdk"]) and r.get("status") != "revoked"
+    ]
+    if request.GET.get("latest") == "1":
+        latest = {}
+        for record in records:
+            version = package_version(record["version"])
+            current = latest.get(record["id"])
+            if current is None or version > current[0]:
+                latest[record["id"]] = (version, record)
+        records = [record for _, record in latest.values()]
+    return JsonResponse(records, safe=False)
+
+
+def package_version(value):
+    """Order the stable numeric versions supported by the package contract."""
+    if not isinstance(value, str) or not re.fullmatch(
+        r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", value
+    ):
+        raise ModuleFailure("invalid_data")
+    try:
+        return tuple(map(int, value.split(".")))
+    except ValueError:
+        raise ModuleFailure("invalid_data") from None
 
 
 def installation_stream(request, data):
@@ -179,7 +236,7 @@ def installation_stream(request, data):
             close_old_connections()
             try:
                 emit('catalog')
-                engine = host()
+                engine = host(require_trust=True)
                 record = next((r for r in catalog(engine) if r['id'] == data['id'] and r['version'] == data['version']), None)
                 if record is None:
                     raise ModuleFailure('not_found')
@@ -221,7 +278,7 @@ def install(request):
         raise ModuleFailure("invalid_data")
     if request.headers.get('Accept') == 'application/x-ndjson':
         return installation_stream(request, data)
-    engine = host()
+    engine = host(require_trust=True)
     record = next(
         (
             r
@@ -237,18 +294,127 @@ def install(request):
     return JsonResponse(manifest)
 
 
+@require_http_methods(["GET", "POST"])
+@owner
+def local_install(request):
+    if request.method == "GET":
+        return JsonResponse({"directory": module_directory(), "maxBytes": MAX_ARCHIVE})
+    upload = request.FILES.get("file")
+    kind = request.POST.get("kind")
+    if (upload is None or set(request.FILES) != {"file"} or set(request.POST) != {"kind"}
+            or kind not in {"module", "system"} or upload.size > MAX_ARCHIVE):
+        raise ModuleFailure("invalid_data")
+    raw = upload.read(MAX_ARCHIVE + 1)
+    if len(raw) > MAX_ARCHIVE:
+        raise ModuleFailure("invalid_data")
+    manifest = host().install_local(raw, expected_type=kind)
+    audit(request, "module.install", module=manifest["id"], version=manifest["version"], source="local")
+    return JsonResponse({"manifest": manifest, "directory": module_directory()})
+
+
 @require_GET
 @authenticated
 def installed(request):
+    from config.marketplace_apps import selections
+    server_apps = selections(module_directory())
     return JsonResponse(
         [
             {**row.manifest, "revoked": row.revoked,
              **({"tags": row.record["tags"]} if "tags" in row.record else {}),
-             **({"globalEnabled": row.global_enabled} if row.locale_catalogs else {})}
+             **({"globalEnabled": row.global_enabled} if row.locale_catalogs else {}),
+             **({"globalEnabled": server_apps.get(row.module_id, {}).get('version') == row.version}
+                if 'django' in row.manifest else {})}
             for row in Package.objects.order_by("module_id", "version")
         ],
         safe=False,
     )
+
+
+def selected_package(request, *, removal=False):
+    data = read_json(request)
+    fields = set(data) - ({'confirmedTables'} if removal else set())
+    if fields != {'id', 'version'} or any(not isinstance(data[key], str) for key in ('id', 'version')):
+        raise ModuleFailure('invalid_data')
+    if removal and (not isinstance(data.get('confirmedTables', []), list)
+                    or any(not isinstance(value, str) for value in data.get('confirmedTables', []))):
+        raise ModuleFailure('invalid_data')
+    row = Package.objects.filter(module_id=data['id'], version=data['version']).first()
+    if row is None:
+        raise ModuleFailure('not_found')
+    return row
+
+
+@require_POST
+@owner
+def removal_preview(request):
+    from .lifecycle import usage
+    row = selected_package(request)
+    system = 'system' in row.manifest
+    return JsonResponse({'tables': usage(host(), row), 'system': system,
+                         'resetsSystem': system and not Package.objects.filter(
+                             module_id=row.module_id, revoked=False).exclude(pk=row.pk).exists()})
+
+
+def server_active(engine, row):
+    from config.marketplace_apps import selections
+    return ('django' in row.manifest
+            and selections(engine.directory).get(row.module_id, {}).get('version') == row.version)
+
+
+@require_POST
+@owner
+def update_package(request):
+    from .lifecycle import replace_release
+    from .packages import package_type
+    row = selected_package(request)
+    engine = host(require_trust=True)
+    candidates = [record for record in catalog(engine)
+                  if record['id'] == row.module_id and record.get('status', 'active') == 'active'
+                  and compatible(record['sdk']) and package_version(record['version']) > package_version(row.version)
+                  and record.get('type', 'module') == package_type(row.manifest)]
+    if not candidates:
+        return JsonResponse({'updated': False, 'version': row.version})
+    record = max(candidates, key=lambda value: package_version(value['version']))
+    engine.install(record, download(record['download'], MAX_ARCHIVE))
+    with transaction.atomic():
+        row = Package.objects.select_for_update().filter(pk=row.pk).first()
+        if row is None:
+            raise ModuleFailure('not_found')
+        replacement = Package.objects.get(module_id=row.module_id, version=record['version'])
+        if package_type(row.manifest) != package_type(replacement.manifest) or bool(row.locale_catalogs) != bool(replacement.locale_catalogs):
+            raise ModuleFailure('invalid_data')
+        if server_active(engine, row):
+            from .server_apps import queue_activation
+            result = queue_activation(replacement, True)
+        else:
+            result = {}
+        audit(request, 'module.update', module=row.module_id, version=replacement.version)
+        if not result:
+            replace_release(engine, row, replacement)
+    return JsonResponse({'updated': True, 'version': replacement.version, **result})
+
+
+@require_POST
+@owner
+@transaction.atomic
+def remove_package(request):
+    from gravewright.campaigns.models import Campaign
+    from .lifecycle import replace_release, usage
+    row = selected_package(request, removal=True)
+    row = Package.objects.select_for_update().filter(pk=row.pk).first()
+    if row is None:
+        raise ModuleFailure('not_found')
+    engine = host()
+    list(Campaign.objects.select_for_update().order_by('pk'))
+    affected = {table['id'] for table in usage(engine, row)}
+    if not affected <= set(read_json(request).get('confirmedTables', [])):
+        return JsonResponse({'error': 'removal_confirmation_required'}, status=409)
+    if server_active(engine, row):
+        from .server_apps import queue_activation
+        return JsonResponse(queue_activation(row, False), status=202)
+    audit(request, 'module.remove', module=row.module_id, version=row.version)
+    replace_release(engine, row)
+    return JsonResponse({'removed': True})
 
 
 @require_POST
@@ -262,6 +428,11 @@ def global_activation(request):
     row = Package.objects.select_for_update().filter(module_id=data['id'], version=data['version']).first()
     if row is None:
         raise ModuleFailure('not_found')
+    if 'django' in row.manifest:
+        from .server_apps import queue_activation
+        result = queue_activation(row, data['enabled'])
+        audit(request, 'module.django_activation', module=row.module_id, version=row.version, enabled=data['enabled'])
+        return JsonResponse(result, status=202)
     if not row.locale_catalogs:
         raise ModuleFailure('invalid_data')
     if data['enabled']:
@@ -452,9 +623,14 @@ def asset(request, module_id, version, digest, asset):
     row = Package.objects.filter(
         module_id=module_id, version=version, digest=digest, revoked=False
     ).first()
-    if not row:
+    if not row or 'django' in row.manifest:
         raise ModuleFailure("not_found")
     name = str(safe_path(asset))
+    # Collections require table-scoped read grants. The generic asset URL has
+    # no table identity, so documents are served only through the catalog API.
+    protected = row.manifest.get('content', {}).get('compendiums', [])
+    if name.casefold() in {path.casefold() for path in protected}:
+        raise ModuleFailure("not_found")
     engine = host()
     engine.verify_installed(row, name)
     path = engine.directory / "packages" / module_id / version / digest / name

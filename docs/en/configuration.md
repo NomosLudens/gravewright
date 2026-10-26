@@ -8,7 +8,7 @@ The source of truth is [config/environment.py](../../config/environment.py), [co
 
 Booleans accept `1/true/yes/y/on` and `0/false/no/n/off`, case-insensitively. Invalid spellings fail startup. Engine numeric limits must be positive. Join-code minimum ≤ default ≤ maximum, and viewport area cannot exceed width × height. `GRAVEWRIGHT_PORT` must be 1–65535. Public origins normalize the scheme and hostname to lowercase, preserving explicit ports and IPv6 brackets; `HTTPS://VTT.EXAMPLE.COM` therefore enables the same HTTPS settings as `https://vtt.example.com`. They reject paths, trailing slashes, credentials, empty ports, control characters, query strings and fragments, including empty `?` or `#` delimiters. These validations do not imply that every setting has the same numeric parser or upper bound.
 
-The [Windows runner](windows-runner.md) has a separate configuration flow: defaults from `.env.example`, then `%LOCALAPPDATA%\Gravewright\data\.env`, with local security and storage settings enforced by its dedicated profile. It does not load the source checkout's `.env`. The reference below describes the standard server settings; feature settings also apply to the runner, while its bind address, database/media paths, debug, cookies, host/origin, proxy trust and single-process Channels choices are fixed for local execution. Set the runner's port in its personal `.env`.
+The native Runner for [Windows](windows-runner.md), [Linux](linux-runner.md) and [macOS](macos-runner.md) reads defaults from `.env.example`, then `.env` in the project root, with local security settings enforced by its dedicated profile. If the project `.env` is missing, it generates a complete configuration from `.env.example` with a new private secret. It never imports configuration from user-data directories. The reference below describes the standard server settings; feature settings also apply to the Runner, while its bind address, debug, cookies, host/origin, proxy trust and single-process Channels choices are fixed for local execution. Set the Runner's port in the project `.env`.
 
 ## Environment reference
 
@@ -23,11 +23,17 @@ Values below match the sample/default configuration. An empty cell shown as “e
 | `GRAVEWRIGHT_PUBLIC_ORIGIN` | empty | Public HTTP(S) origin; pins the WebSocket origin/Host including port, adds host and CSRF trusted origin, enables Secure cookies for HTTPS |
 | `GRAVEWRIGHT_DATABASE` | `data/gravewright.sqlite3` | SQLite filename; relative to source root; :memory: is supported |
 | `GRAVEWRIGHT_MEDIA_ROOT` | `data/media` | Private upload/module storage, relative to source root |
+| `GRAVEWRIGHT_CONTENT_ROOT` | `data/vtt/compendiums` | Disk content collections in standard server settings; the Runner uses its state directory's `compendiums/` |
+| `GRAVEWRIGHT_MODULES_ROOT` | `GRAVEWRIGHT_MEDIA_ROOT/modules` | Private folder where module ZIP archives and extracted packages are installed; may be absolute or source-root-relative |
+| `GRAVEWRIGHT_API_MODULES_ROOT` | `extensions/api` | Default folder for browser module sources, relative to source root; installed signed packages still live under the media root |
+| `GRAVEWRIGHT_DJANGO_MODULES_ROOT` | `extensions/django` | Default folder for trusted Django apps, relative to source root; appended to `sys.path` when it exists |
+| `GRAVEWRIGHT_SERVER_APPS` | empty | Comma-separated import paths of trusted Django apps added to `INSTALLED_APPS` |
+| `GRAVEWRIGHT_SERVER_APP_PATHS` | empty | Extra package roots for those apps (`:` on Linux/macOS, `;` on Windows); they precede the default Django folder |
 | `GRAVEWRIGHT_AUTH_MAX_ATTEMPTS` | `30` | Authentication attempts per client-IP window |
 | `GRAVEWRIGHT_AUTH_WINDOW_SECONDS` | `300` | Authentication window in seconds |
 | `GRAVEWRIGHT_REDIS_URL` | empty | Channels Redis URL; standard server settings allow empty/in-memory delivery only in debug |
 | `APP_NAME` | `Gravewright` | Fallback product name; persisted host preferences can override |
-| `DEFAULT_LOCALE` | `en` | Fallback locale; current supported host locale is en |
+| `DEFAULT_LOCALE` | `en` | Fallback locale; additional languages require an installed, enabled language package |
 | `PRIVACY_ENABLED` | `false` | Initial privacy publication setting; the saved Privacy checkbox takes precedence |
 | `CAMPAIGN_JOIN_CODE_ENABLED` | `true` | Enable campaign join-code workflow |
 | `CAMPAIGN_CLONE_ENABLED` | `true` | Enable campaign cloning |
@@ -46,13 +52,14 @@ Values below match the sample/default configuration. An empty cell shown as “e
 | `TRUSTED_PROXIES` | empty | Comma-separated proxy IPs/CIDRs trusted for forwarded client IPs and ASGI HTTP/WebSocket schemes; empty ignores forwarding headers |
 | `DATABASE_POOL_TIMEOUT` | `30` | SQLite lock wait in seconds; this is not a connection pool size |
 | `DATABASE_ECHO` | `false` | Configure django.db.backends debug logging; actual SQL capture also follows Django's debug cursor behavior |
-| `WS_MAX_MESSAGE_BYTES` | `65536` | Application limit per WebSocket message in bytes |
+| `WS_MAX_MESSAGE_MB` | `0.0625` | Application limit per WebSocket message in MB (1 MB = 1024 * 1024 bytes) |
 | `WS_COMMANDS_PER_SECOND` | `20` | WebSocket command rate per connection |
 | `WS_BURST_COMMANDS` | `40` | WebSocket command burst capacity |
 | `APP_DEBUG` | `false` | Application/table renderer diagnostics; independent of DJANGO_DEBUG |
 | `COMMAND_PALETTE_ENABLED` | `true` | Enable the table command palette |
 | `LOBBY_READY_CHECK_ENABLED` | `true` | Enable lobby readiness controls |
 | `DYNAMIC_LIGHTING_ENABLED` | `true` | Enable dynamic-lighting feature |
+| `GRAVEWRIGHT_AUTOMATION_WORKER_ENABLED` | `true` | Run the ASGI background worker for persistent Blueprint Delay continuations; false leaves pending waits stored without executing them |
 | `SCENE_VIEWPORT_MAX_WIDTH_CHUNKS` | `16` | Maximum streamed viewport width in chunks |
 | `SCENE_VIEWPORT_MAX_HEIGHT_CHUNKS` | `16` | Maximum streamed viewport height in chunks |
 | `SCENE_VIEWPORT_MAX_AREA_CHUNKS` | `256` | Maximum streamed viewport area in chunks |
@@ -63,16 +70,21 @@ Values below match the sample/default configuration. An empty cell shown as “e
 | `TOKEN_CREATE_MANY_MAX` | `50` | Maximum tokens per batch creation command |
 | `BOARD_MARKERS_MAX_PER_SCENE` | `500` | Maximum markers per scene |
 | `BOARD_MEASUREMENTS_MAX_PER_USER` | `50` | Maximum persisted board measurements per user |
-| `JOURNAL_IMAGE_MAX_BYTES` | `10485760` | Journal image attachment limit in bytes (10 MiB) |
-| `JOURNAL_PDF_MAX_BYTES` | `26214400` | Journal PDF attachment limit in bytes (25 MiB) |
+| `JOURNAL_IMAGE_MAX_MB` | `10` | Journal image attachment limit in MB (1 MB = 1024 * 1024 bytes) |
+| `JOURNAL_PDF_MAX_MB` | `25` | Journal PDF attachment limit in MB (1 MB = 1024 * 1024 bytes) |
+| `PDF_SYSTEM_UPLOAD_MAX_MB` | `10` | PDF character sheet upload limit in MB (1 MB = 1024 * 1024 bytes) |
 | `GRAVEWRIGHT_MAP_MAX_PIXELS` | `64000000` | Decoded map pixel limit |
-| `MAP_UPLOAD_MAX_BYTES` | `53687091200` | Map upload byte limit (50 GiB); other limits still apply |
+| `GRAVEWRIGHT_MAP_PILLOW_MAX_PIXELS` | `64000000` | Additional decoded-pixel ceiling when using the Pillow tiler |
+| `GRAVEWRIGHT_MAP_TILER` | `auto` | Map tiler: `auto`, `vips` or `pillow` |
+| `MAP_UPLOAD_MAX_MB` | `51200` | Map upload limit in MB (50 GiB); other limits still apply |
 | `MAP_IMAGE_MAX_WIDTH` | `500000` | Maximum source map width in pixels |
 | `MAP_IMAGE_MAX_HEIGHT` | `500000` | Maximum source map height in pixels |
 | `MAP_MAX_TILE_COUNT` | `4096` | Maximum generated map tiles |
 | `GRAVEWRIGHT_MARKETPLACE_URL` | empty | HTTPS URL of the module catalog JSON |
 | `GRAVEWRIGHT_MARKETPLACE_KEYS_FILE` | empty | Local Ed25519 trust-key JSON path; relative to source root |
 | `GRAVEWRIGHT_RELEASES_REPOSITORY` | `Gravewright/gravewright` | owner/repo used for compatible Django release discovery; empty leaves it unconfigured |
+
+The native installer configures the official Marketplace automatically when no catalog is configured. Existing custom catalogs are preserved.
 
 Two optional commented settings are also recognized:
 
@@ -82,6 +94,44 @@ Two optional commented settings are also recognized:
 | `DJANGO_SECURE_COOKIES` | `false` | Enable secure cookies; a configured HTTPS public origin always enables them. This flag does not configure TLS or the WebSocket origin |
 
 `GRAVEWRIGHT_CONTAINER` is read by release discovery to label the install format when set to `1`, `true` or `yes`; it does not configure a container runtime or provide automatic updates. `DJANGO_SETTINGS_MODULE` selects the Python settings module; entry points default to `config.settings`.
+
+## Blueprint Delay worker
+
+The ASGI host starts the Delay worker automatically. Daphne uses its reactor
+startup/shutdown hooks, including normal Runner execution; other ASGI hosts must
+deliver lifespan startup/shutdown events. Importing Django or running a management
+command does not start a scheduler. The worker checks due database rows every
+250 ms, processing at most 20 per pass; actual execution can be later under load
+or after downtime. It does not require connected browsers, HTTP polling, Redis
+jobs or a separately launched process.
+
+Pending waits live in the configured SQLite database and survive a server
+restart. `GRAVEWRIGHT_AUTOMATION_WORKER_ENABLED=false` disables processing for
+that process without discarding the queue. Scene-level **Pause automation**
+instead holds only that scene's waits until resume. The updater's existing
+managed maintenance flag holds the queue through health verification until the
+update is committed or rolled back. Apply the normal migrations
+before starting the host; the worker reports database failures in server logs
+and retries, rather than treating them as successful executions. See
+[Persistent Delay](map-builder.md#persistent-delay) for cancellation and copying.
+
+## Map tiling and large images
+
+`GRAVEWRIGHT_MAP_MAX_PIXELS` is the exact map pixel limit. At startup, Pillow's header guard is raised to at least that configured value so it does not impose an unrelated lower limit. Exceeding either pixel guard reports a pixel-limit error. The independent byte, dimension and tile-count limits still apply. Both pixel settings must be positive; restart the server after changing them.
+
+`GRAVEWRIGHT_MAP_TILER=auto` uses libvips when available and otherwise uses Pillow. `pillow` always selects Pillow; `vips` requires libvips and fails startup when it is unavailable. The default dependencies and native installers do not select the optional `vips` extra. For a source environment, install it with:
+
+```bash
+uv sync --locked --extra vips
+```
+
+For a native Runner, install into the Python environment named by its generated launcher; the checkout's `.venv` may be a different environment. Keep `--extra vips` on subsequent dependency syncs. A plain exact `uv sync`, a native reinstall or preparation for a managed core update selects the default dependencies and can remove or omit the extra. Check availability again after those operations; setting `GRAVEWRIGHT_MAP_TILER=vips` does not install dependencies.
+
+Pillow decodes the entire map. Its additional `GRAVEWRIGHT_MAP_PILLOW_MAX_PIXELS` ceiling defaults to 64 million pixels, even if the overall map limit is higher. A larger image requires libvips or an explicit increase to that ceiling after assessing available memory. This pixel ceiling bounds accepted image size, not resident memory: decoding, orientation, resampling and codecs also allocate memory. Libvips streams ordinary maps in strips, but formats, codecs and EXIF rotations can require additional memory and temporary disk space.
+
+Only one map pyramid is generated at a time per server process, including decoding. Separate workers can still process maps concurrently. Both engines produce lossless WebP tiles with the same 512-pixel layout and partial edge tiles; reduced levels can differ because the resampling filters differ.
+
+Native tiling stages the source image and generated tiles under installation-root `data/runner/tmp/`. An explicit `GRAVEWRIGHT_RUNNER_ROOT` changes the tool root, and a Django `FILE_UPLOAD_TEMP_DIR` override takes precedence for tiling scratch space; relative paths resolve against the installation root. The directory must be writable and have room for the source, staged tiles and any codec spill files while final tiles are saved to media storage. Storage or native generation failures remain server errors, and already saved tiles are removed if the upload fails. See [deployment](deployment.md) for synchronous upload timeouts and capacity planning.
 
 ## Settings without environment switches
 
@@ -94,18 +144,35 @@ The following are configured in Python, not loaded automatically from similarly 
 | `DATA_UPLOAD_MAX_MEMORY_SIZE` | 8 MiB for Django request-data handling; not a universal uploaded-file byte cap |
 | `SESSION_COOKIE_AGE` | 12 hours; session data is stored in the database |
 | `TIME_ZONE` | `America/Sao_Paulo`, with timezone-aware datetimes |
-| `STATIC_ROOT` | Source-root `staticfiles/` |
-| `GRAVEWRIGHT_CONTENT_ROOT` | Optional Django settings override used by the content catalog; fallback is `data/vtt/compendiums/`. Merely exporting this name in `.env` has no effect |
+| `STATIC_ROOT` | Source-root `staticfiles/`; the Runner uses its state directory's `staticfiles/` |
 | `MAILERS.default` | Console email backend |
 
 Authentication bodies are separately limited to 16 KiB in middleware. Archive imports/exports have limits in `gravewright/administration/archives.py`. Map uploads have independent byte, decoded-image and generated-tile bounds. Check the owning code before assuming one limit governs every path.
 
 ## Persisted host preferences
 
-`gravewright.administration.preferences` stores app identity, update channels and privacy content in the `HostSettings` singleton. `APP_NAME` and `DEFAULT_LOCALE` provide fallbacks, not forced overrides of every saved value. The supported locale list is currently `('en',)`. Setting `DEFAULT_LOCALE=pt-BR` does not add a Portuguese UI.
+`gravewright.administration.preferences` stores app identity, update channels and privacy content in the `HostSettings` singleton. `APP_NAME` and `DEFAULT_LOCALE` provide fallbacks, not forced overrides of every saved value. English is built in; the available locale list comes from installed, globally enabled, compatible language packages. The native installer installs and activates the official Translator when `pt-BR` is selected. Setting `DEFAULT_LOCALE=pt-BR` alone in a manual source installation does not install it. Existing user language choices take precedence over host defaults.
 
 Privacy publication is enabled when either the environment flag or the stored privacy flag is true. Snapshot/audit retention is enforced by the relevant operation paths, not a background scheduler supplied by this project. User preferences and campaign settings are separate from these host settings.
 
 For HTTPS, set the exact browser-facing public origin, including any non-default port. Other entries in `DJANGO_ALLOWED_HOSTS` do not become additional permitted WebSocket origins when a public origin is configured. Without it, WebSocket validation derives the origin from the ASGI scheme and Host; an absent scheme defaults to HTTP.
 
 The [ASGI proxy adapter](../../config/proxy.py) accepts exactly one `X-Forwarded-Proto` header with value `http` or `https` only from the immediate socket peer in `TRUSTED_PROXIES`. It ignores duplicate, comma-separated, malformed or untrusted values. Keep Daphne's `--proxy-headers` disabled so the original peer remains available for this check. The same trust list controls [client-IP forwarding](../../gravewright/accounts/client_ip.py). See [deployment](deployment.md) for a TLS proxy example, Redis and storage requirements.
+
+## Installation-local Runner storage
+
+Default state remains inside the extracted project: `data/` for logs, locks,
+collected assets and content collections; `data/runner/` for managed tools,
+environments, caches and temporary files; `data/updates/` for update transactions
+and recovery. The installer, Runner and `main.py` configure their child-process
+storage before launching tools. No default selects configuration or an active
+release from AppData, HOME, XDG or macOS Library directories.
+
+Runner `--data-dir` selects its state directory, including `compendiums/` and
+`staticfiles/`; it does not relocate database or uploaded media. Set their
+explicit environment paths in project `.env`. An explicit
+`GRAVEWRIGHT_RUNNER_ROOT` selects managed tool/cache storage. Relative overrides
+resolve from the installation root. A non-writable directory is an error rather
+than a request to fall back to a shared user directory. For manual shell commands,
+configure [local tool storage](upgrading.md#local-tool-storage) before invoking
+uv or npm.

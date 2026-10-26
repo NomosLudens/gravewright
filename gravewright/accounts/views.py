@@ -39,7 +39,7 @@ from .forms import (
 )
 
 
-MESSAGES = json.loads(Path(__file__).with_name('messages.json').read_text())
+MESSAGES = json.loads(Path(__file__).with_name('messages.json').read_text(encoding='utf-8'))
 
 
 def is_datastar(request):

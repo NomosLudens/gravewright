@@ -1,0 +1,137 @@
+{
+  "qa_scene": "fdbb3ac5-5580-47f8-b76d-94f613b44fc2",
+  "steps": [
+    {
+      "actor_start": [
+        1246,
+        308
+      ],
+      "board_drop": [
+        128,
+        384
+      ],
+      "stage_box": [
+        0,
+        0,
+        1280,
+        800
+      ]
+    }
+  ],
+  "tile_statuses": [
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/1/0.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/2/1.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/2/0.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/0/2.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/1/1.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/0/1.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/0/0.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/1/2.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/2/2.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/1/1.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/2/0.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/2/1.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/0/1.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/0/2.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/1/0.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/0/0.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/1/2.webp"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:3001/api/maps/fdbb3ac5-5580-47f8-b76d-94f613b44fc2/tiles/0/2/2.webp"
+    }
+  ],
+  "console_errors": [],
+  "gm_tokens": [
+    {
+      "id": "e565d023-4f84-41b8-8ed5-e9902bed34c7",
+      "name": "Batedor QA",
+      "grid": [
+        0.0,
+        8.0
+      ]
+    }
+  ],
+  "player_token_count": 1,
+  "token_created_by_scene_ui": true,
+  "player_observed_same_scene": true,
+  "restored_original_broadcast_via_ui": false,
+  "raster_tile_statuses": [
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200
+  ],
+  "old_scene_404_statuses": [],
+  "restoration_note": "This first activation attempt returned maps.ack but was a no-op because the UI was still navigating the raster scene. Final restoration was completed by navigating to the original scene and then selecting Activate.",
+  "final_restoration": {
+    "verified": true,
+    "request_id": "67ed9eac-266b-4fc1-ba18-836895671a7e",
+    "readback": "Knossos - invasão Silmari (QA)"
+  }
+}

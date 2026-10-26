@@ -1,2 +1,53 @@
 
-.selection-workspace{position:absolute;inset:0;width:100%;height:100%;z-index:7;pointer-events:none}.selection-workspace__error{position:absolute;bottom:89px;left:13px;z-index:9;max-width:calc(100% - 26px);margin:0;padding:5px 8px;background:#10151bef;border:1px solid var(--border);border-radius:5px;color:#ffaaaa;font-size:11px}
+.selection-workspace{position:absolute;inset:0;width:100%;height:100%;z-index:7;pointer-events:none}.selection-workspace [data-image-resize]{touch-action:none}.selection-workspace [data-image-resize]:focus-visible{outline:var(--size-2) solid var(--accent)}.selection-workspace__error{position:absolute;bottom:var(--size-89);left:var(--size-13);z-index:9;max-width:calc(100% - var(--size-26));margin:var(--space-0);padding:var(--space-1) var(--space-2);background:#10151bef;border:var(--size-1) solid var(--border);border-radius:var(--radius-sm);color:#ffaaaa;font-size:var(--text-sm)}
+
+.journal-map-pins{position:absolute;inset:0;z-index:8;pointer-events:none;overflow:hidden}
+.journal-map-pin{position:absolute;left:0;top:0;display:grid;place-items:center;pointer-events:auto;touch-action:none;box-sizing:border-box;width:var(--marker-size, var(--size-28));height:var(--marker-size, var(--size-28));min-width:0;min-height:0;padding:var(--space-0);border:var(--size-1) solid #c09a5a;border-radius:var(--radius-sm);background:#181c20ed;color:#e5c788;cursor:pointer;box-shadow:0 var(--size-1) var(--size-3) #0006}
+.journal-map-pin .rpg-icon{width:74%;height:74%}
+.journal-map-pin--private{border-color:#8f99a4;background:#181c20e6;color:#b9c1cb}
+.journal-map-pin:hover{background:#292b2e;border-color:#f0d297;color:#f0d297}
+.journal-map-pin:focus-visible{outline:var(--size-3) solid #fff;outline-offset:var(--size-2)}
+.journal-map-pins__status{position:absolute;bottom:var(--size-90);left:var(--size-16);z-index:9;background:#10151bef;color:#eee;padding:var(--space-2);border-radius:var(--radius-sm);max-width:var(--size-420)}
+.journal-rich-text__reference{margin-bottom:var(--space-2);padding:var(--space-1) var(--space-2);border:var(--size-1) solid var(--border);border-radius:var(--radius-sm);background:var(--panel);color:var(--text);cursor:pointer}
+.journal-rich-text a[href*="?document="]{color:var(--accent);text-decoration:underline;text-underline-offset:var(--size-3);cursor:pointer}
+.document-reference-results{display:flex;flex-direction:column;gap:var(--space-1);max-height:var(--size-320);overflow:auto}
+.document-reference-results button{text-align:left;padding:var(--space-2);border:var(--size-1) solid var(--border);border-radius:var(--radius-sm);background:var(--panel);color:var(--text)}
+.document-reference-results button[aria-pressed=true]{border-color:var(--accent)}
+
+#maps-panel .game-directory--scenes{display:flex;flex-direction:column}
+#maps-panel .game-directory--scenes>.directory-toolbar{flex:0 0 auto}
+#maps-panel .game-directory--scenes>[data-map-tree]{flex:1 1 0;min-height:0;overflow:auto}
+[data-scene-prepared]{color:var(--accent);font-size:var(--text-sm)}
+.game-scene-settings .table-modal-body .game-scene-editor__check{display:flex;align-items:center;gap:var(--space-2)}
+.game-scene-settings .table-modal-body .game-scene-editor__check input{flex:0 0 auto;width:auto;margin:var(--space-0)}
+.scene-settings-columns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--space-6)}
+.scene-settings-column{display:flex;flex-direction:column;gap:var(--space-3);min-width:0}
+.scene-settings-column+.scene-settings-column{border-left:var(--size-1) solid var(--border);padding-left:var(--space-6)}
+.scene-settings-column .game-scene-settings__wide{display:grid;grid-template-columns:1fr;gap:var(--space-3)}
+.scene-settings-column [data-view-hint]{margin:var(--space-0)}
+.scene-settings-column .game-scene-settings__grid{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--space-3)}
+.scene-settings-column .game-scene-settings__grid label{min-width:0}
+.scene-settings-column .game-scene-settings__grid input[type=range]{width:100%;min-width:0}
+.scene-settings-column .game-scene-settings__calibration{flex-direction:column;align-items:stretch;gap:var(--space-2);padding:var(--space-3)}
+.scene-settings-column .game-scene-settings__calibration button{width:100%;min-height:var(--size-34);white-space:nowrap;gap:var(--space-2)}
+.scene-settings-column .game-scene-settings__calibration button svg{flex:0 0 var(--size-18);width:var(--size-18);height:var(--size-18)}
+.scene-settings-column .game-scene-settings__calibration button:hover{border-color:var(--accent)}
+@media(max-width:560px){.scene-settings-columns{grid-template-columns:1fr;gap:var(--space-4)}.scene-settings-column+.scene-settings-column{border-left:0;border-top:var(--size-1) solid var(--border);padding-left:var(--space-0);padding-top:var(--space-4)}}
+
+.ownership-modal-overlay>.game-scene-create{min-height:0;resize:none}
+.game-scene-create__body{display:grid;gap:var(--space-2);padding:var(--space-3);min-width:0}
+.game-scene-create__body>p{margin:var(--space-0) var(--space-0) var(--space-1);color:var(--text-muted, #aeb5bf);font-size:var(--text-sm);line-height:1.5}
+.game-scene-create .game-scene-create__option{display:flex;align-items:center;gap:var(--space-3);min-width:0;min-height:64px;padding:var(--space-3);border:var(--size-1) solid var(--border);border-radius:var(--radius-md);background:var(--surface-field, #101419);color:var(--text);font:inherit;text-align:left;text-decoration:none;cursor:pointer}
+.game-scene-create__option>svg{width:24px;height:24px;flex:0 0 24px;color:var(--accent)}
+.game-scene-create__option>span{display:grid;gap:var(--space-1);min-width:0;overflow-wrap:anywhere}
+.game-scene-create__option strong{font-size:var(--text-md);line-height:1.4}
+.game-scene-create__option small{color:var(--text-muted, #aeb5bf);font-size:var(--text-sm);line-height:1.5}
+.game-scene-create .game-scene-create__option:hover{border-color:var(--accent);background:var(--surface-hover, #242b30)}
+.game-scene-create .game-scene-create__option:focus-visible{outline:var(--size-2) solid var(--focus-ring, var(--accent));outline-offset:var(--size-2)}
+
+.game-directory__scene[data-scene-builder-origin]>svg{color:var(--danger)}
+
+.map-pointers{position:absolute;inset:0;z-index:7;overflow:hidden;pointer-events:none}
+.map-pointer{position:absolute;left:0;top:0;width:1px;height:1px;pointer-events:none}
+.map-pointer__dot{position:absolute;left:-6px;top:-6px;box-sizing:border-box;width:12px;height:12px;border:1px solid #0008;border-radius:50%;opacity:.45}
+.map-pointer__name{position:absolute;top:10px;left:0;transform:translateX(-50%);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:white;font:14px sans-serif;text-shadow:0 1px 2px #000,0 -1px 2px #000}

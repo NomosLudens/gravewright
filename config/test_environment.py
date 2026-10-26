@@ -1,5 +1,7 @@
 import importlib
+from contextlib import chdir
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +11,24 @@ from config.environment import BASE_DIR, env_bool, env_path, load_environment, p
 
 
 class EnvironmentTests(unittest.TestCase):
+    def test_dotenv_uses_project_root_instead_of_user_data_or_working_directory(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, clear=True):
+            work = Path(temporary)
+            root = work / 'project'
+            user = work / 'profile'
+            data = user / 'Gravewright/data'
+            root.mkdir()
+            data.mkdir(parents=True)
+            (root / '.env').write_text('APP_NAME=Project\n')
+            (data / '.env').write_text('APP_NAME=User\nUSER_ONLY=ignored\n')
+            (work / '.env').write_text('APP_NAME=Working directory\nCWD_ONLY=ignored\n')
+            os.environ['LOCALAPPDATA'] = str(user)
+            with chdir(work):
+                load_environment(root)
+            self.assertEqual(os.environ['APP_NAME'], 'Project')
+            self.assertNotIn('USER_ONLY', os.environ)
+            self.assertNotIn('CWD_ONLY', os.environ)
+
     def test_dotenv_priority_and_literal_secrets(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'PORT': '9000'}, clear=True):
             root = Path(directory)
@@ -66,9 +86,33 @@ class EnvironmentTests(unittest.TestCase):
         finally:
             importlib.reload(settings)
 
+    def test_default_extension_folders(self):
+        """The shipped Django folder is importable; a configured folder must exist."""
+        import config.settings as settings
+        original = list(sys.path)
+        try:
+            importlib.reload(settings)
+            self.assertEqual(settings.GRAVEWRIGHT_API_MODULES_ROOT, BASE_DIR / 'extensions/api')
+            self.assertEqual(settings.GRAVEWRIGHT_DJANGO_MODULES_ROOT, BASE_DIR / 'extensions/django')
+            self.assertIn(str(BASE_DIR / 'extensions/django'), sys.path)
+            with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+                'GRAVEWRIGHT_DJANGO_MODULES_ROOT': directory,
+            }):
+                importlib.reload(settings)
+                self.assertEqual(settings.GRAVEWRIGHT_DJANGO_MODULES_ROOT, Path(directory).resolve())
+                self.assertIn(str(Path(directory).resolve()), sys.path)
+            with patch.dict(os.environ, {'GRAVEWRIGHT_API_MODULES_ROOT': 'extensions/absent'}):
+                with self.assertRaises(ValueError):
+                    importlib.reload(settings)
+        finally:
+            sys.path[:] = original
+            importlib.reload(settings)
+
     def test_launcher_uses_configured_address(self):
         from main import main
-        with patch.dict(os.environ, {'DJANGO_SETTINGS_MODULE': 'config.settings'}), patch(
+        # On Windows without UTF-8 mode the launcher re-executes itself; replacing
+        # the test process would start a real server and end the whole suite.
+        with patch('os.execv'), patch.dict(os.environ, {'DJANGO_SETTINGS_MODULE': 'config.settings'}), patch(
             'django.core.management.execute_from_command_line'
         ) as execute, patch('sys.argv', ['main.py', '--dev', '--noreload']), patch(
             'django.conf.settings.GRAVEWRIGHT_HOST', '::1'

@@ -6,11 +6,11 @@ import json
 from pathlib import Path
 import re
 
-from django.conf import settings
 from datastar_py.django import DatastarResponse, ServerSentEventGenerator as SSE
 from gravewright.accounts.client_ip import client_ip
 from django.http import JsonResponse
 from django.shortcuts import render
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.template.loader import render_to_string
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
@@ -26,8 +26,18 @@ from gravewright.campaigns.forms import CampaignForm
 from gravewright.campaigns.views import authenticated, validate_campaign_form
 from .responses import navigate
 
-TEXT = json.loads(Path(__file__).with_name('inside_messages.json').read_text())
+TEXT = json.loads(Path(__file__).with_name('inside_messages.json').read_text(encoding='utf-8'))
 SECTIONS = {'campaigns', 'settings', 'privacy', 'systems', 'addons', 'marketplace', 'administration'}
+
+
+def _campaign_row(campaign, user):
+    """Add current campaign-local GM access only to the Inside presentation."""
+    row = campaigns.public_campaign(campaign)
+    row['can_manage'] = user.is_active and any(
+        member.user_id == user.pk and member.role == Membership.Role.GM and member.user.is_active
+        for member in campaign.memberships.all()
+    )
+    return row
 
 
 def inside_response(request, *, section='campaigns', dialog='', campaign=None, form=None,
@@ -38,20 +48,12 @@ def inside_response(request, *, section='campaigns', dialog='', campaign=None, f
         section = 'addons'
     if section not in SECTIONS or (request.user.role != 'owner' and section in ('privacy', 'systems', 'addons', 'marketplace', 'administration')):
         section = 'campaigns'
-    rows = []
-    for candidate in Campaign.objects.visible_to(request.user).with_members():
-        row = campaigns.public_campaign(candidate)
-        row['canManage'] = any(
-            member.user_id == request.user.pk and member.role == Membership.Role.GM
-            for member in candidate.memberships.all()
-        )
-        rows.append(row)
+    rows = [_campaign_row(c, request.user) for c in Campaign.objects.visible_to(request.user).with_members()]
     query = request.GET.get('search', request.POST.get('_insideSearch', ''))
     system = request.GET.get('system', request.POST.get('_insideSystem', ''))
     visible = [row for row in rows if (not system or row['system'] == system) and
                query.strip().lower() in f"{row['name']} {row['description']}".lower()]
-    selected = campaigns.public_campaign(campaign) if campaign else None
-    kallistis_link = getattr(campaign, 'kallistis_link', None) if campaign else None
+    selected = _campaign_row(campaign, request.user) if campaign else None
     rulesets = list_rulesets()
     dialog_rulesets = list(rulesets)
     if campaign and campaign.system and campaign.system not in {row['systemId'] for row in rulesets}:
@@ -67,17 +69,11 @@ def inside_response(request, *, section='campaigns', dialog='', campaign=None, f
         'privacy_policy': host_preferences()['privacy'] if section == 'privacy' else {},
         **TEXT, 'auth': AUTH_TEXT, 'user': request.user, 'owner': request.user.role == 'owner',
         'section': section, 'rows': rows, 'visible_rows': visible, 'rulesets': rulesets,
+        'administration_tab': request.GET.get('tab', 'campaigns') if request.GET.get('tab') in {'campaigns', 'diagnostics', 'updates'} else 'campaigns',
         'dialog_rulesets': dialog_rulesets,
         'system_titles': {r['systemId']: r['title'] for r in rulesets},
         'search': query, 'system_filter': system,
         'dialog': dialog, 'selected': selected, 'fields': fields,
-        'campaign_manager': dialog == 'edit' and campaign is not None,
-        'kallistis_origin': settings.KALLISTIS_ORIGIN,
-        'kallistis_link': ({
-            'mesa_id': str(kallistis_link.source_mesa_id),
-            'mesa_name': kallistis_link.source_mesa_name,
-            'linked_at': kallistis_link.created_at.isoformat(),
-        } if kallistis_link else None),
         'error': error, 'notice': notice, 'temporary_code': temporary_code,
         'joining': joining, 'ping_color': UserPreference.objects.filter(user=request.user).values_list('ping_color', flat=True).first() or '#f2c679',
     }
@@ -212,6 +208,8 @@ def preferences(request):
         if not isinstance(color, str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', color):
             raise accounts.AuthError('invalid_ping_color')
         UserPreference.objects.update_or_create(user=request.user, defaults={'ping_color': color.lower()})
+        from gravewright.maps.audience import color_changed
+        color_changed(request.user.pk)
         if is_datastar(request):
             return DatastarResponse(SSE.patch_signals({'_pingNotice': 'Color saved for your account.'}))
     color = UserPreference.objects.filter(user=request.user).values_list('ping_color', flat=True).first() or '#f2c679'
@@ -228,7 +226,11 @@ def language(request):
     if len(available) < 2 or locale not in available:
         return api_error(accounts.AuthError('invalid_locale'))
     UserPreference.objects.update_or_create(user=request.user, defaults={'locale': locale})
-    response = navigate(request, '/inside?section=settings')
+    destination = request.POST.get('next', '')
+    if not url_has_allowed_host_and_scheme(destination, allowed_hosts={request.get_host()}, require_https=request.is_secure()):
+        destination = '/inside?section=settings'
+    response = (JsonResponse({'locale': locale}) if request.headers.get('Accept') == 'application/json'
+                else navigate(request, destination))
     response.set_signed_cookie('gravewright-language', locale, max_age=365 * 24 * 3600,
                                secure=settings.SESSION_COOKIE_SECURE, httponly=True, samesite='Strict')
     return response

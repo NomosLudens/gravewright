@@ -367,12 +367,18 @@ def movement_cost(dx, dy, terrain="NORMAL"):
     _int(dx, "dx"); _int(dy, "dy")
     if abs(dx) > 1 or abs(dy) > 1:
         raise RuleError("Movement path must enumerate adjacent cells.")
+    multiplier = terrain_movement_multiplier(terrain)
+    base = 2 if abs(dx) and abs(dy) else 1
+    return base * multiplier
+
+
+def terrain_movement_multiplier(terrain):
+    """Canonical KALLÍSTIS movement multiplier used by every scene authority."""
     if terrain not in {"NORMAL", "DIFICIL", "SEVERO", "INTRANSPONIVEL"}:
         raise RuleError("Unknown terrain.")
     if terrain == "INTRANSPONIVEL":
         raise RuleError("Impassable terrain.")
-    base = 2 if abs(dx) and abs(dy) else 1
-    return base * {"NORMAL": 1, "DIFICIL": 2, "SEVERO": 3}[terrain]
+    return {"NORMAL": 1, "DIFICIL": 2, "SEVERO": 3}[terrain]
 
 
 def run_movement(state, points, *, terrain="NORMAL", forced=False, teleport=False):

@@ -1,10 +1,11 @@
 /* @gravewright/ui — the whole interface language, in load order.
  *
- * tokens → base → blocks. Nothing below tokens may declare a raw pixel
- * dimension; every one resolves through the Fibonacci scale. */
+ * tokens → base → blocks. Reuse shared tokens for common geometry;
+ * local dimensions may use plain pixel values. */
 
-@import "./tokens.css";
+/* Tokens are loaded by the base template with a content version. */
 @import "./base.css";
+@import "./blocks/rpg-icon.css";
 
 @import "./blocks/mark.css";
 @import "./blocks/button.css";

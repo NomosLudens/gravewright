@@ -7,7 +7,7 @@ import uuid
 from django.db import transaction
 from . import types
 from gravewright.campaigns.models import Membership, Campaign
-from .models import Journal, Folder, Access, Asset, Receipt
+from .models import Journal, Folder, Access, Asset, Receipt, BoardEntry
 from . import documents, data as shapes
 
 
@@ -26,7 +26,7 @@ def identifier(value):
 
 def member(campaign_id, user_id):
     """Resolve current active membership, including streamer link validity."""
-    found = Membership.objects.select_related('user').filter(campaign_id=campaign_id, user_id=user_id, user__is_active=True).first()
+    found = Membership.objects.select_related('user', 'campaign').filter(campaign_id=campaign_id, user_id=user_id, user__is_active=True).first()
     if found is None:
         raise JournalError('You no longer have access to this table.', 'not_a_member')
     if found.role == 'streamer':
@@ -40,10 +40,9 @@ def writable(who):
 
 
 def permissions(journal, who):
-    levels = {row.user_id: row.level for row in journal.access.all()}
-    gm = who.role == 'gm'
-    own = levels.get(who.user_id) == 'owner'
-    return gm or own or journal.visibility in {'shared','handout'} or levels.get(who.user_id) == 'read', gm or own
+    from gravewright.table.ownership import allows, journal_grants
+    grants = journal_grants(journal, who)
+    return allows(grants, who), allows(grants, who, edit=True)
 
 
 def get(journal_id, who, edit=False):
@@ -80,7 +79,7 @@ def asset_ids(value):
             yield from asset_ids(child)
 
 
-def clean_data(raw, journal, who):
+def clean_data(raw, journal, who, *, _trusted_links=False):
     """Normalize document data while preserving hidden content and asset ownership."""
     if not isinstance(raw, dict) or len(json.dumps(raw)) > 512_000:
         raise JournalError('The document is too large.')
@@ -92,10 +91,28 @@ def clean_data(raw, journal, who):
         available |= {str(pk) for pk in Asset.objects.filter(journal=journal,uploader_id=who.user_id).values_list('pk',flat=True)} - linked
         if not set(asset_ids(raw)) <= available:
             raise JournalError('A file is not available to this editor.')
+    existing = None
+    source = raw
     try:
-        clean = shapes.normalize_data_for(journal.type,raw)
+        if journal.type == 'diary':
+            existing = shapes.normalize_diary_data(journal.data)
+            source = deepcopy(raw)
+            if 'chapters' not in source:
+                # Old clients send only page categories. Keep independent empty
+                # chapters, exposing no hidden chapter name to their adapter.
+                from gravewright.table.ownership import page_level
+                source['chapters'] = deepcopy(existing['chapters'] if who.role == 'gm' else
+                    visible_chapters(existing, [page for page in existing['sections']
+                        if page_level(journal, page, who) in {'read', 'owner'}]))
+            shapes.validate_diary_structure(source)
+        clean = shapes.normalize_data_for(journal.type,source)
+        if journal.type == 'diary':
+            shapes.validate_diary_structure(clean)
     except (TypeError,ValueError,AttributeError):
         raise JournalError('Invalid document content.') from None
+    # Validate submitted atoms before merging server-owned hidden content.
+    from . import links
+    clean = links.clean(clean, journal, who, trusted=_trusted_links)
     if journal.type == 'diary':
         sections=clean['sections']
         if len(raw.get('sections',[])) > 64 or len({s['id'] for s in sections}) != len(sections):
@@ -105,24 +122,75 @@ def clean_data(raw, journal, who):
             aid=section['assetId']
             section['src']=f'/game/journal/asset/{aid}' if aid else ''
         if who.role != 'gm':
-            existing=shapes.normalize_diary_data(journal.data)
+            from gravewright.table.ownership import page_level
+            visible_ids = {chapter['id'] for chapter in visible_chapters(existing, [page for page in existing['sections']
+                           if page_level(journal, page, who) in {'read', 'owner'}])}
+            hidden_ids = {chapter['id'] for chapter in existing['chapters']} - visible_ids
+            if any(chapter['id'] in hidden_ids or chapter['parentId'] in hidden_ids for chapter in clean['chapters']):
+                raise JournalError('Chapter not found or access denied.')
             clean['gm']=existing['gm']
             clean['content']=preserve_secrets(clean['content'],existing['content'])
             old={s['id']:s for s in existing['sections']}
             for section in sections:
-                if section['id'] in old and old[section['id']]['audience']=='gm':
-                    raise JournalError('Page not found or access denied.')
+                if section['id'] in old and page_level(journal,old[section['id']],who) != 'owner':
+                    if page_level(journal,old[section['id']],who) not in {'read','owner'}:
+                        raise JournalError('Page not found or access denied.')
+                    stored=deepcopy(old[section['id']])
+                    section.clear();section.update(stored)
                 section['audience']='public'
                 section['content']=preserve_secrets(section['content'],old.get(section['id'],{}).get('content',{}))
-            clean['sections']=sorted(sections+[s for s in existing['sections'] if s['audience']=='gm'], key=lambda s:s['sortOrder'])
+            submitted={s['id'] for s in sections}
+            clean['sections']=sorted(sections+[s for s in existing['sections'] if s['id'] not in submitted and page_level(journal,s,who) != 'owner'], key=lambda s:s['sortOrder'])
             if len(clean['sections'])>64:
                 raise JournalError('This journal already has 64 pages.')
+            protected = hidden_ids | {page['chapterId'] for page in existing['sections']
+                                      if page_level(journal, page, who) != 'owner' and page['chapterId']}
+            previous = {chapter['id']: chapter for chapter in existing['chapters']}
+            submitted_chapters = {chapter['id']: chapter for chapter in clean['chapters']}
+            effective_chapters = {**previous, **submitted_chapters}
+            pending = list(protected)
+            while pending:
+                identifier = pending.pop()
+                if identifier in visible_ids and identifier not in submitted_chapters and 'chapters' in raw:
+                    raise JournalError('A chapter with protected pages cannot be removed.')
+                chapter = effective_chapters.get(identifier)
+                if chapter and chapter['parentId'] and chapter['parentId'] not in protected:
+                    protected.add(chapter['parentId']); pending.append(chapter['parentId'])
+            clean['chapters'].extend(deepcopy(chapter) for chapter in existing['chapters']
+                                     if chapter['id'] in protected and chapter['id'] not in submitted_chapters)
+        try:
+            shapes.validate_diary_structure(clean)
+        except ValueError:
+            raise JournalError('Invalid journal chapters.') from None
+        chapter_names = {chapter['id']: chapter['name'] for chapter in clean['chapters']}
+        for page in clean['sections']:
+            page['category'] = chapter_names.get(page['chapterId'], '')
     clean = types.clean_type(raw, clean, journal, who)
+    # Hidden blocks/pages added back above count toward the portable document
+    # limit, but must never be re-authorized as if the player submitted them.
+    if sum(1 for _ in links.nodes(clean)) > links.MAX_LINKS:
+        raise JournalError('Use up to 512 resource references per document.')
     requested=set(asset_ids(clean))
     allowed={str(pk) for pk in Asset.objects.filter(journal=journal).values_list('pk',flat=True)}
     if not requested <= allowed:
         raise JournalError('A file does not belong to this document.')
     return clean
+
+
+def set_visibility(journal, who, visibility, *, force_default=False):
+    """Keep the journal's visibility and explicit default grant in agreement."""
+    if who.role != 'gm':
+        raise JournalError('Only the GM can change access.')
+    if not isinstance(visibility, str) or visibility not in {'private', 'shared', 'handout'}:
+        raise JournalError('Invalid visibility.')
+    if force_default or visibility != journal.visibility:
+        from gravewright.table.models import DocumentAccess
+        explicit = DocumentAccess.objects.filter(campaign_id=who.campaign_id, kind='journals', resource_id=str(journal.pk)).first()
+        if explicit:
+            explicit.grants['default'] = 'read' if visibility in {'shared', 'handout'} else 'none'
+            explicit.save(update_fields=['grants'])
+            who._ownership_cache = {}
+    journal.visibility = visibility
 
 
 def preserve_secrets(submitted, stored):
@@ -140,7 +208,25 @@ def preserve_secrets(submitted, stored):
     return public
 
 
-def projection(journal, who):
+def visible_chapters(clean, pages, *, page_only=False):
+    """Show readable page paths and independent empty branches, without secrets."""
+    chapters = {chapter['id']: chapter for chapter in clean['chapters']}
+    occupied, visible = set(), {page['chapterId'] for page in pages if page['chapterId']}
+    def ancestors(values):
+        pending, seen = list(values), set(values)
+        while pending:
+            chapter = chapters.get(pending.pop())
+            if chapter and chapter['parentId'] and chapter['parentId'] not in seen:
+                seen.add(chapter['parentId']); pending.append(chapter['parentId'])
+        return seen
+    if not page_only:
+        occupied = ancestors({page['chapterId'] for page in clean['sections'] if page['chapterId']})
+        visible |= set(chapters) - occupied
+    wanted = ancestors(visible)
+    return [deepcopy(chapter) for chapter in clean['chapters'] if chapter['id'] in wanted]
+
+
+def projection(journal, who, *, _resolve_links=True, _resolver=None):
     """Build recipient-visible content and omit GM-only fields, pages and blocks."""
     gm=who.role=='gm'
     clean=shapes.normalize_data_for(journal.type,journal.data)
@@ -148,21 +234,83 @@ def projection(journal, who):
           'folder_id':str(journal.folder_id) if journal.folder_id else None,
           'visibility':journal.visibility,'version':journal.version,'can_edit':permissions(journal,who)[1]}
     if gm:
-        view['permissions']={str(a.user_id):a.level for a in journal.access.all()}
+        from gravewright.table.ownership import journal_grants
+        view['permissions']=journal_grants(journal,who)
     if journal.type=='diary':
         view['content_doc']=documents.filter_doc_for_role(clean['content'],is_gm=gm)
         view['cover_image']=clean['cover']
-        view['sections']=[{**s,'content':documents.filter_doc_for_role(s['content'],is_gm=gm)} for s in clean['sections'] if gm or s['audience']=='public']
+        from gravewright.table.ownership import page_level
+        view['sections']=[{**s,'can_edit':page_level(journal,s,who)=='owner','content':documents.filter_doc_for_role(s['content'],is_gm=gm)} for s in clean['sections'] if page_level(journal,s,who) in {'read','owner'}]
         view['editable_sections']=deepcopy(view['sections'])
         if gm: view['diary']={'gm':clean['gm']}
+        if (str(journal.pk) == getattr(who, '_presentation_journal_id', None)
+                and getattr(who, '_presentation_page_id', None)):
+            # Ticket access to one page must not enrich links or assets from
+            # other pages before the presentation's outer projection filters.
+            page_id = who._presentation_page_id
+            view['sections'] = [page for page in view['sections'] if page['id'] == page_id]
+            view['editable_sections'] = deepcopy(view['sections'])
+            view['content_doc'], view['cover_image'] = {}, {}
+        view['chapters'] = deepcopy(clean['chapters']) if gm else visible_chapters(clean, view['sections'],
+            page_only=bool(getattr(who, '_presentation_page_id', None)))
     view.update(types.project(journal, who, clean))
     view['listed'] = permissions(journal, who)[0]
+    view['can_open'] = view['listed'] or types.via_board(journal, who)
+    if _resolve_links:
+        from .links import project
+        view = project(view, journal, who, _resolver)
     return view
+
+
+def directory_rows(campaign_id):
+    """Resolve board relationships once, reusing the already-authorized projection rows."""
+    rows=list(Journal.objects.filter(campaign_id=campaign_id).prefetch_related('access'))
+    by_id={row.pk:row for row in rows}
+    for row in rows:
+        row._directory_board_links=[]
+        row._directory_quest_links=[]
+    if any(row.type=='quest_board' for row in rows):
+        for link in BoardEntry.objects.filter(board__campaign_id=campaign_id,quest__campaign_id=campaign_id).order_by('-pinned','sort_order','id'):
+            board,quest=by_id.get(link.board_id),by_id.get(link.quest_id)
+            if board and quest and board.type=='quest_board' and quest.type=='quest':
+                link.board,link.quest=board,quest
+                board._directory_board_links.append(link)
+                quest._directory_quest_links.append(link)
+    return rows
 
 
 def state(campaign_id,user_id):
     who=member(campaign_id,user_id)
-    journals=[projection(j,who) for j in Journal.objects.filter(campaign_id=campaign_id).prefetch_related('access') if permissions(j,who)[0] or types.via_board(j,who)]
+    return _state(who)
+
+
+def metadata_state(who):
+    """Native authorized directory for resource indexing, without nested links."""
+    return _state(who, resolve_links=False)
+
+
+def _state(who, *, resolve_links=True):
+    campaign_id, user_id = who.campaign_id, who.user_id
+    resolver = None
+    def get_resolver():
+        nonlocal resolver
+        from gravewright.table.resource_links import Resolver
+        if resolver is None:
+            resolver = Resolver(who)
+        return resolver
+    from gravewright.table.ownership import allows, journal_grants
+    journals=[]
+    rows=directory_rows(campaign_id)
+    from gravewright.actors.models import Actor
+    from gravewright.actors.services import access as actor_access
+    assigned={value for row in rows if row.type == 'quest' for value in shapes.normalize_quest_data(row.data)['assignees']}
+    who._quest_actor_cache={str(actor.pk):{'id':str(actor.pk),'name':actor.name} for actor in Actor.objects.filter(
+        campaign_id=campaign_id,pk__in=assigned).only('id','name','permissions') if actor_access(actor,who)}
+    for j in rows:
+        if permissions(j,who)[0] or types.via_board(j,who):
+            journals.append(projection(j,who,_resolve_links=resolve_links,_resolver=get_resolver))
+        elif allows(journal_grants(j,who),who,listing=True):
+            journals.append({'id':str(j.pk),'title':j.title,'type':j.type,'folder_id':str(j.folder_id) if j.folder_id else None,'visibility':j.visibility,'version':j.version,'can_edit':False,'can_open':False,'listed':True})
     folders=list(Folder.objects.filter(campaign_id=campaign_id))
     if who.role!='gm':
         visible={j['folder_id'] for j in journals}|{str(f.pk) for f in folders if f.creator_id==user_id}
@@ -234,17 +382,41 @@ def apply(who,action,p):
             else:raise JournalError('Unknown folder command.')
             f.save()
         return {'folder_id':str(f.pk)}
+    if action in {'restore-deleted','trash-purge'}:
+        if not gm:raise JournalError('Only the GM can manage deleted documents.')
+        from . import history
+        if action=='trash-purge':
+            from .models import Revision
+            row=Revision.objects.filter(campaign_id=who.campaign_id,reason='delete',pk=identifier(p.get('revision_id'))).first()
+            if row is None:raise JournalError('That document is no longer in the trash.','not_found')
+            history.purge(row);return {}
+        j=history.restore_deleted(p.get('revision_id'),who)
+        return {'journal_id':str(j.pk),'version':j.version,'restored':True}
     j=get(p.get('journal_id'),who,edit=True)
     result = {}
-    if action=='update':
+    if action not in {'delete','move','access'}:
+        # The transaction discards this snapshot if the command is rejected.
+        from . import history
+        history.snapshot(j,who)
+    if action=='restore-revision':
+        if not gm:raise JournalError('Only the GM can restore earlier versions.')
+        if type(p.get('version')) is not int or p['version']!=j.version:
+            raise JournalError('This journal changed in another window. Review the current version before restoring.', 'conflict')
+        history.restore_revision(j,p.get('revision_id'),who)
+    elif action=='update':
         if type(p.get('version')) is not int or p['version']!=j.version:
             raise JournalError('This journal changed in another window. Review your draft, then try saving to replace that version.', 'conflict')
         j.title=text(p.get('title'),120,'Title')
         if gm:
-            visibility=p.get('visibility',j.visibility)
-            if visibility not in {'private','shared','handout'}:raise JournalError('Invalid visibility.')
-            j.visibility=visibility
+            set_visibility(j,who,p.get('visibility',j.visibility))
         j.data=clean_data(p.get('data'),j,who)
+        if j.type == 'diary':
+            from gravewright.maps.models import SceneObject
+            removed, _ = SceneObject.objects.filter(scene__campaign_id=who.campaign_id,
+                kind='journalPins', data__journalId=str(j.pk)).exclude(data__pageId='').exclude(
+                data__pageId__in=[page['id'] for page in j.data['sections']]).delete()
+            if removed:
+                result['map_locations_changed'] = True
     elif action=='move':
         if not gm:raise JournalError('Only the GM can move documents.')
         j.folder=folder(p.get('target_folder_id'),who,True)
@@ -252,11 +424,20 @@ def apply(who,action,p):
         if not gm:raise JournalError('Only the GM can change access.')
         target=member(who.campaign_id,identifier(p.get('target_user_id')))
         level=p.get('access_level')
-        if level not in {'none','read','owner'}:raise JournalError('Invalid access level.')
+        if level not in {'none','limited','read','owner'}:raise JournalError('Invalid access level.')
         Access.objects.update_or_create(journal=j,user_id=target.user_id,defaults={'level':level})
+        from gravewright.table.models import DocumentAccess
+        explicit=DocumentAccess.objects.filter(campaign_id=who.campaign_id,kind='journals',resource_id=str(j.pk)).first()
+        if explicit:
+            explicit.grants[str(target.user_id)]=level;explicit.save(update_fields=['grants'])
+            who._ownership_cache={}
     elif action=='delete':
         if not gm:raise JournalError('Only the GM can delete documents.')
-        j.delete();return {}
+        from gravewright.maps.models import SceneObject
+        removed, _ = SceneObject.objects.filter(scene__campaign_id=who.campaign_id,
+            kind='journalPins', data__journalId=str(j.pk)).delete()
+        from . import history
+        history.trash(j,who);return {'map_locations_changed': True} if removed else {}
     else:
         result = types.apply(j, who, action, p)
     j.version+=1;j.save()

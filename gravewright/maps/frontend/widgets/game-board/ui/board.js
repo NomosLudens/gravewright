@@ -3,7 +3,7 @@ import { tileBlobCache } from "../model/tile-blob-cache.js";
 import { pingShapes, PING_DURATION } from "../model/map-ping.js";
 import { LONG_PRESS_MS, movedBeyondThreshold, zoomAround } from "../model/board-input.js";
 import { PRIORITY, TileScheduler } from "../model/tile-scheduler.js";
-import { fitToSurface, planTiles, sameRegion, visibleRange, worldPoint } from "../model/board-view.js";
+import { fitToSurface, planTiles, regionTileUrls, sameRegion, visibleRange, worldPoint } from "../model/board-view.js";
 import { StableRegionHeartbeat } from "../model/stable-region-heartbeat.js";
 import { AsyncWorkPump } from "../model/async-work-pump.js";
 import { warmTiles } from "../lib/warm-tiles.js";
@@ -11,6 +11,14 @@ import { createPixiBoardRenderer } from "../lib/pixi-board-renderer.js";
 import { renderingPreferences } from "../../../shared/rendering/render-profile.js";
 import { SceneLayers } from "../lib/scene-layers.js";
 // Lifecycle and DOM events use an explicit controller; no Vue runtime.
+export function preloadScene(manifest, surface, initialView) {
+    const region = visibleRange(manifest, initialView || fitToSurface(surface, manifest), surface);
+    const task = warmTiles(manifest, region);
+    return { cancel: task.cancel, done: task.done.then(() => {
+        if (!regionTileUrls(manifest, region, 24).some(url => tileBlobCache.has(url)))
+            throw new Error('Unable to preload this scene.');
+    }) };
+}
 export function createBoard(element, options, emit) {
     const props = { ...options };
     const host = { value: element };
@@ -108,7 +116,7 @@ export function createBoard(element, options, emit) {
         shown = new Map([...shown].filter(([key]) => wanted.has(key) || backdrop.has(key)));
         tilesNeedSync = true;
         for (const { tile, priority, distance } of plan) {
-            if (shown.has(tile.key))
+            if (shown.get(tile.key)?.url === tile.url)
                 continue;
             scheduler.enqueue({ key: tile.key, payload: tile, priority, order: distance, scene, generation: view }, performance.now());
         }
@@ -122,27 +130,33 @@ export function createBoard(element, options, emit) {
             const view = generation;
             const batch = scheduler.drain(performance.now(), { maxItems: LOAD_BUDGET });
             tilesNeedSync = false;
+            const requested = new Map(shown);
             for (const tile of batch)
-                shown.set(tile.key, tile);
+                requested.set(tile.key, tile);
             loading = true;
             let failed;
             try {
-                failed = await engine.setTiles([...shown.values()]);
+                failed = await engine.setTiles([...requested.values()]);
             }
             finally {
                 loading = false;
             }
-            for (const key of failed)
-                retry(key, view);
-            for (const tile of batch)
-                if (!failed.includes(tile.key))
+            for (const tile of batch) {
+                // A newer plan owns these keys now. Never restore an obsolete URL or retry it.
+                if (wanted.get(tile.key)?.url !== tile.url)
+                    continue;
+                if (failed.includes(tile.key))
+                    retry(tile, generation);
+                else if (generation === view) {
+                    shown.set(tile.key, tile);
                     attempts.delete(tile.key);
-            // The viewport moved while this wave was in flight; the plan it produced is the one to follow.
+                }
+            }
             if (generation !== view)
                 break;
             // `shown` only means successfully requested after this awaited renderer pass. Once every tile
             // in the new plan is present, the old level has done its job and can be released in one sync.
-            if (backdrop.size > 0 && [...wanted.keys()].every((key) => shown.has(key))) {
+            if (backdrop.size > 0 && [...wanted].every(([key, tile]) => shown.get(key)?.url === tile.url)) {
                 backdrop.clear();
                 shown = new Map([...shown].filter(([key]) => wanted.has(key)));
                 tilesNeedSync = true;
@@ -151,12 +165,11 @@ export function createBoard(element, options, emit) {
         if (pendingWarm && scheduler.size === 0 && !loading)
             warm(pendingWarm.region, pendingWarm.expires, pendingWarm.hint);
     }
-    function retry(key, view) {
-        const tile = shown.get(key);
-        shown.delete(key);
+    function retry(tile, view) {
+        const key = tile.key;
         const attempt = attempts.get(key) ?? 0;
         const delay = RETRY_MS[attempt];
-        if (!tile || delay === undefined) {
+        if (delay === undefined) {
             attempts.delete(key);
             return;
         }
@@ -164,7 +177,7 @@ export function createBoard(element, options, emit) {
         const timer = setTimeout(() => {
             retries.delete(timer);
             warming?.cancel();
-            if (disposed || generation !== view || !board)
+            if (disposed || generation !== view || !board || wanted.get(key)?.url !== tile.url)
                 return;
             scheduler.enqueue({ key, payload: tile, priority: PRIORITY.normal, order: 0, scene: tile.key.split(":")[0] ?? "", generation }, performance.now());
             tilePump.request();
@@ -172,7 +185,7 @@ export function createBoard(element, options, emit) {
         retries.add(timer);
     }
     function forgetTiles() {
-        tileBlobCache.clear();
+        generation += 1;
         previousSample = undefined;
         interactions = 0;
         warming?.cancel();
@@ -185,6 +198,9 @@ export function createBoard(element, options, emit) {
         backdrop = new Map();
         wantedDepth = undefined;
         tilesNeedSync = false;
+        cancelRetries();
+    }
+    function cancelRetries() {
         attempts.clear();
         for (const timer of retries)
             clearTimeout(timer);
@@ -194,12 +210,13 @@ export function createBoard(element, options, emit) {
         if (board && props.state && props.manifest && !disposed) {
             sceneLayers ??= new SceneLayers(board);
             sceneLayers.render({ ...props.state, ...props.tokenPresentation }, props.grid?.cellSize ?? 70, props.manifest.width, props.manifest.height, !!props.gm);
+            sceneLayers.setEditingLayer(props.editingLayer || 'game');
         }
     }
     function assetDragOver(event) {
         if (event.dataTransfer?.types.includes('application/x-gravewright-hand-card') || (props.gm && event.dataTransfer?.types.includes('application/x-gravewright-library-image'))) {
             event.preventDefault();
-            event.dataTransfer.dropEffect = 'copy';
+            event.dataTransfer.dropEffect = event.dataTransfer.types.includes('application/x-gravewright-hand-card') ? 'move' : 'copy';
         }
     }
     function assetDrop(event) {
@@ -454,16 +471,38 @@ export function createBoard(element, options, emit) {
         }
         tilePump.request();
     }
-    return { viewport, worldAt, previewSelection(value){sceneLayers?.previewSelection(value);}, previewCard(value){sceneLayers?.previewCard(value);}, warm, hint(value) { warm(value.region, value.expires_at_ms, observed(value)); }, streamingStats: prefetchSnapshot, prioritize, ping, ready: readyPromise, async update(next) { const changed = next.manifest && JSON.stringify(next.manifest) !== JSON.stringify(props.manifest); Object.assign(props, next); await readyPromise; if (disposed)
-            return; board?.setLabel(props.label); if (changed)
+    async function update(next) {
+        const previous = props.manifest;
+        const changed = 'manifest' in next && JSON.stringify(next.manifest) !== JSON.stringify(previous);
+        const sameScene = previous && next.manifest && previous.mapId === next.manifest.mapId;
+        Object.assign(props, next);
+        await readyPromise;
+        if (disposed)
+            return;
+        if ('label' in next)
+            board?.setLabel(props.label);
+        if (changed && !sameScene) {
+            cancelCameraFocus();
             await render();
-        else {
-            if (props.grid)
+        } else {
+            if (next.grid)
                 board?.setGrid(props.grid);
-            await applyPieces();
-            applySceneLayers();
-        } }, destroy() {
-            tileBlobCache.clear();
+            if (changed) {
+                // A revision of the current scene keeps its camera, pieces and GPU layers alive.
+                // Refresh raster URLs in place, retaining current pixels until replacements load.
+                board?.cancelTileLoads?.();
+                cancelRetries();
+                drawFrame(props.manifest.width, props.manifest.height);
+                refreshTiles();
+            }
+            if ('pieces' in next)
+                await applyPieces();
+            if (changed || ['state','tokenPresentation','grid','gm'].some(key=>key in next))
+                applySceneLayers();
+        }
+    }
+    return { viewport, worldAt, editingLayer(layer){props.editingLayer=layer;sceneLayers?.setEditingLayer(layer);}, previewSelection(value){sceneLayers?.previewSelection(value);}, previewImage(value){sceneLayers?.previewImage(value);}, previewCard(value){sceneLayers?.previewCard(value);}, warm, hint(value) { warm(value.region, value.expires_at_ms, observed(value)); }, streamingStats: prefetchSnapshot, prioritize, ping, ready: readyPromise, update, destroy({preservePrefetch = false} = {}) {
+            if (!preservePrefetch) tileBlobCache.clear();
             for (const [name, listener] of Object.entries(listeners))
                 element.removeEventListener(name, listener);
             window.removeEventListener("keydown", shiftPing);

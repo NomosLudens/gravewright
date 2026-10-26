@@ -31,10 +31,30 @@ class HttpClient {
    * Sends a form and reports how much of it has gone up. Nothing cuts an upload short: a large map
    * legitimately takes longer than any request ceiling worth setting.
    */
-  async upload(path, form, onProgress) {
-    const signal = this.scopeSignal?.();
+  async upload(path, form, onProgress, options = {}) {
+    const signal = options.signal ?? this.scopeSignal?.();
     const csrf = await this.#csrf(signal);
-    return this.#send({ method: "POST", path: backendPath(path), headers: csrf, body: form, onProgress, signal });
+    return this.#send({ method: "POST", path: backendPath(path), headers: csrf, body: form, onProgress, signal,
+      ...(options.timeoutMs === undefined ? {} : timing(options)) });
+  }
+  /** Download authenticated bytes without routing them through JSON decoding. */
+  async download(path, options = {}) {
+    const signal = options.signal ?? this.scopeSignal?.();
+    signal?.throwIfAborted();
+    const exchange = this.transport.request || ((...args) => globalThis.fetch(...args));
+    const combined = options.timeoutMs == null ? signal
+      : AbortSignal.any([AbortSignal.timeout(options.timeoutMs), ...(signal ? [signal] : [])]);
+    const response = await exchange(backendPath(path), { method: 'GET', credentials: 'same-origin',
+      cache: options.cache ?? 'no-store', signal: combined });
+    if (!response.ok) throw failure(response.status, await response.text());
+    const blob = await response.blob();
+    combined?.throwIfAborted();
+    const disposition = response.headers.get('content-disposition') || '';
+    let name = disposition.match(/filename="([^"\r\n]*)"/)?.[1] || 'download.bin';
+    const encoded = disposition.match(/filename\*=utf-8''([^;]+)/i)?.[1];
+    if (encoded) { try { name = decodeURIComponent(encoded); } catch { /* Keep the fallback filename. */ } }
+    options.onProgress?.({ loaded: blob.size, total: blob.size });
+    return { blob, name, contentType: blob.type, size: blob.size };
   }
   /** Every state change carries a fresh CSRF token; the server refuses the ones that do not. */
   async #guarded(method, path, body, options = {}) {
@@ -57,16 +77,18 @@ class HttpClient {
     request.signal?.throwIfAborted();
     const reply = await this.transport.send(request);
     request.signal?.throwIfAborted();
-    if (!reply.ok) throw new ApiError(reply.status, code(reply.text));
+    if (!reply.ok) throw failure(reply.status, reply.text);
     if (reply.status === 204 || reply.text === "") return void 0;
     return JSON.parse(reply.text);
   }
 }
-function code(body) {
+function failure(status, body) {
   try {
-    return JSON.parse(body).error ?? "request_failed";
+    const payload = JSON.parse(body);
+    return new ApiError(status, typeof payload?.error === 'string' ? payload.error : 'request_failed',
+      typeof payload?.message === 'string' && payload.message ? payload.message : undefined);
   } catch {
-    return "request_failed";
+    return new ApiError(status, 'request_failed');
   }
 }
 function timing({ timeoutMs }) {

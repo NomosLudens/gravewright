@@ -46,7 +46,6 @@
     "editSceneTitle": "Edit scene: {name}",
     "saveScene": "Save scene",
     "useCurrentView": "Use current view as start",
-    "maximize": "Maximize",
     "minimize": "Minimize",
     "detach": "Open in a window",
     "leave": "Return to tables",
@@ -129,14 +128,19 @@
       "scenes": "Organize the maps and scenes in this journey.",
       "actors": "Browse characters and creatures at the table.",
       "settings": "Adjust this table's experience."
-    }
+    },
+    "mapBuilder": "Map Builder",
+    "mapBuilderHint": "Start a new map in the editor.",
+    "uploadMapHint": "Use an existing map image.",
+    "chooseSceneSource": "How would you like to create this scene?"
   },
   "house": {
     "title": "Gravewright",
     "sections": {
       "table": "Table",
       "extensions": "Extensions",
-      "preferences": "Preferences"
+      "preferences": "Preferences",
+      "shortcuts": "Shortcuts"
     },
     "rendering": {
       "title": "Visual quality",

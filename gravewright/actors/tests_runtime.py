@@ -50,7 +50,7 @@ class RuntimeTests(TransactionTestCase):
         self.assertEqual(spent["after"], 5)
         with self.assertRaises(MapError):
             self.command("runtime.resource", {"id": self.actor.pk, "resource": "flow", "operation": "spend", "amount": 99}, user=self.player)
-        self.assertEqual(services.state(self.campaign.pk, self.player.pk)["actors"][0]["runtime"]["resources"]["flow"]["current"], 5)
+        self.assertEqual(services.sheet(self.campaign.pk, self.player.pk, self.actor.pk)["data"]["runtime"]["resources"]["flow"]["current"], 5)
 
     def test_derived_maxima_change_without_resetting_current_resources(self):
         initial = self.command("runtime.initialize", {
@@ -83,7 +83,7 @@ class RuntimeTests(TransactionTestCase):
             "id": self.actor.pk, "resource": "vitality", "operation": "gain", "amount": 99,
         }, user=self.player)
         self.assertEqual(gained["after"], gained["runtime"]["resources"]["vitality"]["max"])
-        self.assertEqual(services.state(self.campaign.pk, self.player.pk)["actors"][0]["runtime"]["resources"]["vitality"]["current"], 13)
+        self.assertEqual(services.sheet(self.campaign.pk, self.player.pk, self.actor.pk)["data"]["runtime"]["resources"]["vitality"]["current"], 13)
 
     def test_kallistis_actor_runtime_persists_canonical_attributes_and_skills(self):
         attributes = {
@@ -99,7 +99,7 @@ class RuntimeTests(TransactionTestCase):
         self.assertEqual(result["runtime"]["attributes"], {**attributes, "marco": 0})
         self.assertEqual(result["runtime"]["skills"], skills)
         self.actor.refresh_from_db()
-        persisted = services.state(self.campaign.pk, self.player.pk)["actors"][0]["runtime"]
+        persisted = services.sheet(self.campaign.pk, self.player.pk, self.actor.pk)["data"]["runtime"]
         self.assertEqual(persisted["attributes"], result["runtime"]["attributes"])
         self.assertEqual(persisted["skills"], skills)
 

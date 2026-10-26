@@ -1,17 +1,13 @@
 """Campaign-scoped scenes and publication commands, independent of HTTP/Channels."""
 
-from io import BytesIO
 import math
 import re
-import uuid
 from django.conf import settings as django_settings
-from django.core.files.base import ContentFile
-from django.core.files.storage import default_storage
 from django.db import transaction
-from PIL import Image, ImageOps, UnidentifiedImageError
+from gravewright.accounts.models import UserPreference
 from gravewright.campaigns.models import Campaign
 from gravewright.journals.services import member, identifier
-from .models import Scene, Tile, Folder, Broadcast, Receipt
+from .models import Scene, Folder, Broadcast, Receipt, SceneNavigation
 
 DEFAULTS = {
     "gridSize": 70,
@@ -100,145 +96,22 @@ def manage(who):
         raise MapError("Only the GM can manage scenes.", "forbidden")
 
 
-def create_from_upload(
-    campaign_id, user_id, raw_name, raw_settings, incoming, *, activate=False,
-    reject_duplicate=False,
-):
-    """Validate a raster, persist its tile pyramid and optionally publish it."""
-    stored = []
-    try:
-        who = member(campaign_id, user_id)
-        manage(who)
-        name = title(raw_name)
-        options = settings(raw_settings)
-        visibility = raw_settings.get("visibility", "players")
-        if visibility not in ("players", "gm"):
-            raise MapError("Invalid visibility.")
-        target = folder(raw_settings.get("groupId"), who)
-        if incoming is None or incoming.size > django_settings.MAP_UPLOAD_MAX_BYTES:
-            raise MapError("Choose a map image within the configured upload limit.")
-        try:
-            with Image.open(incoming) as source:
-                if source.format not in ("PNG", "JPEG", "WEBP", "TIFF"):
-                    raise ValueError("format")
-                if source.width * source.height > getattr(
-                    django_settings, "GRAVEWRIGHT_MAP_MAX_PIXELS", 64_000_000
-                ):
-                    raise MapError("This map exceeds the server image pixel limit.")
-                if (
-                    source.width > django_settings.MAP_IMAGE_MAX_WIDTH
-                    or source.height > django_settings.MAP_IMAGE_MAX_HEIGHT
-                ):
-                    raise MapError("Map dimensions exceed the configured limit.")
-                levels = max(0, math.ceil(math.log2(max(source.size) / 512)))
-                if sum(
-                    math.ceil(source.width / (512 * 2**lod))
-                    * math.ceil(source.height / (512 * 2**lod))
-                    for lod in range(levels + 1)
-                ) > django_settings.MAP_MAX_TILE_COUNT:
-                    raise MapError("Map tile count exceeds the configured limit.")
-                source.load()
-                raster = ImageOps.exif_transpose(source).convert("RGBA")
-        except (
-            UnidentifiedImageError,
-            ValueError,
-            OSError,
-            Image.DecompressionBombError,
-        ):
-            raise MapError("Choose a valid PNG, JPEG, WebP or TIFF image.") from None
-
-        width, height = raster.size
-        max_lod = max(0, math.ceil(math.log2(max(width, height) / 512)))
-        tiles = []
-        try:
-            for lod in range(max_lod + 1):
-                if lod:
-                    level = raster.resize(
-                        (math.ceil(width / 2**lod), math.ceil(height / 2**lod)),
-                        Image.Resampling.LANCZOS,
-                    )
-                else:
-                    level = raster
-                try:
-                    for y in range(math.ceil(level.height / 512)):
-                        for x in range(math.ceil(level.width / 512)):
-                            with level.crop(
-                                (
-                                    x * 512,
-                                    y * 512,
-                                    min((x + 1) * 512, level.width),
-                                    min((y + 1) * 512, level.height),
-                                )
-                            ) as chunk:
-                                content = BytesIO()
-                                chunk.save(content, format="WEBP", lossless=True)
-                            path = default_storage.save(
-                                "maps/tiles/" + uuid.uuid4().hex + ".webp",
-                                ContentFile(content.getvalue()),
-                            )
-                            stored.append(path)
-                            tiles.append(
-                                Tile(
-                                    lod=lod,
-                                    x=x,
-                                    y=y,
-                                    file=path,
-                                    byte_size=len(content.getvalue()),
-                                )
-                            )
-                finally:
-                    if lod:
-                        level.close()
-        finally:
-            raster.close()
-
-        with transaction.atomic():
-            Campaign.objects.select_for_update().get(pk=campaign_id)
-            who = member(campaign_id, user_id)
-            manage(who)
-            if reject_duplicate and Scene.objects.filter(
-                campaign_id=campaign_id, name=name
-            ).exists():
-                raise MapError("A scene with this name already exists.", "already_exists")
-            target = folder(raw_settings.get("groupId"), who)
-            row = Scene.objects.create(
-                campaign_id=campaign_id,
-                name=name,
-                folder=target,
-                visibility=visibility,
-                width=width,
-                height=height,
-                max_lod=max_lod,
-                settings=options,
-            )
-            for tile in tiles:
-                tile.scene = row
-            Tile.objects.bulk_create(tiles)
-            if activate:
-                Broadcast.objects.update_or_create(
-                    campaign_id=campaign_id, defaults={"scene": row}
-                )
-        stored.clear()
-        return row
-    finally:
-        for path in stored:
-            default_storage.delete(path)
-
-
 def scene(scene_id, who, write=False):
-    """Resolve a campaign scene; non-GMs can read only the current player broadcast."""
+    """Resolve a scene through the member's assigned destination and read grants."""
     row = Scene.objects.filter(
         pk=identifier(scene_id), campaign_id=who.campaign_id
     ).first()
     if write:
         manage(who)
+    from gravewright.table.ownership import resource_allows
+    from .audience import destination
+    assigned = destination(who) if who.role != 'gm' else None
     if row is None or (
         who.role != "gm"
         and (
             row.visibility != "players"
-            or not Broadcast.objects.filter(
-                campaign_id=who.campaign_id, scene=row
-            ).exists()
+            or not resource_allows(who, 'scenes', row, default='read')
+            or assigned is None or assigned.pk != row.pk
         )
     ):
         raise MapError("Scene not found or access denied.", "not_found")
@@ -293,7 +166,7 @@ def view(row):
         "viewportLimits": {"width":django_settings.SCENE_VIEWPORT_MAX_WIDTH_CHUNKS,"height":django_settings.SCENE_VIEWPORT_MAX_HEIGHT_CHUNKS,"area":django_settings.SCENE_VIEWPORT_MAX_AREA_CHUNKS},
         "groupId": str(row.folder_id) if row.folder_id else None,
         "visibility": row.visibility,
-        **row.settings,
+        **{key: value for key, value in row.settings.items() if key != "automationVariables"},
         "version": row.version,
         "createdAt": int(row.created_at.timestamp() * 1000),
         "updatedAt": int(row.updated_at.timestamp() * 1000),
@@ -302,24 +175,47 @@ def view(row):
 
 def state(campaign_id, user_id):
     who = member(campaign_id, user_id)
-    active = (
-        Broadcast.objects.filter(campaign_id=campaign_id)
-        .select_related("scene")
-        .first()
-    )
-    broadcast = active.scene if active else None
-    if broadcast and broadcast.visibility == "gm" and who.role != "gm":
+    from gravewright.table.ownership import resource_allows
+    from .audience import destination, players
+    broadcast = destination(who)
+    if broadcast and who.role != "gm" and (broadcast.visibility == "gm" or not resource_allows(who, 'scenes', broadcast, default='read')):
         broadcast = None
     maps = (
         Scene.objects.filter(campaign_id=campaign_id)
         if who.role == "gm"
         else ([broadcast] if broadcast else [])
     )
+    builder_projects = {}
+    if who.role == "gm":
+        from .models import MapBuilderProject
+        # Only the currently linked scene can be updated from this source.
+        # Read IDs together, without loading private documents for each scene.
+        for scene_id, project_id in MapBuilderProject.objects.filter(
+            campaign_id=who.campaign_id, scene__campaign_id=who.campaign_id
+        ).order_by("-updated_at", "id").values_list("scene_id", "id"):
+            builder_projects.setdefault(scene_id, str(project_id))
+    projected_maps = []
+    for row in maps:
+        projected = view(row)
+        projected.pop("builderProjectId", None)
+        if row.pk in builder_projects:
+            projected["builderProjectId"] = builder_projects[row.pk]
+        projected_maps.append(projected)
     folders = Folder.objects.filter(campaign_id=campaign_id) if who.role == "gm" else []
+    navigation = (
+        SceneNavigation.objects.filter(
+            membership=who, scene__campaign_id=campaign_id
+        ).first()
+        if who.role == "gm" else None
+    )
+    active_id = str(broadcast.pk) if broadcast else None
     return {
         "is_gm": who.role == "gm",
-        "maps": [view(row) for row in maps],
-        "activeMapId": str(broadcast.pk) if broadcast else None,
+        "maps": projected_maps,
+        "activeMapId": active_id,
+        "navigatingMapId": str(navigation.scene_id) if navigation else active_id,
+        "followingActiveMap": navigation is None,
+        **({'players': players(campaign_id)} if who.role == 'gm' else {}),
         "folders": [
             {
                 "id": str(row.pk),
@@ -354,7 +250,7 @@ def manifest(row):
             }
             for lod in range(row.max_lod + 1)
         ],
-        "tileUrlTemplate": f"/api/maps/{row.pk}/tiles/{{lod}}/{{x}}/{{y}}.webp",
+        "tileUrlTemplate": f"/api/maps/{row.pk}/tiles/{{lod}}/{{x}}/{{y}}.webp?v={row.version}",
     }
 
 
@@ -363,6 +259,41 @@ def command(campaign_id, user_id, action, payload, request_id):
     if not isinstance(action, str) or not isinstance(payload, dict):
         raise MapError("Invalid command.")
     rid = identifier(request_id)
+    try:
+        return _command(campaign_id, user_id, action, payload, rid)
+    except MapError as error:
+        run = getattr(error, "automation_run", None)
+        if run is not None:
+            record_failed_run(campaign_id, user_id, payload, run)
+        raise
+
+
+def record_failed_run(campaign_id, user_id, payload, run):
+    """Log a refused or failed element run after its transaction rolled back.
+
+    Only the diagnostic row is written; none of the failed effects persist. A
+    failure to write the log never replaces the original error.
+    """
+    import logging
+    from django.db import DatabaseError
+    from gravewright.journals.services import JournalError
+    from .blueprint_runtime import elements, record_run
+    try:
+        with transaction.atomic():
+            who = member(campaign_id, user_id)
+            scene_row = scene(payload.get("mapId"), who)
+            data = payload.get("data") or {}
+            id_key = "image_id" if payload.get("area") == "images" else "zone_id" if payload.get("area") == "zones" else "wall_id"
+            element_id = run.get("elementId") or data.get(id_key, data.get("placement_id", data.get("id")))
+            door = elements(scene_row).select_related("scene").filter(
+                pk=identifier(element_id)).first()
+            if door is not None:
+                record_run(door.scene, who, door, "failed", run)
+    except (MapError, JournalError, DatabaseError, TypeError, ValueError):
+        logging.getLogger(__name__).exception("Could not record a failed automation run.")
+
+
+def _command(campaign_id, user_id, action, payload, rid):
     with transaction.atomic():
         Campaign.objects.select_for_update().get(pk=campaign_id)
         who = member(campaign_id, user_id)
@@ -370,7 +301,8 @@ def command(campaign_id, user_id, action, payload, request_id):
         writable(who)
         if not (
             action == "objects"
-            and (payload.get("area") == "markers" or payload.get("area") == "walls" and payload.get("action") == "door")
+            and (payload.get("area") == "markers" or payload.get("area") == "walls" and payload.get("action") == "door"
+                 or payload.get("area") == "images" and payload.get("action") in ("interact", "torch-light"))
         ):
             manage(who)
         receipt = Receipt.objects.filter(
@@ -378,7 +310,9 @@ def command(campaign_id, user_id, action, payload, request_id):
         ).first()
         if receipt:
             return receipt.result
-        result = apply(who, action, payload)
+        from .blueprint_delays import automation_request
+        with automation_request(rid):
+            result = apply(who, action, payload)
         Receipt.objects.create(
             campaign_id=campaign_id, user_id=user_id, request_id=rid, result=result
         )
@@ -388,6 +322,12 @@ def command(campaign_id, user_id, action, payload, request_id):
 
 
 def apply(who, action, p):
+    if action == "navigate":
+        target = scene(p["mapId"], who) if p.get("mapId") is not None else None
+        SceneNavigation.objects.update_or_create(
+            membership=who, defaults={"scene": target}
+        )
+        return {"navigatingMapId": str(target.pk) if target else None}
     if action == "objects":
         from .objects import apply as object_command
 
@@ -448,9 +388,17 @@ def apply(who, action, p):
         return {"folderId": str(row.pk)}
     row = scene(p.get("mapId"), who, write=True)
     if action == "activate":
-        Broadcast.objects.update_or_create(
-            campaign_id=who.campaign_id, defaults={"scene": row}
-        )
+        from .audience import assign, broadcast
+        if 'playerIds' in p:
+            # Validate recipients before publishing any previously private scene.
+            assign(who, row, p['playerIds'])
+        # Broadcasting is the GM's explicit decision to show a prepared scene.
+        if row.visibility != "players":
+            row.visibility = "players"
+            row.version += 1
+            row.save(update_fields=["visibility", "version", "updated_at"])
+        if 'playerIds' not in p:
+            broadcast(who, row)
     elif action == "update":
         if type(p.get("version")) is not int or p["version"] != row.version:
             raise MapError(
@@ -459,6 +407,14 @@ def apply(who, action, p):
         raw = p.get("settings")
         if not isinstance(raw, dict):
             raise MapError("Invalid scene settings.")
+        if 'lighting' in p:
+            from .models import SceneState
+            from .objects import apply as object_command
+            environment = SceneState.objects.filter(scene=row).first()
+            expected = p.get('environmentVersion')
+            if type(expected) is not int or expected != (environment.version if environment else 1):
+                raise MapError('The scene environment changed. Reopen its settings and try again.', 'conflict')
+            object_command(row, who, 'lighting', 'update', p['lighting'])
         if "name" in raw:
             row.name = title(raw["name"])
         if "visibility" in raw:
@@ -467,9 +423,13 @@ def apply(who, action, p):
             row.visibility = raw["visibility"]
         if "groupId" in raw:
             row.folder = folder(raw["groupId"], who)
+        previous_grid = tuple(row.settings.get(key, DEFAULTS[key]) for key in ("gridSize", "gridOffsetX", "gridOffsetY", "imageScale"))
         row.settings = settings(raw, row.settings)
         row.version += 1
         row.save()
+        if previous_grid != tuple(row.settings[key] for key in ("gridSize", "gridOffsetX", "gridOffsetY", "imageScale")):
+            from .regions import rebaseline
+            rebaseline(row)
     elif action == "move":
         row.folder = folder(p.get("groupId"), who)
         row.version += 1
@@ -495,12 +455,17 @@ def ping(campaign_id, user_id, payload):
             or not 0 <= value <= maximum
         ):
             raise MapError("Ping outside the map.")
+    ping_color = (
+        UserPreference.objects.filter(user_id=user_id)
+        .values_list("ping_color", flat=True)
+        .first()
+    )
     return {
         "mapId": str(row.pk),
         "x": payload["x"],
         "y": payload["y"],
         "focus": payload.get("focus") is True and who.role == "gm",
-        "color": "#f2c679",
+        "color": ping_color or "#f2c679",
     }
 
 

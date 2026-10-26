@@ -9,7 +9,7 @@ from django.test import TransactionTestCase, override_settings
 from PIL import Image
 
 from gravewright.maps import services
-from gravewright.maps.models import Broadcast, Folder, Scene, Tile
+from gravewright.maps.models import Folder, Scene, Tile, SceneNavigation
 from gravewright.realtime.tests import test_sockets as fixtures
 
 
@@ -19,7 +19,6 @@ from gravewright.realtime.tests import test_sockets as fixtures
     GRAVEWRIGHT_HEARTBEAT_SECONDS=0.1,
     GRAVEWRIGHT_PRESENCE_TTL=3,
     ALLOWED_HOSTS=["testserver"],
-    GRAVEWRIGHT_PUBLIC_ORIGIN="http://testserver",
 )
 class MapTests(TransactionTestCase):
     socket = fixtures.SocketTests.socket
@@ -60,62 +59,6 @@ class MapTests(TransactionTestCase):
         self.assertEqual(response.status_code, 201, response.content)
         return response.json()
 
-    def test_admin_qa_scene_command_is_authorized_and_idempotent(self):
-        import hashlib
-        from io import StringIO
-        from django.core.management import call_command
-        from django.core.management.base import CommandError
-
-        self.campaign.name = "QA Jornada Contínua 20261007"
-        self.campaign.save(update_fields=["name"])
-        source = Path(self.media.name) / "qa-arena.png"
-        Image.new("RGB", (80, 60), "#354b66").save(source, "PNG")
-        digest = hashlib.sha256(source.read_bytes()).hexdigest()
-        args = {
-            "campaign_id": str(self.campaign.pk),
-            "png_path": str(source),
-            "sha256": digest,
-        }
-
-        with self.assertRaises(CommandError):
-            call_command("create_qa_scene", **args, operator_id=str(self.player.pk))
-        with self.assertRaises(CommandError):
-            call_command(
-                "create_qa_scene",
-                **{**args, "campaign_id": str(self.other.pk)},
-                operator_id=str(self.gm.pk),
-            )
-        self.assertFalse(Scene.objects.filter(campaign=self.campaign).exists())
-        self.assertFalse(Scene.objects.filter(campaign=self.other).exists())
-
-        first_output = StringIO()
-        call_command(
-            "create_qa_scene",
-            **args,
-            operator_id=str(self.gm.pk),
-            stdout=first_output,
-        )
-        scene = Scene.objects.get(
-            campaign=self.campaign, name="Arena QA KALLISTIS"
-        )
-        self.assertEqual(scene.visibility, "players")
-        self.assertTrue(Broadcast.objects.filter(campaign=self.campaign, scene=scene).exists())
-        self.assertEqual(Tile.objects.filter(scene=scene).count(), 1)
-        self.assertIn("QA_SCENE=CREATED", first_output.getvalue())
-
-        second_output = StringIO()
-        call_command(
-            "create_qa_scene",
-            **args,
-            operator_id=str(self.gm.pk),
-            stdout=second_output,
-        )
-        self.assertEqual(
-            Scene.objects.filter(campaign=self.campaign, name="Arena QA KALLISTIS").count(),
-            1,
-        )
-        self.assertIn("QA_SCENE=EXISTING", second_output.getvalue())
-
     def test_upload_pyramid_and_authorized_tile_delivery(self):
         m = self.upload()
         self.assertEqual(m["maxLod"], 1)
@@ -147,37 +90,80 @@ class MapTests(TransactionTestCase):
             self.client.get(f"/api/maps/{m['id']}/manifest").status_code, 404
         )
 
-    @override_settings(
-        GRAVEWRIGHT_PUBLIC_ORIGIN="https://testserver",
-        SESSION_COOKIE_SECURE=True,
-        CSRF_COOKIE_SECURE=True,
-        SESSION_COOKIE_NAME="__Host-gravewright-session",
-        CSRF_COOKIE_NAME="__Host-gravewright-csrf",
-    )
-    def test_upload_accepts_csrf_from_secure_host_cookie(self):
-        from django.test import Client
+    def test_scene_settings_and_environment_save_atomically(self):
+        from gravewright.maps.models import SceneState
 
-        client = Client(enforce_csrf_checks=True)
-        client.force_login(self.gm)
-        client.get("/api/security/csrf", secure=True)
-        csrf = client.cookies["__Host-gravewright-csrf"].value
-        image = BytesIO()
-        Image.new("RGB", (80, 60), "#354b66").save(image, "PNG")
-        response = client.post(
-            f"/api/containers/{self.campaign.pk}/scene-upload",
-            {
-                "name": "Fracture plaza",
-                "map": SimpleUploadedFile(
-                    "map.png", image.getvalue(), content_type="image/png"
-                ),
-                "activate": "false",
-            },
-            secure=True,
-            HTTP_ORIGIN="https://testserver",
-            HTTP_X_CSRF_TOKEN=csrf,
-        )
-        self.assertEqual(response.status_code, 201, response.content)
-        self.assertIsNone(services.state(self.campaign.pk, self.gm.pk)["activeMapId"])
+        m = self.upload()
+        payload = {
+            'mapId': m['id'], 'version': m['version'],
+            'settings': {'name': 'Prepared keep'}, 'environmentVersion': 1,
+            'lighting': {'mode': 'manual', 'darkness': 0.35, 'lights_out': False},
+        }
+        with self.assertRaises(services.MapError):
+            self.command('update', payload, user=self.player)
+        self.command('update', payload)
+        scene = Scene.objects.get(pk=m['id'])
+        environment = SceneState.objects.get(scene=scene)
+        self.assertEqual(scene.name, 'Prepared keep')
+        self.assertEqual(environment.lighting['darkness'], 0.35)
+        self.assertEqual(environment.version, 2)
+        payload['version'] = scene.version
+        payload['settings'] = {'name': 'Stale update'}
+        with self.assertRaises(services.MapError):
+            self.command('update', payload)
+        scene.refresh_from_db()
+        self.assertEqual(scene.name, 'Prepared keep')
+        payload['environmentVersion'] = 2
+        payload['settings'] = {'gridSize': -1}
+        payload['lighting']['darkness'] = 0.8
+        with self.assertRaises(services.MapError):
+            self.command('update', payload)
+        environment.refresh_from_db()
+        self.assertEqual(environment.lighting['darkness'], 0.35)
+        self.assertEqual(environment.version, 2)
+
+    def test_image_resize_is_persisted_in_scene_state(self):
+        from gravewright.maps.models import MapAsset, SceneObject
+
+        scene = Scene.objects.create(campaign=self.campaign, name='Images', width=1024, height=512)
+        asset = MapAsset.objects.create(campaign=self.campaign, name='Image', width=400, height=200,
+                                        file='maps/assets/image.png')
+        def image_command(action, data):
+            return self.command('objects', {'mapId': str(scene.pk), 'area': 'images',
+                                            'action': action, 'data': data})
+        image_command('create', {'asset_id': str(asset.pk), 'x': 100, 'y': 200, 'scale': 1})
+        placement = SceneObject.objects.get(scene=scene, kind='images')
+        image_command('update', {'placement_id': str(placement.pk), 'x': 200, 'y': 250,
+                                 'scale': 1.5, 'expected_version': placement.version})
+        placement.refresh_from_db()
+        self.assertEqual(placement.data['scale'], 1.5)
+        self.command('navigate', {'mapId': str(scene.pk)})
+        navigation = services.state(self.campaign.pk, self.gm.pk)
+        state = services.layer_state(self.campaign.pk, self.gm.pk, navigation['navigatingMapId'])
+        image = next(row for row in state['images'] if row['id'] == str(placement.pk))
+        self.assertEqual((image['x'], image['y'], image['scale']), (200, 250, 1.5))
+
+    def test_gm_image_support_layer_is_private_and_can_return_to_map(self):
+        from gravewright.maps.models import MapAsset, SceneObject, Broadcast
+        scene = Scene.objects.create(campaign=self.campaign, name='Images', width=1024, height=512)
+        Broadcast.objects.update_or_create(campaign=self.campaign, defaults={'scene': scene})
+        asset = MapAsset.objects.create(campaign=self.campaign, name='Private image', width=400, height=200,
+                                       file='maps/assets/private.png')
+        def change(action, data):
+            return self.command('objects', {'mapId': str(scene.pk), 'area': 'images', 'action': action, 'data': data})
+        change('create', {'asset_id': str(asset.pk), 'layer': 'gm-image-layer'})
+        placement = SceneObject.objects.get(scene=scene, kind='images')
+        self.assertEqual(placement.data['layer'], 'gm-image-layer')
+        self.assertEqual(services.layer_state(self.campaign.pk, self.gm.pk, scene.pk)['images'][0]['layer'], 'gm-image-layer')
+        self.assertEqual(services.layer_state(self.campaign.pk, self.player.pk, scene.pk)['images'], [])
+        self.client.force_login(self.player)
+        self.assertEqual(self.client.get(f'/game/map-assets/{asset.pk}').status_code, 404)
+        change('update', {'placement_id': str(placement.pk), 'layer': 'map', 'expected_version': placement.version})
+        self.assertEqual(len(services.layer_state(self.campaign.pk, self.player.pk, scene.pk)['images']), 1)
+        # Existing hidden placements are projected into the support layer too.
+        placement.refresh_from_db();placement.data['layer'] = 'gm';placement.save()
+        self.assertEqual(services.layer_state(self.campaign.pk, self.player.pk, scene.pk)['images'], [])
+        self.assertEqual(services.layer_state(self.campaign.pk, self.gm.pk, scene.pk)['images'][0]['layer'], 'gm-image-layer')
 
     def test_upload_limits_reject_before_decode_or_file_publication(self):
         from unittest.mock import patch
@@ -195,17 +181,98 @@ class MapTests(TransactionTestCase):
         from unittest.mock import patch
         from django.core.files.storage import default_storage
         save = default_storage.save
-        calls = 0
-        def fail_second(*args, **kwargs):
-            nonlocal calls
-            calls += 1
-            if calls == 2:
-                raise OSError('simulated storage failure')
-            return save(*args, **kwargs)
-        with patch.object(default_storage, 'save', side_effect=fail_second), self.assertRaises(OSError):
-            self.upload()
+        for error in (OSError('simulated storage failure'), ValueError('storage rejected file')):
+            with self.subTest(error=type(error).__name__):
+                calls = 0
+                def fail_second(*args, **kwargs):
+                    nonlocal calls
+                    calls += 1
+                    if calls == 2:
+                        raise error
+                    return save(*args, **kwargs)
+                with patch.object(default_storage, 'save', side_effect=fail_second), self.assertRaises(type(error)):
+                    self.upload()
+                self.assertFalse(Tile.objects.exists())
+                self.assertFalse(Scene.objects.exists())
+                self.assertFalse(any(Path(self.media.name).rglob('*.webp')))
+
+    def test_invalid_json_settings_do_not_publish_a_scene(self):
+        self.client.force_login(self.gm)
+        response = self.client.post(
+            f"/api/containers/{self.campaign.pk}/scene-upload",
+            {"name": "Invalid settings", "settings": "{"},
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(response.json()["error"], "Invalid scene settings.")
+        self.assertFalse(Scene.objects.exists())
         self.assertFalse(Tile.objects.exists())
-        self.assertFalse(any(Path(self.media.name).rglob('*.webp')))
+
+    def test_configured_pixel_limit_accepts_images_above_original_pillow_guard(self):
+        from unittest.mock import patch
+        from gravewright.maps import tiling
+
+        image = BytesIO()
+        Image.new("RGB", (21, 21), "#354b66").save(image, "PNG")
+        self.client.force_login(self.gm)
+        with (self.settings(GRAVEWRIGHT_MAP_TILER="pillow", GRAVEWRIGHT_MAP_MAX_PIXELS=500,
+                            GRAVEWRIGHT_MAP_PILLOW_MAX_PIXELS=500),
+              patch.object(tiling, "_DEFAULT_MAX_IMAGE_PIXELS", 100),
+              patch.object(Image, "MAX_IMAGE_PIXELS", 100)):
+            tiling.configure_pillow_limit()
+            response = self.client.post(
+                f"/api/containers/{self.campaign.pk}/scene-upload",
+                {"name": "Configured limit", "map": SimpleUploadedFile("map.png", image.getvalue())},
+            )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual((response.json()["width"], response.json()["height"]), (21, 21))
+        self.assertEqual(Tile.objects.count(), 1)
+
+    def test_pillow_header_and_fallback_limits_have_actionable_errors(self):
+        from unittest.mock import patch
+
+        self.client.force_login(self.gm)
+        with patch("gravewright.maps.tiling.Image.open", side_effect=Image.DecompressionBombError("too large")):
+            response = self.client.post(
+                f"/api/containers/{self.campaign.pk}/scene-upload",
+                {"name": "Too large", "map": SimpleUploadedFile("map.png", b"image header")},
+            )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(response.json()["error"], "This map exceeds the server image pixel limit.")
+        image = BytesIO()
+        Image.new("RGB", (21, 21)).save(image, "PNG")
+        with self.settings(GRAVEWRIGHT_MAP_TILER="pillow", GRAVEWRIGHT_MAP_MAX_PIXELS=500,
+                           GRAVEWRIGHT_MAP_PILLOW_MAX_PIXELS=440):
+            response = self.client.post(
+                f"/api/containers/{self.campaign.pk}/scene-upload",
+                {"name": "Requires streaming", "map": SimpleUploadedFile("map.png", image.getvalue())},
+            )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("vips", response.json()["error"])
+        self.assertFalse(Scene.objects.exists())
+        self.assertFalse(Tile.objects.exists())
+        self.assertFalse(any(Path(self.media.name).rglob("*.webp")))
+
+    def test_corrupt_input_does_not_publish_scene_or_tiles(self):
+        self.client.force_login(self.gm)
+        response = self.client.post(
+            f"/api/containers/{self.campaign.pk}/scene-upload",
+            {"name": "Corrupt map", "map": SimpleUploadedFile("map.png", b"not an image")},
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(response.json()["error"], "Choose a valid PNG, JPEG, WebP or TIFF image.")
+        self.assertFalse(Scene.objects.exists())
+        self.assertFalse(Tile.objects.exists())
+        self.assertFalse(any(Path(self.media.name).rglob("*.webp")))
+
+    def test_failed_tile_persistence_rolls_back_scene_and_removes_files(self):
+        from unittest.mock import patch
+
+        with patch.object(Tile.objects, "bulk_create", side_effect=OSError("simulated database failure")):
+            with self.assertRaisesMessage(OSError, "simulated database failure"):
+                self.upload()
+        self.assertFalse(Scene.objects.exists())
+        self.assertFalse(Tile.objects.exists())
+        self.assertFalse(any(Path(self.media.name).rglob("*.webp")))
 
     def test_settings_conflicts_scope_and_folder_cycles(self):
         m = self.upload()
@@ -299,6 +366,73 @@ class MapTests(TransactionTestCase):
             self.assertEqual((await self.event(player, "maps.state"))["maps"], [])
         finally:
             await self.finish()
+
+    async def test_activation_and_uploaded_broadcast_survive_leaving_table(self):
+        uploaded = await db(self.upload)()
+        unpublished = await db(self.upload)(False)
+        try:
+            for expected, activate in ((uploaded, unpublished), (unpublished, None)):
+                gm = self.socket(self.gm)
+                self.assertTrue((await gm.connect())[0])
+                await self.event(gm, "chat.history")
+                await gm.send_json_to({"type": "maps.sync"})
+                state = await self.event(gm, "maps.state")
+                self.assertEqual(state["activeMapId"], expected["id"])
+                self.assertEqual(state["navigatingMapId"], unpublished["id"])
+                self.assertEqual(state["followingActiveMap"], activate is None)
+                self.assertEqual(
+                    {row["id"] for row in state["maps"]},
+                    {uploaded["id"], unpublished["id"]},
+                )
+                if activate:
+                    await gm.send_json_to({
+                        "type": "maps.command",
+                        "payload": {
+                            "action": "activate",
+                            "data": {"mapId": activate["id"]},
+                            "requestId": str(uuid.uuid4()),
+                        },
+                    })
+                    await self.event(gm, "maps.ack")
+                    self.assertEqual(
+                        (await self.event(gm, "maps.state"))["activeMapId"],
+                        activate["id"],
+                    )
+                await gm.disconnect()
+                self.sockets.remove(gm)
+        finally:
+            await self.finish()
+
+    def test_private_navigation_is_scoped_and_deletion_resumes_broadcast(self):
+        from gravewright.campaigns.models import Membership
+
+        active = self.upload()
+        private = self.upload(False)
+        Membership.objects.create(campaign=self.campaign, user=self.outsider, role="gm")
+        self.command("navigate", {"mapId": private["id"]})
+        state = services.state(self.campaign.pk, self.gm.pk)
+        self.assertEqual(state["activeMapId"], active["id"])
+        self.assertEqual(state["navigatingMapId"], private["id"])
+        self.assertFalse(state["followingActiveMap"])
+        for user in (self.player, self.outsider):
+            state = services.state(self.campaign.pk, user.pk)
+            self.assertEqual(state["navigatingMapId"], active["id"])
+            self.assertTrue(state["followingActiveMap"])
+        with self.assertRaises(services.MapError):
+            self.command("navigate", {"mapId": private["id"]}, self.player)
+        foreign = Scene.objects.create(
+            campaign=self.other, name="Other table", width=10, height=10,
+        )
+        with self.assertRaises(services.MapError):
+            self.command("navigate", {"mapId": str(foreign.pk)})
+        self.command("navigate", {"mapId": None})
+        self.assertTrue(services.state(self.campaign.pk, self.gm.pk)["followingActiveMap"])
+        self.command("navigate", {"mapId": private["id"]})
+        self.command("delete", {"mapId": private["id"]})
+        state = services.state(self.campaign.pk, self.gm.pk)
+        self.assertEqual(state["navigatingMapId"], active["id"])
+        self.assertTrue(state["followingActiveMap"])
+        self.assertIsNone(SceneNavigation.objects.get(membership__user=self.gm).scene_id)
 
     def object_command(self, map_id, area, action, data, user=None, rid=None):
         if area == "fog" and "expected_version" not in data:

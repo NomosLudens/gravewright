@@ -13,6 +13,14 @@ Contribuições podem melhorar código, testes, acessibilidade, documentação, 
 5. Atualize a documentação em inglês e a correspondente em português quando mudar comportamento ou instalação. Preserve identificadores e comandos entre traduções.
 6. Descreva problema, comportamento resultante, validação e limitações no pull request. Inclua capturas quando houver mudanças visuais; use dados fictícios de campanha.
 
+## Contrato de armazenamento portátil
+
+Todo armazenamento padrão do VTT fica na pasta descompactada: `data/` para dados,
+logs e estado do Runner/atualizador; `data/runner/` para ferramentas gerenciadas e
+seus caches. Não introduza padrões em AppData, HOME ou XDG nem metadados
+compartilhados entre instalações. Siga [AGENTS.md](AGENTS.md) e mantenha testes
+que comprovem a independência entre duas cópias.
+
 ## Código e documentação
 
 Use inglês em novos comentários, docstrings, documentação de APIs e identificadores. Explique responsabilidades, limites de confiança, efeitos colaterais e restrições pouco óbvias. Evite comentários que apenas repitam uma instrução. Funções públicas devem explicar entradas, retornos, suposições de permissão e exceções relevantes quando isso não estiver claro na assinatura.
@@ -21,7 +29,7 @@ Mantenha alterações de esquema em migrações. Não mude o significado de uma 
 
 Não inclua `.env`, bancos, documentos enviados, módulos instalados, chaves privadas, sessões de navegador ou `test-results/` nos commits. Use contas fictícias e recursos que você possa distribuir nas fixtures.
 
-Atualmente não há configuração global de formatador/linter nem workflow de CI que defina verificações adicionais obrigatórias. Siga o estilo próximo e informe os comandos efetivamente executados; não declare aprovação de CI sem que ela tenha ocorrido.
+Atualmente não há configuração global de formatador/linter. O [workflow de atualizações automáticas](.github/workflows/automatic-updates.yml) verifica a recuperação de atualizações em Windows, Linux e macOS, além dos fluxos de navegador e módulos. Siga o estilo próximo, execute as verificações adequadas à alteração e informe os comandos efetivamente executados; não declare aprovação de CI sem que ela tenha ocorrido.
 
 ## Licenciamento das contribuições
 

@@ -2,9 +2,11 @@ import base64
 import hashlib
 import io
 import json
+import os
 import zipfile
+from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from gravewright.accounts.models import User, UserPreference
 from gravewright.web.localization import LocalizationExtension, tr
 from jinja2 import Environment
@@ -14,7 +16,64 @@ from .packages import host, canonical, ModuleFailure
 
 
 class LocalizationTests(TestCase):
-    setUp = test_marketplace.MarketplaceTests.setUp
+    def setUp(self):
+        test_marketplace.MarketplaceTests.setUp(self)
+        self.enterContext(override_settings(DEFAULT_LOCALE='en', GRAVEWRIGHT_MODULES_ROOT=self.directory / 'modules'))
+        self.enterContext(patch.dict(os.environ))
+
+    @override_settings(DEFAULT_LOCALE='pt-BR')
+    def test_runner_installs_signed_translator_and_reuses_it_offline(self):
+        from scripts import gravewright_runner as runner
+
+        record, raw = self.release()
+        project = self.directory / 'project'
+        project.mkdir()
+        (project / '.env').write_text('# Installer settings\n', encoding='utf-8')
+        state = self.directory / 'runner-state'
+        with patch.object(runner, 'ROOT', project), patch.object(
+            runner, '_download_default_keys', return_value=self.keyfile.read_bytes()
+        ) as keys, patch('gravewright.modules.views.download', side_effect=[json.dumps([record]).encode(), raw]) as download:
+            runner.ensure_portuguese_translation(state)
+            package = Package.objects.get(module_id='gravewright.translator')
+            self.assertTrue(package.global_enabled)
+            self.assertIn('pt-BR', package.locale_catalogs)
+            self.assertEqual(download.call_count, 2)
+            saved = (project / '.env').read_bytes()
+            runner.ensure_portuguese_translation(state)
+            self.assertEqual(download.call_count, 2)
+            self.assertEqual(keys.call_count, 1)
+            self.assertEqual(Package.objects.count(), 1)
+            self.assertEqual((project / '.env').read_bytes(), saved)
+
+    @override_settings(DEFAULT_LOCALE='pt-BR')
+    def test_runner_rejects_unsigned_translator_before_installing(self):
+        from scripts import gravewright_runner as runner
+
+        record, raw = self.release()
+        record['sha256'] = '0' * 64
+        with patch.object(runner, '_download_default_keys', return_value=self.keyfile.read_bytes()), patch(
+            'gravewright.modules.views.download', return_value=json.dumps([record]).encode()
+        ) as download:
+            with self.assertRaises(runner.RunnerError):
+                runner.ensure_portuguese_translation(self.directory / 'runner-state')
+            self.assertEqual(download.call_count, 1)
+            self.assertFalse(Package.objects.exists())
+
+    @override_settings(DEFAULT_LOCALE='en')
+    def test_runner_does_not_install_translator_for_english(self):
+        from scripts import gravewright_runner as runner
+
+        with patch.object(runner, '_download_default_keys') as download:
+            runner.ensure_portuguese_translation(self.directory)
+            download.assert_not_called()
+        self.assertFalse(Package.objects.exists())
+
+    def test_numbered_placeholders_must_be_preserved(self):
+        from .localization import validate_catalog
+        validate_catalog({'Card {0} of {1}': 'Carta {0} de {1}'})
+        with self.assertRaises(ModuleFailure):
+            validate_catalog({'Card {0} of {1}': 'Carta {0}'})
+
     def release(self, catalogs=None, **changes):
         catalogs = catalogs if catalogs is not None else {
             'pt-BR': {'Settings': 'Configurações', 'Campaigns': 'Campanhas', 'Save language': 'Salvar idioma'},
@@ -52,7 +111,7 @@ class LocalizationTests(TestCase):
         self.assertFalse(self.client.get('/api/module-packages').json()[0]['globalEnabled'])
         response = self.activate()
         self.assertEqual(response.status_code, 200, response.content)
-        self.assertContains(self.client.get('/inside?section=settings'), 'data-language-settings')
+        self.assertNotContains(self.client.get('/inside?section=settings'), 'data-language-settings')
         response = self.client.post('/inside/language', {'locale': 'pt-BR'})
         self.assertEqual(response.status_code, 302, response.content)
         self.user.name = 'Settings'; self.user.save()
@@ -70,6 +129,63 @@ class LocalizationTests(TestCase):
         response = self.client.get('/inside?section=settings')
         self.assertNotContains(response, 'data-language-settings')
         self.assertContains(response, '>Settings</h1>')
+
+    def test_reviewed_portuguese_is_applied_without_changing_signed_package(self):
+        from .localization import catalogs, reviewed_portuguese, validate_catalog
+        from gravewright.web.localization import native_messages, translate_tree
+
+        reviewed = reviewed_portuguese()
+        validate_catalog(reviewed)
+        record, raw = self.release({
+            'pt-BR': {
+                'Settings': 'Configurações', 'Create table': 'Crie a tabela',
+                'Create group': 'Grupo cria', 'Search scenes': 'Cenas de pesquisa',
+                'Roll table': 'Tabela de patinação', 'Actor': 'Ator',
+                'Preview': 'Prévia', 'Unrelated module label': 'Texto do módulo',
+            },
+            'es': {'Create table': 'Crear mesa'},
+        })
+        host().install(record, raw)
+        self.assertNotIn('pt-BR', catalogs())
+        self.assertEqual(self.activate().status_code, 200)
+        available = catalogs()
+        messages = available['pt-BR']['messages']
+        for source, expected in {
+            'Create table': 'Criar mesa', 'Create group': 'Criar grupo',
+            'Search scenes': 'Pesquisar cenas', 'Roll table': 'Tabela de rolagem',
+            'Actor': 'Personagem', 'Type DELETE to confirm': 'Digite DELETE para confirmar',
+            'Preview': 'Prévia', 'Unrelated module label': 'Texto do módulo',
+            'Window': 'Janela', 'Turn off manual lighting': 'Desativar iluminação manual',
+        }.items():
+            self.assertEqual(messages[source], expected)
+        self.assertEqual(available['es']['messages']['Create table'], 'Crear mesa')
+        self.assertEqual(available['es']['messages']['Character sheet'], 'Ficha de personaje')
+        self.assertEqual(available['es']['messages']['New quest'], 'Nueva misión')
+        for locale, title, hint in (
+            ('pt-BR', 'Visão completa', 'Todo o mapa é visível para todos. Nada fica oculto.'),
+            ('es', 'Visión completa', 'Todo el mapa es visible para todos. Nada está oculto.'),
+        ):
+            self.assertEqual(available[locale]['messages']['Full vision'], title)
+            self.assertEqual(available[locale]['messages'][
+                'The whole map is visible to everyone. Nothing is hidden.'], hint)
+        self.assertEqual(available['en']['messages'], {})
+        translated = translate_tree(native_messages(), messages)
+        self.assertEqual(translated['inside']['campaigns']['create'], 'Criar mesa')
+        self.assertEqual(translated['inside']['containers']['create']['title'], 'Criar mesa')
+        self.assertEqual(translated['inside']['containers']['dropFile'], 'Arraste uma imagem aqui ou clique para selecionar')
+        package = Package.objects.get(module_id='gravewright.translator')
+        self.assertEqual(package.locale_catalogs['pt-BR']['messages']['Create table'], 'Crie a tabela')
+        host().verify_installed(package)
+        self.assertEqual(package.locale_catalogs['es']['messages'], {'Create table': 'Crear mesa'})
+        self.client.post('/inside/language', {'locale': 'pt-BR'})
+        self.assertContains(self.client.get('/inside'), 'Criar mesa')
+        self.assertNotContains(self.client.get('/inside'), 'Crie a tabela')
+        self.user.name = 'Create table'
+        self.user.save()
+        self.assertContains(self.client.get('/inside?section=settings'), 'value="Create table"')
+        self.activate(False)
+        self.assertNotIn('pt-BR', catalogs())
+        self.assertContains(self.client.get('/inside'), 'Create table')
 
     def test_invalid_language_returns_controlled_error(self):
         self.install()

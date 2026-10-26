@@ -14,8 +14,8 @@ from config.environment import env_bool, env_path, load_environment, public_orig
 
 # All relative configuration paths resolve against the source tree root.
 BASE_DIR = Path(__file__).resolve().parent.parent
-# The local Runner prepares its own user configuration before importing Django.
-# Never mix a developer/production checkout's .env into that private profile.
+# The local Runner loads the project .env and enforces its local profile before
+# importing Django. Do not load it again and override those prepared values.
 _LOCAL_RUNNER = os.environ.get('DJANGO_SETTINGS_MODULE') == 'config.runner'
 if not _LOCAL_RUNNER:
     load_environment()
@@ -81,7 +81,7 @@ INSTALLED_APPS = [
 ]
 
 # Trusted Python extensions are explicitly installed by the host operator.
-# Browser marketplace archives never populate this setting or import Python.
+# Marketplace Django apps are added below from the supervisor's registry.
 GRAVEWRIGHT_SERVER_APP_PATHS = tuple(dict.fromkeys(
     value.strip() for value in os.environ.get('GRAVEWRIGHT_SERVER_APP_PATHS', '').split(os.pathsep)
     if value.strip()
@@ -93,6 +93,19 @@ for value in GRAVEWRIGHT_SERVER_APP_PATHS:
         raise ValueError(f'GRAVEWRIGHT_SERVER_APP_PATHS directory does not exist: {app_path}')
     if str(app_path) not in sys.path:
         sys.path.append(str(app_path))
+# Default in-checkout extension folders. The API folder keeps browser module
+# sources; the Django folder is importable, so a trusted app dropped there only
+# needs its package name in GRAVEWRIGHT_SERVER_APPS. Explicitly configured
+# GRAVEWRIGHT_SERVER_APP_PATHS entries keep precedence over this default folder.
+GRAVEWRIGHT_API_MODULES_ROOT = env_path('GRAVEWRIGHT_API_MODULES_ROOT', 'extensions/api').resolve()
+GRAVEWRIGHT_DJANGO_MODULES_ROOT = env_path('GRAVEWRIGHT_DJANGO_MODULES_ROOT', 'extensions/django').resolve()
+for _name, _root in (('GRAVEWRIGHT_API_MODULES_ROOT', GRAVEWRIGHT_API_MODULES_ROOT),
+                     ('GRAVEWRIGHT_DJANGO_MODULES_ROOT', GRAVEWRIGHT_DJANGO_MODULES_ROOT)):
+    # A deployment may delete the shipped folders; a configured one must exist.
+    if not _root.is_dir() and os.environ.get(_name, '').strip():
+        raise ValueError(f'{_name} directory does not exist: {_root}')
+if GRAVEWRIGHT_DJANGO_MODULES_ROOT.is_dir() and str(GRAVEWRIGHT_DJANGO_MODULES_ROOT) not in sys.path:
+    sys.path.append(str(GRAVEWRIGHT_DJANGO_MODULES_ROOT))
 GRAVEWRIGHT_SERVER_APPS = tuple(dict.fromkeys(
     name.strip() for name in os.environ.get('GRAVEWRIGHT_SERVER_APPS', '').split(',')
     if name.strip()
@@ -214,9 +227,24 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 # Assets and installed module packages are private and served by guarded views.
 # Never expose this directory as an unauthenticated /media/ static location.
 MEDIA_ROOT = env_path('GRAVEWRIGHT_MEDIA_ROOT', 'data/media')
+GRAVEWRIGHT_MODULES_ROOT = (
+    env_path('GRAVEWRIGHT_MODULES_ROOT', '').resolve()
+    if os.environ.get('GRAVEWRIGHT_MODULES_ROOT', '').strip() else None
+)
+
+from config.marketplace_apps import load_apps as _load_marketplace_apps
+_marketplace_directory = GRAVEWRIGHT_MODULES_ROOT or Path(MEDIA_ROOT) / 'modules'
+GRAVEWRIGHT_SERVER_APPS += tuple(_load_marketplace_apps(_marketplace_directory))
+INSTALLED_APPS += [name for name in GRAVEWRIGHT_SERVER_APPS if name not in INSTALLED_APPS]
 GRAVEWRIGHT_CONTENT_ROOT = env_path('GRAVEWRIGHT_CONTENT_ROOT', 'data/vtt/compendiums')
 DATA_UPLOAD_MAX_MEMORY_SIZE = 8 * 1024 * 1024
 GRAVEWRIGHT_MAP_MAX_PIXELS = int(os.environ.get('GRAVEWRIGHT_MAP_MAX_PIXELS', '64000000'))
+GRAVEWRIGHT_MAP_PILLOW_MAX_PIXELS = int(os.environ.get('GRAVEWRIGHT_MAP_PILLOW_MAX_PIXELS', '64000000'))
+if min(GRAVEWRIGHT_MAP_MAX_PIXELS, GRAVEWRIGHT_MAP_PILLOW_MAX_PIXELS) < 1:
+    raise ValueError('Map pixel limits must be positive.')
+GRAVEWRIGHT_MAP_TILER = os.environ.get('GRAVEWRIGHT_MAP_TILER', 'auto').strip().lower()
+if GRAVEWRIGHT_MAP_TILER not in {'auto', 'vips', 'pillow'}:
+    raise ValueError('GRAVEWRIGHT_MAP_TILER must be auto, vips or pillow.')
 
 
 # Email
@@ -243,6 +271,7 @@ else:
     CHANNEL_LAYERS = {'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}}
 GRAVEWRIGHT_HEARTBEAT_SECONDS = 5
 GRAVEWRIGHT_PRESENCE_TTL = 20
+GRAVEWRIGHT_AUTOMATION_WORKER_ENABLED = env_bool('GRAVEWRIGHT_AUTOMATION_WORKER_ENABLED', True)
 
 GRAVEWRIGHT_MARKETPLACE_URL = os.environ.get("GRAVEWRIGHT_MARKETPLACE_URL", "")
 GRAVEWRIGHT_MARKETPLACE_KEYS_FILE = (
@@ -259,6 +288,12 @@ if DATABASE_ECHO:
 
 # Django source releases; empty until this distribution publishes compatible artifacts.
 GRAVEWRIGHT_RELEASES_REPOSITORY = os.environ.get("GRAVEWRIGHT_RELEASES_REPOSITORY", "Gravewright/gravewright")
+GRAVEWRIGHT_TACTICAL_QA_FIXTURES_ENABLED = env_bool(
+    "GRAVEWRIGHT_TACTICAL_QA_FIXTURES_ENABLED", False
+)
+GRAVEWRIGHT_TACTICAL_QA_FIXTURE_ROOT = os.environ.get(
+    "GRAVEWRIGHT_TACTICAL_QA_FIXTURE_ROOT", ""
+).strip()
 KALLISTIS_VTT_CONSUME_URL = os.environ.get("KALLISTIS_VTT_CONSUME_URL", "").strip()
 KALLISTIS_VTT_SERVICE_SECRET = os.environ.get("KALLISTIS_VTT_SERVICE_SECRET", "")
 KALLISTIS_VTT_CHARACTER_READ_URL = os.environ.get(

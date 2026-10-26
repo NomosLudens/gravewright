@@ -1,0 +1,150 @@
+{
+  "qa_origin": "http://127.0.0.1:3001",
+  "campaign": "Knossos QA - G4 (identifiers omitted)",
+  "roles": {
+    "gm": "authenticated via normal login form",
+    "player": "authenticated via normal login form"
+  },
+  "screenshots": [
+    "godot-gm.png",
+    "godot-player.png",
+    "godot-gm-picked-level-1.png",
+    "godot-player-token-on-raised-floor.png",
+    "godot-player-selected-raised-token.png",
+    "godot-gm-observed-raised-token.png",
+    "godot-gm-levels-and-stair.png",
+    "godot-player-levels-and-stair.png",
+    "godot-gm-reload.png",
+    "godot-player-reload.png",
+    "pixijs-after-godot-raised-move.png"
+  ],
+  "websocket_types": {
+    "gm": [
+      "chat.history",
+      "maps.layers",
+      "maps.state",
+      "resources.state",
+      "session.ping",
+      "table.joined",
+      "table.presence",
+      "tokens.state"
+    ],
+    "player": [
+      "actors.state",
+      "api.changed",
+      "chat.history",
+      "journals.state",
+      "maps.layers",
+      "maps.state",
+      "resources.state",
+      "scene.viewport.ready",
+      "session.ping",
+      "table.joined",
+      "table.presence",
+      "tokens.state"
+    ]
+  },
+  "console_errors": [],
+  "page_errors": [],
+  "failed_requests": [],
+  "http_errors": [],
+  "pixijs": {
+    "route_status": 200,
+    "route": "/game/<uuid>",
+    "canvas_count": 1,
+    "live_token_state_matches_godot": true
+  },
+  "outgoing_websocket_types": {
+    "gm": [
+      "maps.layers",
+      "maps.sync",
+      "resources.sync",
+      "session.pong",
+      "tokens.sync"
+    ],
+    "player": [
+      "actors.sync",
+      "api.watch",
+      "chat.sync",
+      "journals.sync",
+      "maps.layers",
+      "maps.sync",
+      "resources.sync",
+      "scene.viewport",
+      "scene.viewport.stop",
+      "session.pong",
+      "tokens.sync"
+    ]
+  },
+  "canvas": {
+    "gm": {
+      "width": 1280,
+      "height": 800,
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 1280,
+        "height": 800,
+        "top": 0,
+        "right": 1280,
+        "bottom": 800,
+        "left": 0
+      },
+      "webgl2": true
+    },
+    "player": {
+      "width": 1280,
+      "height": 800,
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 1280,
+        "height": 800,
+        "top": 0,
+        "right": 1280,
+        "bottom": 800,
+        "left": 0
+      },
+      "webgl2": true
+    }
+  },
+  "terrain_versions": [
+    78,
+    78,
+    78,
+    78,
+    78
+  ],
+  "raised_token": {
+    "position": [
+      5,
+      2
+    ],
+    "floor_elevation": 4,
+    "acknowledged": false,
+    "observed_by_gm": false,
+    "persisted_after_reload": true,
+    "movement_replayed": false
+  },
+  "terrain_projection": "256 cells; DIFICIL at level 0, SEVERO at levels 1 and 2, stair projected to both roles",
+  "reload": "both authenticated pages reloaded and received current tokens and terrain",
+  "authorization": "GM canEdit=true; player canEdit=false; player canvas has no authoring toolbar",
+  "cancelled_navigation_requests": [],
+  "expected_qa_tile_404s": [
+    "player: 404 GET /api/maps/<uuid>/tiles/0/0/1.webp",
+    "player: 404 GET /api/maps/<uuid>/tiles/0/2/0.webp",
+    "player: 404 GET /api/maps/<uuid>/tiles/0/1/0.webp",
+    "player: 404 GET /api/maps/<uuid>/tiles/0/2/1.webp",
+    "player: 404 GET /api/maps/<uuid>/tiles/0/0/2.webp",
+    "player: 404 GET /api/maps/<uuid>/tiles/0/1/1.webp",
+    "player: 404 GET /api/maps/<uuid>/tiles/0/0/0.webp",
+    "player: 404 GET /api/maps/<uuid>/tiles/0/2/2.webp",
+    "player: 404 GET /api/maps/<uuid>/tiles/0/1/2.webp",
+    "player: 404 GET /api/maps/<uuid>/tiles/0/1/2.webp",
+    "player: 404 GET /api/maps/<uuid>/tiles/0/2/2.webp",
+    "player: 404 GET /api/maps/<uuid>/tiles/0/0/0.webp",
+    "player: 404 GET /api/maps/<uuid>/tiles/0/1/2.webp",
+    "player: 404 GET /api/maps/<uuid>/tiles/0/2/2.webp",
+    "player: 404 GET /api/maps/<uuid>/tiles/0/0/0.webp"
+  ]
+}

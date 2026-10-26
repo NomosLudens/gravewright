@@ -1,8 +1,8 @@
 """Exercise the actual Windows BAT, private tools and local server.
 
-Run ``python tests/windows/runner.py`` on Windows. A temporary source copy,
-profile and campaign directory keep developer files untouched. The first BAT
-process sees a restricted PATH; the next reuses the installed tools offline.
+Run ``python tests/windows/runner.py`` on Windows. A temporary source copy and
+legacy profile keep developer files untouched. Tools, caches and Runner state
+must stay in the extracted project. The next BAT reuses local tools offline.
 The harness then runs the frontend unit tests and the real browser Runner E2E.
 
 ``--source-check`` checks for obsolete launcher implementations on any OS.
@@ -21,11 +21,12 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[2]
-LAUNCHER = "Gravewright Runner.bat"
+LAUNCHER = "Install Windows.bat"
 PROFILE_NAME = "Private profile ç"
 
 
@@ -38,11 +39,39 @@ def check_sources():
                      "tests/windows/tooling.ps1"):
         if (ROOT / obsolete).exists():
             raise AssertionError(f"Obsolete launcher implementation remains: {obsolete}")
+    if ('%localappdata%\\gravewright' in batch or 'if not defined localappdata' in batch
+            or '"%gw_system%\\where.exe"' in batch):
+        raise AssertionError("The installer must not discover another installation's AppData/PATH tools.")
+    for expected in (
+        'set "gw_runtime=%gravewright_root%\\data\\runner"',
+        'set "gw_data=%gravewright_root%\\data"',
+        'set "uv_cache_dir=%gw_runtime%\\cache"',
+        'set "uv_python_install_dir=%gw_runtime%\\python"',
+        'set "uv_python_preference=only-managed"',
+        'set "npm_config_cache=%gw_runtime%\\npm-cache"',
+        'set "cargo_home=%gw_runtime%\\cargo"',
+        'set "rustup_home=%gw_runtime%\\rustup"',
+        'set "temp=%gw_runtime%\\tmp"',
+        'set "tmp=%gw_runtime%\\tmp"',
+        'set "localappdata=%gw_runtime%\\profile\\local"',
+        'set "appdata=%gw_runtime%\\profile\\roaming"',
+    ):
+        if expected not in batch:
+            raise AssertionError(f"A local installer storage default is missing: {expected}")
     print("Native BAT source checks passed.", flush=True)
 
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def tree_snapshot(directory):
+    """Detect writes to an unrelated profile, including directories and new files."""
+    paths = [directory, *directory.rglob('*')]
+    return {path.relative_to(directory).as_posix(): (
+        'file' if path.is_file() else 'directory',
+        digest(path) if path.is_file() else None, path.stat().st_mtime_ns,
+    ) for path in paths}
 
 
 def free_port():
@@ -67,16 +96,17 @@ def registry_paths():
     return values
 
 
-def run_command(command, *, cwd, env, log, label, timeout=600, expected=0, executable=None):
+def run_command(command, *, cwd, env, log, label, timeout=600, expected=0, executable=None, input_text=None):
     print(label, flush=True)
     process = subprocess.Popen(
         command, executable=executable, cwd=cwd, env=env,
-        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace",
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
     )
     try:
-        output, _ = process.communicate(timeout=timeout)
+        output, _ = process.communicate(input=input_text, timeout=timeout)
     except (subprocess.TimeoutExpired, KeyboardInterrupt):
         # Only this test's process tree is terminated; uv/node may own children.
         subprocess.run(
@@ -93,7 +123,8 @@ def run_command(command, *, cwd, env, log, label, timeout=600, expected=0, execu
     return output
 
 
-def run_batch(project, arguments, *, env, log, label, cwd, expected=0, timeout=600):
+def run_batch(project, arguments, *, env, log, label, cwd, expected=0, timeout=600,
+              launcher=LAUNCHER, input_text=None):
     """Call CMD directly and keep paths containing %, ! and & as data.
 
     CMD expands these test variables once. Substituted percent signs are not
@@ -102,7 +133,7 @@ def run_batch(project, arguments, *, env, log, label, cwd, expected=0, timeout=6
     """
     child = dict(env)
     parts = []
-    for index, value in enumerate((str(project / LAUNCHER), *arguments)):
+    for index, value in enumerate((str(project / launcher), *arguments)):
         if any(character in str(value) for character in '\r\n"'):
             raise ValueError("Test batch arguments may not contain quotes or newlines.")
         name = f"GRAVEWRIGHT_TEST_ARGUMENT_{index}"
@@ -111,14 +142,70 @@ def run_batch(project, arguments, *, env, log, label, cwd, expected=0, timeout=6
     comspec = str(Path(env["SYSTEMROOT"]) / "System32/cmd.exe")
     command = f'"{comspec}" /d /s /v:off /c "' + " ".join(parts) + '"'
     return run_command(command, executable=comspec, cwd=cwd, env=child,
-                       log=log, label=label, expected=expected, timeout=timeout)
+                       log=log, label=label, expected=expected, timeout=timeout, input_text=input_text)
 
 
 def single_match(directory, pattern):
-    matches = list(directory.glob(pattern))
+    # uv keeps a minor-version directory alias beside the installed patch version.
+    # Require one real executable while accepting aliases to that same file.
+    matches = []
+    for candidate in directory.glob(pattern):
+        resolved = candidate.resolve(strict=True)
+        if not any(resolved.samefile(existing) for existing in matches):
+            matches.append(resolved)
     if len(matches) != 1:
         raise AssertionError(f"Expected one {pattern} under {directory}; found {len(matches)}")
     return matches[0]
+
+
+def check_running_bat_replacement(work, output):
+    project = work / 'Running BAT & 100% !'
+    (project / 'scripts/windows').mkdir(parents=True)
+    shutil.copy2(ROOT / 'scripts/windows/runner.bat', project / 'scripts/windows/runner.bat')
+    shutil.copy2(ROOT / 'scripts/windows/launch_runner.py', project / 'scripts/windows/launch_runner.py')
+    spec = importlib.util.spec_from_file_location('runner_generator', ROOT / 'scripts/windows/create_runner.py')
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    for code in (0, 1):
+        (project / 'scripts/gravewright_runner.py').write_text(
+            'from pathlib import Path\n'
+            'Path("new.bat").write_text("@echo off\\necho REPLACEMENT_EXECUTED\\nexit /b 99\\n")\n'
+            'Path("new.bat").replace("Gravewright Runner.bat")\n'
+            f'raise SystemExit({code})\n', encoding='utf-8')
+        generator.create_runner(project, sys.executable, project / 'data')
+        result = run_batch(project, ['--no-pause'], launcher='Gravewright Runner.bat',
+                           cwd=work, env=os.environ, log=output / f'bat-swap-{code}.log', expected=code,
+                           label=f'Replacing the running project BAT and preserving exit status {code}...')
+        if 'REPLACEMENT_EXECUTED' in result:
+            raise AssertionError('CMD resumed the replacement BAT instead of finishing its private copy.')
+
+
+def check_private_python(work, uv, output):
+    """Exercise the real BAT subroutines without a shared/registered Python."""
+    source = (ROOT / LAUNCHER).read_text(encoding='utf-8')
+    block = source[source.index('\n:resolve_python\n'):source.index('\n:resolve_node\n')]
+    directory = work / 'Python download probe'
+    directory.mkdir()
+    script = directory / 'probe.bat'
+    script.write_text('@echo off\nsetlocal DisableDelayedExpansion\n'
+                      'call :resolve_python\nexit /b %errorlevel%\n' + block, encoding='utf-8')
+    env = dict(os.environ, GW_RUNTIME=str(directory), GW_WORK=str(directory), GW_UV=str(uv),
+               UV_PYTHON_INSTALL_DIR=str(directory / 'empty-discovery'), UV_PYTHON_NO_REGISTRY='1',
+               UV_PYTHON_INSTALL_REGISTRY='0', UV_PYTHON_INSTALL_BIN='0', GW_PYTHON_PROBE=str(script),
+               UV_CACHE_DIR=str(directory / 'cache'), TEMP=str(directory), TMP=str(directory))
+    env.pop('UV_OFFLINE', None)
+    env['PATH'] = str(Path(env['SYSTEMROOT']) / 'System32')
+    comspec = str(Path(env['SYSTEMROOT']) / 'System32/cmd.exe')
+    command = f'"{comspec}" /d /s /v:off /c ""%GW_PYTHON_PROBE%""'
+    first = run_command(command, executable=comspec, cwd=work, env=env,
+                        log=output / 'private-python.log', label='Downloading private Python with the real BAT resolver...')
+    if 'Installing a private copy' not in first or not list((directory / 'python').glob('*/python.exe')):
+        raise AssertionError('The resolver did not download and validate a private Python.')
+    env['UV_OFFLINE'] = '1'
+    repeated = run_command(command, executable=comspec, cwd=work, env=env,
+                           log=output / 'private-python-repeat.log', label='Reusing private Python offline...')
+    if 'Installing a private copy' in repeated:
+        raise AssertionError('The resolver tried to reinstall its private Python.')
 
 
 @contextmanager
@@ -172,7 +259,7 @@ def check_shortcut(project, output):
             link, buffer, len(buffer)), "Read working directory")
         report["working_directory"] = buffer.value
 
-    expected = {"target": project / LAUNCHER,
+    expected = {"target": project / 'Gravewright Runner.bat',
                 "icon": project / "scripts/windows/gravewright.ico",
                 "working_directory": project}
     report["expected"] = {name: str(path) for name, path in expected.items()}
@@ -200,7 +287,7 @@ def check_shortcut(project, output):
 
 def diagnose_failure(work, output):
     """Retain tool startup evidence before deleting the temporary test profile."""
-    runtime = work / PROFILE_NAME / "Gravewright/runner"
+    runtime = work / "Gravewright & (test) ! 100% ç/data/runner"
     system = Path(os.environ["SYSTEMROOT"]) / "System32"
     report = {"runtime_exists": runtime.exists(), "executables": []}
 
@@ -226,8 +313,9 @@ def diagnose_failure(work, output):
 
 
 def exercise(work, output, *, skip_browser):
+    check_running_bat_replacement(work, output)
     project = work / "Gravewright & (test) ! 100% ç"
-    data = work / "Campaign data & ã"
+    data = project / 'data'
     profile = work / PROFILE_NAME
     shutil.copytree(
         ROOT, project,
@@ -235,48 +323,84 @@ def exercise(work, output, *, skip_browser):
                                      "test-results", ".env", "data", "media", "staticfiles"),
     )
     source_env = project / ".env"
-    source_env.write_text("DJANGO_SECRET_KEY=source-env-must-stay-untouched", encoding="utf-8")
     sentinel = project / ".venv/developer-data.txt"
     sentinel.parent.mkdir()
     sentinel.write_text("existing developer environment", encoding="utf-8")
-    protected = [source_env, sentinel, project / "uv.lock",
+    protected = [sentinel, project / "uv.lock",
                  project / "gravewright/maps/frontend/package-lock.json"]
     original = {path: digest(path) for path in protected}
     persisted_paths = registry_paths()
     process_path = os.environ.get("PATH", "")
-    env = dict(os.environ, LOCALAPPDATA=str(profile))
-    # uv/Node/npm disappear from PATH; registered/shared Python may still be
-    # found and reused by uv. This never changes the parent or registry PATH.
+    legacy_runtime = profile / 'Gravewright/runner'
+    legacy_state = profile / 'Gravewright/data'
+    foreign = legacy_state / 'updates/releases/foreign-install'
+    foreign.mkdir(parents=True)
+    (foreign / 'manage.py').write_text('raise SystemExit("FOREIGN_INSTALL_EXECUTED")\n', encoding='utf-8')
+    (legacy_state / 'updates/active.json').write_text(json.dumps({
+        'path': str(foreign), 'python': str(legacy_runtime / 'old-python/python.exe'),
+    }), encoding='utf-8')
+    (legacy_runtime / 'cache').mkdir(parents=True)
+    (legacy_runtime / 'cache/keep.txt').write_text('legacy installation cache', encoding='utf-8')
+    legacy_before = tree_snapshot(profile)
+    env = dict(os.environ, LOCALAPPDATA=str(profile), APPDATA=str(profile / 'Roaming'),
+               USERPROFILE=str(profile), UV_PYTHON_INSTALL_DIR=str(legacy_runtime / 'old-python'),
+               UV_CACHE_DIR=str(legacy_runtime / 'cache'), npm_config_cache=str(profile / 'npm-cache'))
+    env.pop('GRAVEWRIGHT_RUNNER_ROOT', None)
+    env.pop('UV_OFFLINE', None)
+    env.pop('npm_config_offline', None)
+    # No default may follow another installation's AppData state or inherited caches.
     env["PATH"] = str(Path(env["SYSTEMROOT"]) / "System32")
     port = str(free_port())
-    arguments = ["--check", "--no-browser", "--no-pause", "--data-dir", str(data), "--port", port]
-    run_batch(project, arguments, cwd=work, env=env, log=output / "first-bootstrap.log",
-              label="Running the real BAT with uv and Node/npm absent from PATH...")
-    runtime = profile / "Gravewright/runner"
+    arguments = ["--check", "--no-browser", "--no-pause", "--port", port]
+    first = run_batch(project, arguments, cwd=work, env=env, log=output / "first-bootstrap.log",
+                      label="Installing entirely inside the extracted project, ignoring old AppData state...")
+    if str(data) not in first or str(legacy_state) in first or 'FOREIGN_INSTALL_EXECUTED' in first:
+        raise AssertionError('The installer did not isolate default Runner state from the legacy profile.')
+    if tree_snapshot(profile) != legacy_before:
+        raise AssertionError('The installer wrote to the unrelated legacy AppData profile.')
+    runtime = data / 'runner'
     uv = single_match(runtime / "uv", "*/uv.exe")
+    check_private_python(work, uv, output)
     node = single_match(runtime / "node", "*/node.exe")
     python = single_match(runtime / "environments", "*/Scripts/python.exe")
+    base_python = single_match(runtime / 'python', '*/python.exe')
+    if not all(path.resolve().is_relative_to(project.resolve()) for path in (uv, node, python, base_python)):
+        raise AssertionError('The installer selected a runtime outside the extracted project.')
+    for name in ('cache', 'npm-cache', 'tmp'):
+        if not (runtime / name).is_dir():
+            raise AssertionError(f'The installer did not create its local {name}.')
+    if not (data / 'logs/runner.log').is_file():
+        raise AssertionError('Default Runner logs did not stay in project data.')
     check_shortcut(project, output)
-    for expected in (data / ".env", data / "gravewright.sqlite3"):
+    for expected in (source_env, project / "data/gravewright.sqlite3"):
         if not expected.is_file():
-            raise AssertionError(f"First bootstrap did not create {expected.name} in the requested data directory.")
-    user_configuration = digest(data / ".env")
+            raise AssertionError(f"First bootstrap did not create {expected}.")
+    if (data / '.env').exists():
+        raise AssertionError('Configuration must be created in the project root.')
+    user_configuration = digest(source_env)
     installed_lock = project / "gravewright/maps/frontend/node_modules/.package-lock.json"
     bundle = project / "gravewright/table/static/gravewright_table/media-workspace.js"
     timestamps = {path: path.stat().st_mtime_ns for path in (installed_lock, bundle, uv, node)}
 
-    database_time = (data / "gravewright.sqlite3").stat().st_mtime_ns
+    database_time = (project / "data/gravewright.sqlite3").stat().st_mtime_ns
     with exclusive_file(runtime / "prepare.lock"):
         locked = run_batch(project, arguments, cwd=work, env=env, log=output / "preparation-lock.log",
                            label="Rejecting a concurrent preparation before installing or migrating...",
                            expected=1, timeout=30)
-    if "[1/6] Checking uv" in locked:
+    if "[1/7] Checking uv" in locked:
         raise AssertionError("The competing launcher entered preparation while its lock was held.")
-    if (data / "gravewright.sqlite3").stat().st_mtime_ns != database_time:
+    if (project / "data/gravewright.sqlite3").stat().st_mtime_ns != database_time:
         raise AssertionError("The competing launcher changed the database while preparation was locked.")
 
-    # Make the same tools available as preinstalled applications on PATH.
-    env["PATH"] = os.pathsep.join((str(uv.parent), str(node.parent), process_path))
+    # Place valid tools from another profile on PATH; local copies must still win.
+    legacy_uv = legacy_runtime / 'uv/external'
+    legacy_node = legacy_runtime / 'node/external'
+    legacy_uv.mkdir(parents=True)
+    legacy_node.mkdir(parents=True)
+    shutil.copy2(uv, legacy_uv / 'uv.exe')
+    shutil.copy2(node, legacy_node / 'node.exe')
+    legacy_before = tree_snapshot(profile)
+    env["PATH"] = os.pathsep.join((str(legacy_uv), str(legacy_node), process_path))
     env["UV_OFFLINE"] = "1"
     env["npm_config_offline"] = "true"
     repeated = run_batch(project, arguments, cwd=work, env=env, log=output / "repeat-bootstrap.log",
@@ -284,17 +408,74 @@ def exercise(work, output, *, skip_browser):
     for message in ("Frontend dependencies are already current.", "Frontend assets are already current."):
         if message not in repeated:
             raise AssertionError(f"The unchanged bootstrap did not report: {message}")
+    if str(legacy_runtime) in repeated or tree_snapshot(profile) != legacy_before:
+        raise AssertionError('The repeated installer used or changed the legacy AppData runtime.')
     for path, timestamp in timestamps.items():
         if path.stat().st_mtime_ns != timestamp:
             raise AssertionError(f"The unchanged bootstrap rewrote {path.name}.")
-    if digest(data / ".env") != user_configuration:
+    if digest(source_env) != user_configuration:
         raise AssertionError("The repeated bootstrap changed the user configuration.")
     if {path: digest(path) for path in protected} != original:
-        raise AssertionError("The BAT changed a source lockfile, .env or developer environment.")
+        raise AssertionError("The BAT changed a source lockfile or developer environment.")
     if registry_paths() != persisted_paths or os.environ.get("PATH", "") != process_path:
         raise AssertionError("The BAT changed the user, machine or parent process PATH.")
 
-    run_batch(project, ["--port", "70000", "--no-pause"], cwd=work, env=env,
+    wizard_data = data
+    wizard_arguments = ['--no-pause']
+    configured = run_batch(project, wizard_arguments, cwd=work, env=env, log=output / 'configure.log',
+                label='Saving interactive configuration with the installed Python...',
+                input_text='Mesa São Paulo\npt-BR\n3001\n\ns\nn\ns\nn\n')
+    marketplace_question = 'Instalar o Gravewright Marketplace padrão? [s/N]:'
+    if marketplace_question in configured or 'Marketplace padrão instalado. Chaves públicas:' not in configured:
+        raise AssertionError('The installer did not configure the official marketplace automatically.')
+    configuration = source_env.read_text(encoding='utf-8')
+    for expected in ('APP_NAME="Mesa São Paulo"', 'DEFAULT_LOCALE="pt-BR"',
+                     'GRAVEWRIGHT_PORT="3001"', 'CAMPAIGN_SNAPSHOTS_ENABLED="false"'):
+        if expected not in configuration:
+            raise AssertionError(f'The configuration wizard did not save {expected}.')
+    expected_catalog = 'https://raw.githubusercontent.com/Gravewright/marketplace/main/gravewright.marketplace.json'
+    if f'GRAVEWRIGHT_MARKETPLACE_URL="{expected_catalog}"' not in configuration:
+        raise AssertionError('The installer did not persist the default marketplace catalog.')
+    keys = list((wizard_data / 'marketplace').glob('*/trusted-keys.json'))
+    if len(keys) != 1 or set(json.loads(keys[0].read_bytes())) != {'gravewright-2026', 'gravewright-2026-10'}:
+        raise AssertionError('The installer did not persist the reviewed official public keys.')
+    key_time = keys[0].stat().st_mtime_ns
+    choices = list((wizard_data / 'marketplace').glob('*/.default-marketplace-choice'))
+    if len(choices) != 1 or choices[0].read_text(encoding='utf-8') != 'installed\n':
+        raise AssertionError('The installer did not record the automatic marketplace installation.')
+    repeated_questions = run_batch(project, wizard_arguments, cwd=work, env=env, log=output / 'configure-repeat.log',
+                                    label='Asking again and keeping saved settings with Enter...', input_text='\n' * 8)
+    if 'Nome da mesa [Mesa São Paulo]' not in repeated_questions:
+        raise AssertionError('The repeated launch did not ask with the saved default.')
+    if marketplace_question in repeated_questions:
+        raise AssertionError('Repeated configuration asked a marketplace installation question.')
+    if 'Marketplace padrão instalado. Chaves públicas:' in repeated_questions or keys[0].stat().st_mtime_ns != key_time:
+        raise AssertionError('Repeated configuration installed the already validated marketplace keys again.')
+    if source_env.read_text(encoding='utf-8') != configuration:
+        raise AssertionError('Repeated configuration changed the project .env.')
+
+    started = run_batch(project, ['--check', '--no-pause'], launcher='Gravewright Runner.bat',
+                        cwd=work, env=env, log=output / 'generated-runner.log',
+                        label='Running the generated launcher offline without configuration or tool preparation...')
+    if 'Verificações do Gravewright Runner concluídas com sucesso.' not in started or any(
+        text in started for text in ('[1/7]', 'Table name', 'Nome da mesa', 'npm ci',
+                                    'Configuration saved.', 'Configuração salva.', marketplace_question)
+    ):
+        raise AssertionError('The generated runner must only execute the prepared application.')
+    if str(wizard_data) not in started:
+        raise AssertionError('The generated runner lost the configured data directory.')
+    if str(legacy_state) in started or tree_snapshot(profile) != legacy_before:
+        raise AssertionError('The generated launcher reused or changed old AppData state.')
+
+    override_data = project / 'Custom state & ã'
+    overridden = run_batch(project, ['--check', '--no-pause', '--data-dir', str(override_data)],
+                           launcher='Gravewright Runner.bat', cwd=work, env=env,
+                           log=output / 'explicit-data-dir.log',
+                           label='Preserving an explicitly selected local Runner state directory...')
+    if str(override_data) not in overridden or not (override_data / 'logs/runner.log').is_file():
+        raise AssertionError('The explicit --data-dir override was not honored.')
+
+    run_batch(project, ["--port", "70000", "--no-pause"], launcher='Gravewright Runner.bat', cwd=work, env=env,
               log=output / "invalid-port.log", label="Rejecting an invalid port without pausing...", expected=1)
     run_command([str(python), "-X", "utf8", "-m", "unittest", "config.test_frontend_preparation"],
                 cwd=project, env=env, log=output / "frontend-tests.log",
@@ -309,6 +490,11 @@ def exercise(work, output, *, skip_browser):
     env["UV_CACHE_DIR"] = str(runtime / "cache")
     env["UV_PYTHON_INSTALL_BIN"] = "0"
     env["UV_PYTHON_INSTALL_REGISTRY"] = "0"
+    env['npm_config_cache'] = str(runtime / 'npm-cache')
+    env['TEMP'] = str(runtime / 'tmp')
+    env['TMP'] = str(runtime / 'tmp')
+    env['PLAYWRIGHT_BROWSERS_PATH'] = str(runtime / 'test-browsers')
+    env['PYTHONPYCACHEPREFIX'] = str(work / 'browser-pycache')
     run_command([str(uv), "--no-config", "sync", "--project", str(project), "--locked", "--python", str(python)],
                 cwd=project, env=env, log=output / "browser-dependencies.log",
                 label="Preparing isolated browser test dependencies...")
@@ -337,12 +523,18 @@ def main():
         parser.error("Native BAT tests require Windows; --source-check is available on this OS.")
     output = ROOT / "test-results/windows-runner"
     output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="gravewright-bat-") as temporary:
+    temporary_root = ROOT / 'data'
+    temporary_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="gw-", dir=temporary_root) as temporary:
+        # Hosted Windows TEMP can use an 8.3 profile alias (RUNNER~1), while
+        # the launcher prints canonical paths. Derive all fixture paths from
+        # the same resolved root without weakening the data-directory check.
+        work = Path(temporary).resolve()
         try:
-            exercise(Path(temporary), output, skip_browser=arguments.skip_browser)
+            exercise(work, output, skip_browser=arguments.skip_browser)
         except Exception:
             try:
-                diagnose_failure(Path(temporary), output)
+                diagnose_failure(work, output)
             except Exception as diagnostic_error:
                 (output / "diagnostic-error.txt").write_text(str(diagnostic_error), encoding="utf-8")
             raise

@@ -18,7 +18,6 @@ from gravewright.actors import services as actors
 from gravewright.chat import services as chat
 from gravewright.dice import services as dice
 from gravewright.dice.engine import RollError, evaluate
-from gravewright.dice.kallistis import evaluate as evaluate_kallistis
 from gravewright.journals import services as journals
 from gravewright.maps import services as maps
 from gravewright.tokens import services as tokens
@@ -72,17 +71,7 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
         if getattr(self, "closing", False):
             return
         self.closing = True
-        await self.release_presence(broadcast=True)
         await super().close(code=code, reason=reason)
-
-    async def release_presence(self, broadcast=False):
-        connection_id = getattr(self, "connection_id", None)
-        self.connection_id = None
-        if not connection_id:
-            return
-        await db(services.depart)(connection_id)
-        if broadcast and getattr(self, "joined_group", False):
-            await self.publish_presence()
 
     async def authorized(self):
         if getattr(self, "closing", False):
@@ -105,14 +94,29 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
             await self.close(code=1009)
             return
         now = monotonic()
-        self.command_tokens = min(float(settings.WS_BURST_COMMANDS),
-            self.command_tokens + (now - self.command_sample) * settings.WS_COMMANDS_PER_SECOND)
-        self.command_sample = now
         try:
             message = json.loads(text_data)
         except ValueError, RecursionError:
-            await self.emit("error", {"code": "invalid_input"})
-            return
+            message = None
+        if isinstance(message, dict) and message.get('type') == 'maps.cursor':
+            if len(text_data.encode('utf-8')) > 512:
+                await self.close(code=1009)
+                return
+            payload = message.get('payload')
+            hiding = isinstance(payload, dict) and payload.get('position') is None
+            if hiding and not getattr(self, 'cursor_packet', None):
+                return
+            if not hiding and now - getattr(self, 'last_cursor_input', 0) < .075:
+                return
+            self.last_cursor_input = now
+        else:
+            self.command_tokens = min(float(settings.WS_BURST_COMMANDS),
+                self.command_tokens + (now - self.command_sample) * settings.WS_COMMANDS_PER_SECOND)
+            self.command_sample = now
+            if self.command_tokens < 1:
+                await self.close(code=4429)
+                return
+            self.command_tokens -= 1
         if not isinstance(message, dict) or not isinstance(
             message.get("payload", {}), dict
         ):
@@ -121,11 +125,6 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
         if not await self.authorized():
             return
         kind, payload = message.get("type"), message.get("payload", {})
-        if kind != "session.pong":
-            if self.command_tokens < 1:
-                await self.close(code=4429)
-                return
-            self.command_tokens -= 1
         if self.member.role == 'streamer' and kind not in {
             'session.pong','api.watch','resources.sync','lobby.sync','table.search','actors.sync','tokens.sync',
             'scene.viewport','scene.viewport.stop','maps.layers','maps.sync','journals.sync','chat.sync'
@@ -174,7 +173,7 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
             from gravewright.table import services as table_services
             try:
                 if kind == 'table.search':
-                    results = await db(table_services.search)(self.campaign_id, self.user_id, payload.get('query', ''))
+                    results = await db(table_services.search)(self.campaign_id, self.user_id, payload.get('query', ''), kind=payload.get('kind',''), recent=payload.get('recent'))
                     await self.emit('table.search', {'requestId': payload.get('requestId'), 'results': results})
                 elif kind == 'lobby.update':
                     await db(table_services.update_lobby)(self.campaign_id, self.user_id, payload)
@@ -228,7 +227,11 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
                 )
             except maps.MapError, journals.JournalError:
                 pass
+        elif kind == 'maps.cursor':
+            await self.map_cursor(payload)
         elif kind == "maps.layers":
+            if payload.get('mapId') != getattr(self, 'map_layer_id', None):
+                await self.hide_cursor()
             self.map_layer_id = payload.get("mapId")
             await self.room_map_layers({})
         elif kind == "maps.sync":
@@ -243,8 +246,6 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
             await self.journal_command(payload)
         elif kind == "dice.roll":
             await self.roll(payload)
-        elif kind == "dice.reroll":
-            await self.reroll(payload)
         elif kind in ("chat.delete", "chat.clear"):
             try:
                 if kind == 'chat.delete' and payload.get('messageId') is None:
@@ -326,21 +327,26 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
                 pass
 
     async def room_tokens(self, event):
+        # Board updates must not wait for spatial audio or combat projections.
+        # Each later delivery still performs its own live authorization check.
+        if getattr(self, "token_map_id", None) and await self.authorized():
+            try:
+                projection = await db(tokens.state)(
+                    self.campaign_id, self.user_id, self.token_map_id
+                )
+                if event.get("mapId") == projection["mapId"]:
+                    projection.update(tokens.teleport_metadata(projection["tokens"], event.get("teleports")))
+                await self.emit(
+                    "tokens.state",
+                    projection,
+                )
+            except maps.MapError, journals.JournalError:
+                await self.emit("tokens.state", {"mapId": self.token_map_id, "tokens": []})
+                self.token_map_id = None
         await self.api_changed('tokens')
         await self.room_resources({'module':'audio'})
-        await self.room_resources({'module':'combat'})
-        if not getattr(self, "token_map_id", None) or not await self.authorized():
-            return
-        try:
-            await self.emit(
-                "tokens.state",
-                await db(tokens.state)(
-                    self.campaign_id, self.user_id, self.token_map_id
-                ),
-            )
-        except maps.MapError, journals.JournalError:
-            await self.emit("tokens.state", {"mapId": self.token_map_id, "tokens": []})
-            self.token_map_id = None
+        if event.get('refresh_combat', True):
+            await self.room_resources({'module':'combat'})
 
     async def end_drag(self, phase):
         packet = getattr(self, "drag_packet", None)
@@ -436,6 +442,42 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
             seen.pop(key, None)
             await self.emit("token.drag", p)
 
+    async def hide_cursor(self):
+        packet = getattr(self, 'cursor_packet', None)
+        self.cursor_packet = None
+        if packet and getattr(self, 'joined_group', False):
+            await self.channel_layer.group_send(self.group, {'type': 'room.map_cursor',
+                'sender': self.channel_name, 'payload': {**packet, 'position': None}})
+
+    async def map_cursor(self, payload):
+        if payload.get('position') is None:
+            await self.hide_cursor()
+            return
+        if payload.get('mapId') != getattr(self, 'map_layer_id', None):
+            return
+        try:
+            from gravewright.maps.cursors import project
+            packet = await db(project)(self.member, payload)
+        except maps.MapError, journals.JournalError:
+            await self.hide_cursor()
+            return
+        packet['connectionId'] = str(self.connection_id)
+        self.cursor_packet = packet
+        await self.channel_layer.group_send(self.group, {'type': 'room.map_cursor',
+            'sender': self.channel_name, 'payload': packet})
+
+    async def room_map_cursor(self, event):
+        packet = event['payload']
+        if event['sender'] == self.channel_name or packet['mapId'] != getattr(self, 'map_layer_id', None):
+            return
+        if not await self.authorized():
+            return
+        try:
+            await db(maps.scene)(packet['mapId'], self.member)
+        except maps.MapError, journals.JournalError:
+            return
+        await self.emit('maps.cursor', packet)
+
     async def room_map_ping(self, event):
         if not await self.authorized():
             return
@@ -445,6 +487,14 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
         except maps.MapError, journals.JournalError:
             return
         await self.emit("maps.ping", event["payload"])
+
+    async def room_automation_presentation(self, event):
+        if str(self.user_id) not in event.get("recipients", []) or not await self.authorized():
+            return
+        from gravewright.maps.blueprint_world import presentation_for
+        payload = await db(presentation_for)(self.campaign_id, self.user_id, event["payload"])
+        if payload is not None:
+            await self.emit("automation.presentation", payload)
 
     async def map_command(self, payload):
         request_id = payload.get("requestId")
@@ -470,11 +520,6 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
             )
 
     async def room_map_layers(self, event):
-        await self.api_changed('maps.layers')
-        await self.room_resources({'module':'audio'})
-        if not getattr(self, "map_layer_id", None) or not await self.authorized():
-            return
-
         def read():
             from gravewright.maps.objects import layer_state
 
@@ -482,12 +527,31 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
             scene = maps.scene(self.map_layer_id, who)
             return layer_state(scene, who)
 
-        try:
-            await self.emit("maps.layers", await db(read)())
-        except maps.MapError, journals.JournalError:
-            self.map_layer_id = None
+        # Deliver committed scene changes before dependent resource refreshes.
+        if getattr(self, "map_layer_id", None) and await self.authorized():
+            try:
+                await self.emit("maps.layers", await db(read)())
+            except maps.MapError, journals.JournalError:
+                self.map_layer_id = None
+        await self.api_changed('maps.layers')
+        if event.get('refresh_audio', True):
+            await self.room_resources({'module':'audio'})
 
     async def room_maps(self, event):
+        packet = getattr(self, 'cursor_packet', None)
+        if packet:
+            try:
+                who = await db(maps.member)(self.campaign_id, self.user_id)
+                await db(maps.scene)(packet['mapId'], who)
+            except maps.MapError, journals.JournalError:
+                await self.hide_cursor()
+        region = getattr(self, 'stream_region', None)
+        if region:
+            try:
+                who = await db(maps.member)(self.campaign_id, self.user_id)
+                await db(maps.scene)(region['mapId'], who)
+            except maps.MapError, journals.JournalError:
+                await self.stop_stream()
         await self.api_changed('maps')
         if await self.authorized():
             await self.chat_history()
@@ -525,6 +589,8 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
     async def room_handout(self, event):
         if not await self.authorized(): return
         value = event['payload']
+        if value.get('issuer') == str(self.user_id): return
+        if value.get('targets') is not None and str(self.user_id) not in value['targets']: return
         if value['target'] and value['target'] != str(self.user_id): return
         from gravewright.journals.presentations import ticket, resolve
         issued = ticket(value, self.user_id)
@@ -550,43 +616,14 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
         request_id = payload.get("requestId")
         try:
             data = dice.validate(payload)
-            data = await db(dice.bind_actor_action)(data, self.member)
-            if data.get('mode') == 'opposed':
-                entries = await asyncio.to_thread(
-                    dice.opposed_roll,
-                    self.member.pk,
-                    data,
-                    self.session_key,
-                    self.campaign_id,
-                    self.user_id,
-                )
-                if not await self.authorized():
-                    return
-                for entry, audience in entries:
-                    await self.channel_layer.group_send(
-                        self.group,
-                        {'type': 'room.message', 'message': entry, 'audience': audience},
-                    )
-                await self.emit(
-                    "dice.ack",
-                    {"requestId": request_id, "message": entries[0][0],
-                     "messages": [entry for entry, _ in entries]},
-                )
-                return
             reservation, previous = await db(dice.claim)(self.member.pk, data)
             if previous:
                 entry, audience = previous
             else:
                 # Engine work is isolated from both the event loop and the DB executor.
-                evaluator = evaluate_kallistis if data['system'] == 'kallistis' else evaluate
-                if data['system'] == 'kallistis':
-                    result = await asyncio.to_thread(
-                        evaluator, data['modifier'], data['difficulty'], repeat=data['repeat']
-                    )
-                else:
-                    result = await asyncio.to_thread(
-                        evaluator, data["expression"], data["repeat"]
-                    )
+                result = await asyncio.to_thread(
+                    evaluate, data["expression"], data["repeat"]
+                )
                 entry, audience = await db(dice.complete)(
                     reservation,
                     data,
@@ -622,26 +659,6 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
                 },
             )
 
-    async def reroll(self, payload):
-        request_id = payload.get("requestId")
-        try:
-            entry, audience = await db(dice.reroll)(
-                self.campaign_id, self.user_id, request_id, payload.get("messageId")
-            )
-            if not await self.authorized():
-                return
-            await self.channel_layer.group_send(
-                self.group, {"type": "room.message", "message": entry, "audience": audience}
-            )
-            await self.emit("dice.reroll.ack", {"requestId": request_id, "message": entry})
-        except (RollError, AuthError, maps.MapError, journals.JournalError) as error:
-            if not await self.authorized():
-                return
-            await self.emit("dice.reroll.error", {
-                "requestId": request_id if isinstance(request_id, str) else None,
-                "code": getattr(error, "code", "invalid_roll"), "message": str(error),
-            })
-
     async def publish_presence(self):
         await self.channel_layer.group_send(self.group, {"type": "room.presence"})
         await self.channel_layer.group_send(self.group, {"type": "room.lobby"})
@@ -662,6 +679,11 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
         if getattr(self, 'lobby_subscribed', False) and settings.LOBBY_READY_CHECK_ENABLED and await self.authorized():
             from gravewright.table.services import lobby
             await self.emit('lobby.state', await db(lobby)(self.campaign_id, self.user_id))
+
+    async def room_automation(self, event):
+        # Blueprint runs are GM diagnostics; other roles never learn that one ran.
+        if await self.authorized() and self.member.role == "gm":
+            await self.emit("maps.automation", {"sceneId": event["sceneId"]})
 
     async def room_zone(self,event):
         if not await self.authorized():return
@@ -724,13 +746,15 @@ class TableConsumer(SceneStreamMixin, AsyncWebsocketConsumer):
             await self.close(code=1011)
 
     async def disconnect(self, code):
+        await self.hide_cursor()
         await self.stop_stream()
         await self.end_drag("cancel")
-        if getattr(self, "heartbeat_task", None):
+        if self.heartbeat_task:
             self.heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.heartbeat_task
-        if getattr(self, "joined_group", False):
+        if self.joined_group:
             await self.channel_layer.group_discard(self.group, self.channel_name)
-            self.joined_group = False
-        await self.release_presence()
+        if self.connection_id:
+            await db(services.depart)(self.connection_id)
+            await self.publish_presence()

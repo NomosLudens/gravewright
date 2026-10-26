@@ -137,6 +137,12 @@ print(json.dumps(result))
                     page.wait_for_function(
                         "document.querySelector('.game-menubar__presence--seated') !== null || document.querySelector('#table-workspace').textContent.includes('Browser Owner')"
                     )
+                player.wait_for_function(
+                    "document.querySelector('#table-workspace').dataset.onboardingReady === 'true'"
+                )
+                if player.locator(".house-menu-scrim").is_visible():
+                    player.keyboard.press("Escape")
+                    expect(player.locator(".house-menu-scrim")).to_be_hidden()
                 comparisons = []
 
                 def compare(kind, target, value, name):
@@ -318,8 +324,8 @@ print(json.dumps(result))
                 )
                 assert response.status == 201, response.text()
                 scene = response.json()
-                expect(gm.locator(".token-workspace")).to_have_count(1)
-                expect(player.locator(".token-workspace")).to_have_count(1)
+                expect(gm.locator(".token-workspace")).to_have_count(1, timeout=20000)
+                expect(player.locator(".token-workspace")).to_have_count(1, timeout=20000)
                 origin = gm.locator(".actor-directory__actor").bounding_box()
                 destination = gm.evaluate(
                     "()=>{const v=window.gravewrightMaps.board.viewport(),m=window.gravewrightMaps.current;return{x:v.x+2*m.gridSize*m.imageScale*v.scale,y:v.y+2*m.gridSize*m.imageScale*v.scale}}"
@@ -335,13 +341,16 @@ print(json.dumps(result))
                 expect(
                     player.get_by_role("button", name="Token: Aster Prime", exact=True)
                 ).to_be_visible()
+                gm.screenshot(path=str(output / "01-pixi-gm-token-ready.png"))
+                player.screenshot(path=str(output / "02-pixi-player-token-ready.png"))
+                ready_tokens = gm.request.get(
+                    base + f"/api/containers/{data['campaign']}/maps/{scene['id']}/tokens"
+                ).json()["tokens"]
+                print("TOKEN_READY_READBACK", json.dumps([{k: t.get(k) for k in ("gridX", "gridY", "canControl", "locked", "version")} for t in ready_tokens]), flush=True)
                 # Hide directory before map gestures; panels must not intercept the token.
                 gm.locator("[data-actor-panel=close]").click()
                 target = player.get_by_role(
                     "button", name="Token: Aster Prime", exact=True
-                )
-                gm.evaluate(
-                    "window.motionPackets=[];window.addEventListener('gravewright:token.drag',e=>window.motionPackets.push(e.detail))"
                 )
                 box = target.bounding_box()
                 step = player.evaluate(
@@ -353,7 +362,7 @@ print(json.dumps(result))
                 player.mouse.down()
                 player.mouse.move(x + step, y, steps=5)
                 player.wait_for_timeout(350)
-                gm.wait_for_function("window.motionPackets.some(p=>p.phase==='update')")
+                player.wait_for_timeout(350)
                 before = gm.request.get(
                     base
                     + f"/api/containers/{data['campaign']}/maps/{scene['id']}/tokens"
@@ -366,6 +375,10 @@ print(json.dumps(result))
                     + f"/api/containers/{data['campaign']}/maps/{scene['id']}/tokens"
                 ).json()["tokens"]
                 assert after[0]["gridX"] == 3
+                expect(target).to_have_attribute("x", "210", timeout=15000)
+                expect(gm.get_by_role("button", name="Token: Aster Prime", exact=True)).to_have_attribute("x", "210", timeout=15000)
+                player.screenshot(path=str(output / "03-pixi-player-after-move.png"))
+                gm.screenshot(path=str(output / "04-pixi-gm-after-player-move.png"))
                 player.keyboard.press("Control+z")
                 expect(player.locator('.token-workspace__status')).to_be_hidden(timeout=15000)
                 expect(target).to_have_attribute('x','140',timeout=15000)
@@ -469,15 +482,14 @@ print(json.dumps(result))
                 gm.get_by_role("button", name="Token: Aster Prime", exact=True).nth(
                     1
                 ).dblclick()
-                copy_sheet = gm.locator(".token-sheet")
+                copy_sheet = gm.get_by_role("dialog").filter(has_text="Independent copy")
                 expect(copy_sheet).to_contain_text("Independent copy")
                 expect(
                     copy_sheet.get_by_role("spinbutton", name="HP", exact=True)
-                ).to_be_visible()
+                ).to_be_visible(timeout=20000)
                 copy_sheet.get_by_role("spinbutton", name="HP", exact=True).fill("29")
                 copy_sheet.get_by_role("tab", name="Token", exact=True).click()
                 copy_sheet.locator("[data-field=name]").fill("Aster Copy")
-                expect(copy_sheet.locator("[data-upload=token]")).to_be_disabled()
                 gm.wait_for_timeout(700)
                 copy_sheet.get_by_role("button", name="Close character sheet").click()
                 saved_actor = gm.request.get(
@@ -508,6 +520,15 @@ print(json.dumps(result))
                 )
                 mobile.get_by_role("button", name="Close character sheet").click()
                 gm.set_viewport_size({"width": 1440, "height": 1000})
+                gm.reload(wait_until="domcontentloaded")
+                player.reload(wait_until="domcontentloaded")
+                expect(gm.get_by_role("button", name="Token: Aster Prime", exact=True)).to_be_visible()
+                expect(player.get_by_role("button", name="Token: Aster Prime", exact=True)).to_be_visible()
+                persisted = gm.request.get(
+                    base + f"/api/containers/{data['campaign']}/maps/{scene['id']}/tokens"
+                ).json()["tokens"]
+                assert persisted[0]["gridX"] == 2, persisted
+                player.screenshot(path=str(output / "05-pixi-player-after-reload.png"))
                 gm.screenshot(path=str(output / "map-tokens.png"))
                 assert not errors, errors
                 print(

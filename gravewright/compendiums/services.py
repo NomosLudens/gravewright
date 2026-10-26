@@ -4,22 +4,29 @@ Portable entry bundles use the same archive validator and dependency graph as
 campaign transfer. Public wrappers retain the shared table command boundary."""
 
 from copy import deepcopy
+from uuid import UUID
+from django.db.models import F, Prefetch
 from gravewright.table.domain import manage,identifier,version,title,boolean,document,MapError
 from .models import Pack,Entry
 
 
 def pack(value,who,edit=False):
+    from gravewright.table.ownership import resource_allows
     row=Pack.objects.filter(pk=identifier(value),campaign_id=who.campaign_id).first()
-    if not row or (who.role!='gm' and (edit or not row.shared)):raise MapError('Compendium not found.', 'not_found')
+    if not row or (who.role!='gm' and (edit or not resource_allows(who,'compendiums',row,default='read' if row.shared else 'none'))):raise MapError('Compendium not found.', 'not_found')
     if edit and row.locked:raise MapError('Unlock the compendium before editing.')
     return row
 
 
 def state(who,scene_id=None):
     from .catalog import summaries
-    rows=Pack.objects.filter(campaign_id=who.campaign_id).prefetch_related('entries').order_by('name')
+    from gravewright.table.ownership import resource_allows
+    # The directory needs only metadata. Keep document bodies and portable
+    # archives out of this query, including for packs the member cannot read.
+    entries=Entry.objects.only('id','pack_id','name','kind','version').annotate(entry_type=F('data__type'))
+    rows=Pack.objects.filter(campaign_id=who.campaign_id).prefetch_related(Prefetch('entries',queryset=entries)).order_by('name')
     return {'packs':[dict(id=str(p.pk),name=p.name,shared=p.shared,locked=p.locked,version=p.version,systemId=p.system_id,
-        entries=[dict(id=str(e.pk),name=e.name,kind=e.kind,version=e.version) for e in p.entries.all()]) for p in rows if who.role=='gm' or p.shared]+summaries(who),'isGM':who.role=='gm'}
+        entries=[dict(id=str(e.pk),name=e.name,kind=e.kind,type=e.entry_type if isinstance(e.entry_type,str) else '',version=e.version) for e in p.entries.all()]) for p in rows if resource_allows(who,'compendiums',p,default='read' if p.shared else 'none')]+summaries(who),'isGM':who.role=='gm'}
 
 
 def command(who,action,p):
@@ -33,6 +40,16 @@ def command(who,action,p):
     if action=='configure':
         manage(who);version(row,p);row.name=title(p.get('name',row.name));row.shared=boolean(p.get('shared',row.shared));row.locked=boolean(p.get('locked',row.locked));row.version+=1;row.save();return {}
     if action=='read':
+        if 'ids' in p:
+            from .catalog import read_ids
+            ids=read_ids(p)
+            try:normalized=[UUID(value) for value in ids]
+            except (ValueError,TypeError,AttributeError):raise MapError('Invalid compendium entry IDs.', 'invalid_data') from None
+            if len(set(normalized)) != len(normalized):raise MapError('Invalid compendium entry IDs.', 'invalid_data')
+            entries={str(entry.pk):entry for entry in row.entries.filter(pk__in=normalized)}
+            if len(entries) != len(ids):raise MapError('Entry not found.', 'not_found')
+            return {'entries':[dict(id=str(entry.pk),name=entry.name,kind=entry.kind,data=deepcopy(entry.data),version=entry.version)
+                               for value in normalized for entry in [entries[str(value)]]]}
         entry=row.entries.filter(pk=identifier(p.get('id'))).first()
         if not entry:raise MapError('Entry not found.')
         return dict(id=str(entry.pk),name=entry.name,kind=entry.kind,data=deepcopy(entry.data),version=entry.version)
@@ -85,7 +102,13 @@ def command(who,action,p):
         data=deepcopy(entry.data)
         if entry.kind=='actor':
             from gravewright.actors.models import Actor
-            created=Actor.objects.create(campaign_id=who.campaign_id,name=title(data['name']),type=title(data.get('type','character'),80),data=data['data'])
+            from gravewright.actors.services import actor_type
+            # Existing snapshots retain explicit document types even when a
+            # provider is unavailable; only missing legacy types need a default.
+            actor_kind=data.get('type')
+            actor_kind=actor_type(who.campaign.system,campaign_id=who.campaign_id) if actor_kind is None else title(actor_kind,80)
+            created=Actor.objects.create(campaign_id=who.campaign_id,name=title(data['name']),
+                type=actor_kind,data=data['data'])
         elif entry.kind=='item':
             from gravewright.items.models import Item
             created=Item.objects.create(campaign_id=who.campaign_id,name=title(data['name']),type=data['type'],system_id=who.campaign.system,data=data['data'])

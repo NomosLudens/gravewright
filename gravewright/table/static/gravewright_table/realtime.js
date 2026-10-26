@@ -1,8 +1,10 @@
+import { openDetachedWindow } from './window-controls.js';
 let chatMapId = null;
 let streamRegion, streamGeneration = 0;
-const resourceCommands=new Map();const rerolls=new Map();let actorsSubscribed=false,tokenMapId=null;
+const resourceCommands=new Map();let actorsSubscribed=!!document.getElementById('actors-panel'),tokenMapId=null;
 // Bidirectional table transport. Django owns identity, authorization and rendered content.
 import {mergePatch, getPath} from '/static/gravewright_web/vendor/datastar-1.0.3.js';
+import {contentStates, initialContent, contentReady, afterContentReady, clearContent} from './content-state.js';
 
 const root = document.getElementById('table-workspace');
 const tableId = root.dataset.tableId;
@@ -18,8 +20,8 @@ const tableCommands = new Map();
 const tableSubscriptions = new Map();
 let mapsSubscribed = false;
 let mapLayerId;
-let journalsSubscribed = false;
-let socket, retryTimer, watchdog, popup, popupTimer, retry = 500, stopping = false, pending, lastReceived = 0;
+let journalsSubscribed = !!document.getElementById('journals-panel');
+let socket, retryTimer, watchdog, popup, popupTimer, retry = 500, stopping = false, joined = false, pending, lastReceived = 0;
 
 function status(presence) {
   mergePatch({_presence: presence});
@@ -29,7 +31,7 @@ function status(presence) {
   }
 }
 function send(type, payload = {}) {
-  if (socket?.readyState !== WebSocket.OPEN) return false;
+  if (!joined || socket?.readyState !== WebSocket.OPEN) return false;
   socket.send(JSON.stringify({type, payload: {tableId, ...payload}}));
   return true;
 }
@@ -74,19 +76,23 @@ function receive(event) {
   lastReceived = Date.now();
   window.dispatchEvent(new CustomEvent('gravewright:api-event', { detail: { type, payload: { ...payload, tableId } } }));
   if (type === 'table.joined') {
+    joined = true;
     retry = 500;
     status('seated');
+    // Restore the scene before directory, chat and optional module subscriptions.
+    mapsSubscribed ||= !!window.gravewrightMaps && !!document.getElementById('maps-panel');
+    if(mapsSubscribed) send('maps.sync');
+    if(actorsSubscribed)send('actors.sync');
+    if(journalsSubscribed)send('journals.sync');
     send('api.watch');
     send('chat.sync', {mapId:chatMapId});
-    if(actorsSubscribed)send('actors.sync');
     if(tokenMapId)send('tokens.sync',{mapId:tokenMapId});
     for(const c of resourceCommands.values())send(c.area+'.command',c.payload);
-    if(mapsSubscribed) send('maps.sync');
     if(mapLayerId) send('maps.layers',{mapId:mapLayerId});
+    if(streamRegion)send('scene.viewport',streamRegion);
     for(const command of mapCommands.values()) send('maps.command',command.payload);
-    if (journalsSubscribed) send('journals.sync');
     for (const command of journalCommands.values()) send('journals.command', command.payload);
-    for(const [module,subscription] of tableSubscriptions)send('resources.sync',{module,...subscription});
+    if(contentReady())for(const [module,subscription] of tableSubscriptions)send('resources.sync',{module,...subscription});
     for(const command of tableCommands.values())send('resources.command',command.payload);
     window.dispatchEvent(new Event('gravewright:connected'));
     if (pending) send('chat.say', pending);
@@ -98,6 +104,7 @@ function receive(event) {
   } else if (type === 'table.presence') {
     mergePatch({_onlineCount: payload.members.length});
     if (roster && typeof payload.html === 'string') roster.innerHTML = payload.html;
+      window.dispatchEvent(new CustomEvent('gravewright:presence', {detail:payload}));
   } else if (type === 'chat.history') {
     messages.clear(); log.replaceChildren(); renderMessages(payload.messages || []);
   } else if (type === 'chat.message') {
@@ -113,6 +120,7 @@ function receive(event) {
     if (streamRegion && payload.region?.generation === streamRegion.generation && payload.region?.mapId === streamRegion.mapId)
       window.dispatchEvent(new CustomEvent('gravewright:'+type,{detail:payload}));
   } else if (['actors.state','tokens.state','token.drag','handout.presented','modules.updated'].includes(type)) {
+    if(type==='actors.state')contentStates.set('actors',payload);
     window.dispatchEvent(new CustomEvent('gravewright:'+type,{detail:payload}));
   } else if (['actors.ack','tokens.ack','actors.error','tokens.error'].includes(type)) {
     const c=resourceCommands.get(payload.requestId);
@@ -122,6 +130,7 @@ function receive(event) {
   } else if (['zone.entered','zone.left','zone.crossed'].includes(type)) {
     window.dispatchEvent(new CustomEvent('gravewright:'+type,{detail:payload}));
   } else if (type === 'resources.state') {
+    if(payload.module==='items')contentStates.set('items',payload.state);
     window.dispatchEvent(new CustomEvent('gravewright:resources',{detail:payload}));
   } else if (type === 'resources.ack' || type === 'resources.error') {
     const command=tableCommands.get(payload.requestId);
@@ -130,6 +139,8 @@ function receive(event) {
     window.dispatchEvent(new CustomEvent('gravewright:map-layers',{detail:payload}));
   } else if (type === 'maps.ping') {
     window.dispatchEvent(new CustomEvent('gravewright:map-ping',{detail:payload}));
+  } else if (type === 'maps.cursor') {
+    window.dispatchEvent(new CustomEvent('gravewright:map-cursor',{detail:payload}));
   } else if (type === 'maps.state') {
     window.dispatchEvent(new CustomEvent('gravewright:maps', {detail:payload}));
   } else if (type === 'maps.ack' || type === 'maps.error') {
@@ -140,6 +151,7 @@ function receive(event) {
       else command.reject(Object.assign(new Error(payload.message), {code:payload.code}));
     }
   } else if (type === 'journals.state') {
+    contentStates.set('journals',payload);
     window.dispatchEvent(new CustomEvent('gravewright:journals', {detail:payload}));
   } else if (type === 'journals.ack' || type === 'journals.error') {
     const command = journalCommands.get(payload.requestId);
@@ -155,13 +167,6 @@ function receive(event) {
   } else if (type === 'dice.error') {
     const roll = rolls.get(payload.requestId);
     if (roll && payload.code !== 'roll_in_progress') { rolls.delete(payload.requestId); roll.reject(new Error(payload.message)); }
-  } else if (type === 'dice.reroll.ack') {
-    renderMessages([payload.message]);
-    const reroll = rerolls.get(payload.requestId);
-    if (reroll) { rerolls.delete(payload.requestId); reroll.resolve(payload.message); }
-  } else if (type === 'dice.reroll.error') {
-    const reroll = rerolls.get(payload.requestId);
-    if (reroll) { rerolls.delete(payload.requestId); reroll.reject(Object.assign(new Error(payload.message), {code: payload.code})); }
   } else if (type === 'error') {
     const errors = {
       gm_required: 'Only the GM can remove chat messages.',
@@ -183,6 +188,7 @@ function connect() {
   if (stopping) return;
   clearTimeout(retryTimer);
   status('connecting');
+  joined = false;
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const current = new WebSocket(`${protocol}//${location.host}/ws/tables/${tableId}/`);
   socket = current;
@@ -191,12 +197,15 @@ function connect() {
   current.addEventListener('error', () => {}); // close owns retry and status.
   current.addEventListener('close', event => {
     if (socket !== current) return;
+    joined = false;
     status('offline');
+      window.dispatchEvent(new Event('gravewright:disconnected'));
     clearInterval(watchdog);
     if (!stopping && ![4401,4403].includes(event.code)) {
       retryTimer = setTimeout(connect, retry);
       retry = Math.min(retry * 2, 10000);
     } else if (!stopping) {
+      clearContent();
       mergePatch({_chatPending: false, _chatError: 'You no longer have access to this table.'});
       for (const roll of rolls.values()) roll.reject(new Error('You no longer have access to this table.'));
       rolls.clear();
@@ -215,7 +224,8 @@ function connect() {
   }, 5000);
 }
 window.gravewrightRealtime = {
-  subscribeModule(module,sceneId=null,previewTokenId=null){const subscription={sceneId,previewTokenId};tableSubscriptions.set(module,subscription);send('resources.sync',{module,...subscription});},
+  initialContent,
+  subscribeModule(module,sceneId=null,previewTokenId=null){const subscription={sceneId,previewTokenId},previous=tableSubscriptions.get(module);if(previous?.sceneId===sceneId&&previous?.previewTokenId===previewTokenId)return;tableSubscriptions.set(module,subscription);if(contentReady())send('resources.sync',{module,...subscription});},
   moduleCommand(module,action,data={}){
     if(getPath('_presence')!=='seated')return Promise.reject(new Error('Connect before saving.'));
     const requestId=crypto.randomUUID(),payload={module,action,data,requestId};
@@ -229,7 +239,7 @@ window.gravewrightRealtime = {
     send('scene.viewport', {...streamRegion, ...signals});
   },
   stopViewport() {streamRegion = undefined; send('scene.viewport.stop');},
-  actorsSubscribe(){actorsSubscribed=true;send('actors.sync');},
+  actorsSubscribe(refresh=false){if(!actorsSubscribed||refresh){actorsSubscribed=true;send('actors.sync');}},
   tokensSubscribe(mapId){tokenMapId=mapId;send('tokens.sync',{mapId});},
   tokenDrag(payload){send('token.drag',payload);},
   resourceCommand(area,action,data){
@@ -239,19 +249,20 @@ window.gravewrightRealtime = {
   },
   mapLayers(mapId) { mapLayerId=mapId;send('maps.layers',{mapId}); },
   mapPing(payload) { send('maps.ping',payload); },
-  mapsSubscribe() { mapsSubscribed = true; send('maps.sync'); },
+  mapCursor(payload) { return send('maps.cursor',payload); },
+  mapsSubscribe() { if(!mapsSubscribed){mapsSubscribed = true; send('maps.sync');} },
   mapCommand(action, data) {
     if (getPath('_presence') !== 'seated') return Promise.reject(new Error('Connect to the table before saving.'));
     const requestId = crypto.randomUUID();
     return new Promise((resolve,reject) => {
-      const payload = {action,data:{...data,mapId:chatMapId},requestId};
+      const payload = {action,data:{...data},requestId};
       mapCommands.set(requestId,{payload,resolve,reject});
       if (!send('maps.command',payload)) {
         mapCommands.delete(requestId);reject(new Error('Connect to the table before saving.'));
       }
     });
   },
-  journalsSubscribe() { journalsSubscribed = true; send('journals.sync'); },
+  journalsSubscribe() { if(!journalsSubscribed){journalsSubscribed = true; send('journals.sync');} },
   journalCommand(action, data) {
     if (getPath('_presence') !== 'seated') return Promise.reject(new Error('Connect to the table before saving.'));
     const requestId = crypto.randomUUID();
@@ -263,23 +274,14 @@ window.gravewrightRealtime = {
       }
     });
   },
-  roll(payload) {
+  roll(payload, {requestId = crypto.randomUUID(), mapId = chatMapId} = {}) {
     if (getPath('_presence') !== 'seated') return Promise.reject(new Error('Connect to the table before rolling.'));
     if (rolls.size) return Promise.reject(new Error('A roll is already in progress.'));
-    const requestId = crypto.randomUUID();
     return new Promise((resolve, reject) => {
-      rolls.set(requestId, {payload: {...payload, mapId:chatMapId, requestId}, resolve, reject});
-      if (!send('dice.roll', {...payload, mapId:chatMapId, requestId})) {
+      rolls.set(requestId, {payload: {...payload, mapId, requestId}, resolve, reject});
+      if (!send('dice.roll', {...payload, mapId, requestId})) {
         rolls.delete(requestId); reject(new Error('Connect to the table before rolling.'));
       }
-    });
-  },
-  reroll(messageId) {
-    if (getPath('_presence') !== 'seated') return Promise.reject(new Error('Connect to the table before rerolling.'));
-    const requestId = crypto.randomUUID(), payload = {messageId: String(messageId), requestId};
-    return new Promise((resolve, reject) => {
-      rerolls.set(requestId, {payload, resolve, reject});
-      if (!send('dice.reroll', payload)) { rerolls.delete(requestId); reject(new Error('Connect to the table before rerolling.')); }
     });
   },
   say(text) {
@@ -310,7 +312,7 @@ window.gravewrightRealtime = {
   },
   detach() {
     if (popup && !popup.closed) { popup.focus(); return; }
-    popup = window.open(`/game/${tableId}/chat`, `gravewright-${tableId}-chat`, 'popup,width=420,height=760');
+    popup = openDetachedWindow({url:`/game/${tableId}/chat`,width:420,height:760});
     if (!popup) return;
     mergePatch({_chatDetached: true});
     clearInterval(popupTimer);
@@ -322,12 +324,6 @@ window.gravewrightRealtime = {
 if (detached) document.body.classList.add('game-detached');
 document.addEventListener('click', event => {
   if (!event.target.closest('.game-menubar__roster')) mergePatch({_roster: false});
-  const button = event.target.closest('[data-dice-reroll]');
-  if (button && !button.disabled) {
-    button.disabled = true;
-    window.gravewrightRealtime.reroll(button.closest('[data-message-id]')?.dataset.messageId)
-      .catch(error => { button.disabled = false; window.dispatchEvent(new CustomEvent('gravewright:dice-error', {detail: error.message})); });
-  }
 });
 window.addEventListener('pagehide', () => {
   stopping = true;
@@ -335,6 +331,9 @@ window.addEventListener('pagehide', () => {
   socket?.close(1000, 'left table'); popup?.close();
 });
 window.addEventListener('pageshow', event => { if (event.persisted) { stopping = false; connect(); } });
+afterContentReady(() => {
+  for(const [module,subscription] of tableSubscriptions)send('resources.sync',{module,...subscription});
+});
 connect();
 
 function moderate(type, payload = {}) {

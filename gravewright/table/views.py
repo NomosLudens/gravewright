@@ -14,9 +14,9 @@ from gravewright.campaigns.services import get_campaign
 from gravewright.web.responses import navigate
 
 ROOT = Path(__file__).parent
-DOCK = json.loads((ROOT / "dock.json").read_text())
-TOOL_TEXT = json.loads((ROOT / 'tool_messages.json').read_text())
-TEXT = json.loads((ROOT / "messages.json").read_text())
+DOCK = json.loads((ROOT / "dock.json").read_text(encoding="utf-8"))
+TOOL_TEXT = json.loads((ROOT / 'tool_messages.json').read_text(encoding='utf-8'))
+TEXT = json.loads((ROOT / "messages.json").read_text(encoding="utf-8"))
 
 
 @require_GET
@@ -33,7 +33,12 @@ def table(request, campaign_id, detached_chat=False):
         for m in campaign.memberships.all()
     )
     layers = DOCK["layers"] if owner else DOCK["layers"][:1]
+    from gravewright.campaigns.catalog import get_ruleset
+    from gravewright.campaigns.systems import resolve_system_id, sheet_provider
+    ruleset = get_ruleset(campaign.system, campaign_id=campaign.pk) or {}
     context = {
+        "actor_sheet_provider": sheet_provider(campaign.system),
+        "system_id": resolve_system_id(campaign.system),
         **TEXT,
         't': lambda key: TOOL_TEXT.get(key, key),
         'renderer_debug': settings.APP_DEBUG,
@@ -52,16 +57,32 @@ def table(request, campaign_id, detached_chat=False):
             ]
             for layer in layers
         },
-        # The original catalog has no item capability without a system module.
+        # Directories follow the selected system's document capabilities.
         "directories": [
             p
             for p in DOCK["directories"]
-            if owner or p["id"] not in {"scenes"}
+            if (owner or p["id"] not in {"scenes"})
+            and (p['id'] != 'items' or ruleset.get('itemTypes'))
         ],
     }
     from gravewright.web.localization import template_context
     context.update(template_context(request))
-    return render(request, "gravewright_table/page.html", context, using="jinja2")
+    if not detached_chat:
+        from gravewright.actors import services as actors
+        from gravewright.journals import services as journals
+        from gravewright.maps import services as maps
+        from .domain import state
+        context['initial_content'] = {
+            'maps': maps.state(campaign.pk, request.user.pk),
+            'actors': actors.state(campaign.pk, request.user.pk),
+            'journals': journals.state(campaign.pk, request.user.pk),
+            'items': state(campaign.pk, request.user.pk, 'items'),
+        }
+        context['has_scenes'] = bool(context['initial_content']['maps']['maps'])
+        context['has_actors'] = bool(context['initial_content']['actors']['actors'])
+    response = render(request, "gravewright_table/page.html", context, using="jinja2")
+    response['Cache-Control'] = 'private, no-store'
+    return response
 
 
 @require_GET
@@ -73,6 +94,31 @@ def module_state(request,campaign_id,module):
     if not request.user.is_authenticated:return JsonResponse({'error':'Authentication required.'},status=403)
     try:return JsonResponse(state(campaign_id,request.user.pk,module,request.GET.get('sceneId') or None,request.GET.get('previewTokenId') or None))
     except (MapError,JournalError) as error:return JsonResponse({'error':str(error)},status=403)
+
+
+@require_GET
+def mindmap_read(request, campaign_id, method):
+    """Native read routes remain usable by read-only guest streamer sessions."""
+    from django.http import JsonResponse
+    from gravewright.modules.frontend import invoke
+    from gravewright.modules.packages import ModuleFailure
+    if not request.user.is_authenticated:
+        return JsonResponse({'error': 'permission_denied'}, status=403)
+    if method not in ('read', 'resources', 'resolve'):
+        raise Http404
+    raw = request.GET.get('payload', '{}')
+    try:
+        if len(raw) > 8192:
+            raise ValueError()
+        payload = json.loads(raw)
+        value = invoke(campaign_id, request.user.pk, 'mindmaps', method, payload)
+    except (ValueError, TypeError, RecursionError):
+        return JsonResponse({'error': 'invalid_data'}, status=400)
+    except ModuleFailure as error:
+        return JsonResponse({'error': error.code, 'message': error.message}, status=error.status)
+    response = JsonResponse(value, safe=value is not None)
+    response['Cache-Control'] = 'private, no-store'
+    return response
 
 
 @require_GET

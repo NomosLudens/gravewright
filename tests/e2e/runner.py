@@ -8,6 +8,7 @@ and shortcut also need a Windows smoke test. No development data is modified.
 from __future__ import annotations
 
 import base64
+from contextlib import ExitStack
 import hashlib
 import http.client
 import json
@@ -44,12 +45,12 @@ def digest(path):
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
-def project_data_state():
+def project_data_state(root=ROOT):
     """Compare fingerprints without disclosing the existing development data."""
-    files = [ROOT / ".env"]
-    if (ROOT / "data").is_dir():
-        files.extend(path for path in (ROOT / "data").rglob("*") if path.is_file())
-    return {str(path.relative_to(ROOT)): digest(path) for path in files}
+    files = []
+    if (root / "data").is_dir():
+        files.extend(path for path in (root / "data").rglob("*") if path.is_file())
+    return {str(path.relative_to(root)): digest(path) for path in files}
 
 
 def http_request(port, path, *, headers=None, method="GET", body=None):
@@ -221,15 +222,29 @@ def browser_setup(browser, base, port):
 
 
 def main():
-    original = project_data_state()
+    global ROOT, RUNNER
+    source_root = ROOT
+    original = project_data_state(source_root)
     output = ROOT / "test-results" / "runner"
     output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="grave-runner-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="grave-runner-") as temporary, ExitStack() as cleanup:
         work = Path(temporary)
+        cleanup.callback(setattr, sys, 'pycache_prefix', sys.pycache_prefix)
+        sys.pycache_prefix = str(work / 'bytecode')
         data = work / "runner data ç"
+        project = work / 'project'
+        shutil.copytree(ROOT, project, ignore=shutil.ignore_patterns(
+            '.git', '.venv', 'venv', 'node_modules', '__pycache__', '.env', '.env.backup-*',
+            'data', 'media', 'staticfiles', 'test-results'))
+        ROOT, RUNNER = project, project / 'scripts/gravewright_runner.py'
+        (ROOT / '.env').write_text('DJANGO_SECRET_KEY=' + 't' * 64 + '\n'
+            + 'GRAVEWRIGHT_DATABASE=' + json.dumps(str(data / 'gravewright.sqlite3'), ensure_ascii=False) + '\n'
+            + 'GRAVEWRIGHT_MEDIA_ROOT=' + json.dumps(str(data / 'media'), ensure_ascii=False) + '\n'
+            + 'GRAVEWRIGHT_MODULES_ROOT=' + json.dumps(str(data / 'media/modules'), ensure_ascii=False) + '\n', encoding='utf-8')
         ignored_data = work / "must-not-be-used"
         env = {
             **os.environ, "PYTHONUNBUFFERED": "1", "DJANGO_SETTINGS_MODULE": "config.does_not_exist",
+            "PYTHONPYCACHEPREFIX": sys.pycache_prefix,
             "DJANGO_DEBUG": "true", "DJANGO_SECRET_KEY": "django-insecure-inherited-must-be-ignored",
             "DJANGO_ALLOWED_HOSTS": "*", "GRAVEWRIGHT_HOST": "0.0.0.0",
             "GRAVEWRIGHT_PUBLIC_ORIGIN": "https://foreign.example.test", "DJANGO_SECURE_COOKIES": "true",
@@ -254,10 +269,10 @@ def main():
                 wait_ready(server, port, output / "first-start.log")
                 for name in ("gravewright.sqlite3", "media", "compendiums", "staticfiles", "logs/runner.log"):
                     assert (data / name).exists(), name
-                configuration = dotenv_values(data / ".env", interpolate=False)
+                configuration = dotenv_values(ROOT / ".env", interpolate=False)
                 secret = configuration["DJANGO_SECRET_KEY"]
                 assert secret and len(secret) >= 32 and not secret.startswith("django-insecure-")
-                config_digest = digest(data / ".env")
+                config_digest = digest(ROOT / ".env")
                 duplicate = subprocess.run(command(data, free_port()), cwd=ROOT.parent, env=env,
                                            capture_output=True, text=True, timeout=30)
                 assert duplicate.returncode != 0, "A second Runner used the same data directory"
@@ -273,7 +288,7 @@ def main():
                     with (output / "restart.log").open("w", encoding="utf-8") as restart_log:
                         server = start(data, port, env, restart_log)
                         wait_ready(server, port, output / "restart.log")
-                        assert digest(data / ".env") == config_digest, "Restart changed the user's configuration"
+                        assert digest(ROOT / ".env") == config_digest, "Restart changed the user's configuration"
                         owner.goto(base + "/game/" + campaign)
                         expect(owner.locator(".game-menubar__presence")).to_have_attribute("data-presence", "seated", timeout=15000)
                         assert json_request(owner, "/api/auth/session")["body"]["authenticated"]
@@ -294,7 +309,20 @@ def main():
                     for application_log in (data / "logs").glob("runner.log*"):
                         shutil.copy2(application_log, output / application_log.name)
         assert not ignored_data.exists(), "Inherited production storage settings were used"
-        assert project_data_state() == original, "The Runner changed development data or project .env"
+    current = project_data_state(source_root)
+    if current != original:
+        changes = {
+            'added': {name: current[name] for name in current.keys() - original.keys()},
+            'removed': {name: original[name] for name in original.keys() - current.keys()},
+            'changed': {name: {'before': original[name], 'after': current[name]}
+                        for name in original.keys() & current.keys() if original[name] != current[name]},
+        }
+        report = output / 'data-changes.json'
+        report.write_text(json.dumps(changes, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+        print('Development-data fingerprint differences:', report, flush=True)
+        for kind, paths in changes.items():
+            print(kind + ':', ', '.join(sorted(paths)), flush=True)
+    assert current == original, "The Runner changed development data"
     print("Runner checks passed with temporary user data; Windows bootstrap needs its own Windows smoke test.", flush=True)
 
 

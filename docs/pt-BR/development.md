@@ -51,19 +51,61 @@ Os documentos da gramática de dados são mantidos junto à implementação. Os 
 
 ## Identificadores da versão
 
-A versão atual é **0.1.1**. Os identificadores equivalentes seguem os formatos exigidos por cada ferramenta:
+A versão atual do projeto é **0.3.3**. Os manifests da aplicação e a release usam estes identificadores, seguindo os formatos exigidos por cada ferramenta:
 
 | Local | Identificador |
 | --- | --- |
-| Nome público, aplicação e Runner | `0.1.1` |
-| Projeto Python e `uv.lock` | `0.1.1` |
-| Pacote frontend, package lock e API de atualização | `0.1.1` |
-| Tag do release | `v0.1.1` |
-| Artefato do código-fonte | `Gravewright-0.1.1-django.zip` |
+| Nome público completo | `Gravewright 0.3.3 — Alpha` |
+| Versão da aplicação e do Runner | `0.3.3` |
+| Projeto Python e `uv.lock` | `0.3.3` |
+| Pacote frontend, package lock e API de atualização | `0.3.3` |
+| Tag da release | `v0.3.3` |
+| Artefato do código-fonte | `Gravewright-0.3.3-django.zip` |
 
 [`pyproject.toml`](../../pyproject.toml) é a fonte da versão instalada. [`gravewright/version.py`](../../gravewright/version.py) deriva o identificador público e o rótulo; mantenha os metadados do pacote frontend alinhados ao alterá-la. Versões dos contratos de API/SDK e de módulos de terceiros têm ciclos independentes.
 
-A release `0.1.1` usa o canal de atualização `stable`. Esse canal descreve o identificador da versão; o projeto continua em desenvolvimento inicial. O canal selecionado continua sendo uma preferência do host.
+A versão `0.3.3` segue a convenção `stable` de descoberta para identificadores numéricos; o projeto permanece em Alpha. Administração mostra o nome completo da versão, sem seletor de canal. Preferências de canal existentes e compatibilidade da API são preservadas. A versão `0.3.3` é maior que `0.3.2`, mas menor que a antiga `3.0.1`, numerada incorretamente. Instalações que informam `3.0.1` precisam de instalação ou migração manual após backup conjunto de código, configuração, banco e mídias; confira primeiro a compatibilidade do esquema em uma cópia descartável. Não execute código antigo contra um banco mais novo para forçar uma redução de versão. Preserve as notas históricas como histórico. Veja as [notas da 0.3.3](../releases/0.3.3.md) e o [guia de atualização](upgrading.md) para mudanças e migrações necessárias.
+
+O SDK permanece em `1.0.0`; o registro aditivo do frontend do navegador tem
+versão própria em `gravewright/modules/contracts/frontend.json`. Os novos
+domínios de relógios/pistas e as operações do PDF System exigem um host que os
+implemente, independentemente da faixa de SDK da extensão. Regenere o registro
+do frontend ao alterar o contrato-fonte e revise o diff gerado:
+
+```bash
+uv run --locked python scripts/generate_frontend_api.py
+git diff -- gravewright/modules/static/gravewright_modules/frontend-contract.js
+```
+
+## Gerar o pacote de uma release
+
+Alinhe `pyproject.toml`, `uv.lock`, o `package.json` do frontend e seu lockfile;
+adicione notas bilíngues em `docs/releases/VERSÃO.md` e atualize os índices e
+READMEs nos dois idiomas. Compile o frontend com
+`node gravewright/maps/scripts/build.cjs` e execute as verificações de
+[testes](testing.md), incluindo instalação nova e atualização.
+
+Inclua no índice Git os novos fontes, migrações, testes e documentos antes de
+empacotar:
+
+```bash
+uv run --locked python scripts/build_release.py --check
+uv run --locked python scripts/build_release.py
+```
+
+O gerador seleciona arquivos públicos rastreados pelo Git, verifica versões e
+arquivos obrigatórios e grava `dist/Gravewright-VERSÃO-django.zip` e seu SHA-256.
+Ele usa o conteúdo da árvore de trabalho; publique a partir do código revisado
+e commitado. `--include-untracked` permite revisar um pacote antes do commit;
+arquivos ignorados continuam excluídos. Extensões instaladas, dados locais,
+segredos, dependências e launchers específicos da máquina são excluídos nos
+dois modos. Use `SOURCE_DATE_EPOCH` com um timestamp Unix fixo para gerar
+timestamps reproduzíveis no ZIP.
+
+Teste uma cópia extraída do ZIP final com armazenamento descartável. Publique o
+commit correspondente como `vVERSÃO`, com ZIP, checksum e notas bilíngues.
+Confira o digest do arquivo publicado e os workflows de CI pertinentes; gerar o pacote
+sozinho não valida o funcionamento da aplicação nem publica uma release.
 
 ## Antes de enviar
 

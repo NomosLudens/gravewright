@@ -2,7 +2,7 @@
 
 [Documentação](../README.pt-BR.md) · [English](../en/deployment.md)
 
-Este guia cobre a implantação em servidores. Para uma instalação Windows usada apenas no próprio computador, use o [Gravewright Runner](windows-runner.md), que administra o armazenamento pessoal e um perfil local com um único processo.
+Este guia cobre a implantação em servidores. Para uso local, use o Gravewright Runner para [Windows](windows-runner.md), [Linux](linux-runner.md) ou [macOS](macos-runner.md), que administra o armazenamento dentro da instalação e um perfil local com um único processo. Antes de atualizar para a **0.3.2**, siga o [guia de atualização e recuperação](upgrading.md).
 
 ## HTTPS e WebSockets
 
@@ -16,7 +16,7 @@ A origem pública define uma origem permitida; não cria um listener TLS nem con
 
 Use um checkout versionado e uma conta com escrita no banco e no armazenamento privado. Configure `DJANGO_SECRET_KEY` persistente e privada, `DJANGO_DEBUG=false`, hosts explícitos, origem pública e URL do Redis. A origem deve ser HTTP(S), sem caminho ou barra final. HTTPS ativa cookies de sessão/CSRF seguros e HSTS nas configurações.
 
-Gere a chave localmente e guarde em configuração protegida, mantendo-a entre reinicializações:
+Antes de executar uv, configure o [armazenamento das ferramentas dentro da instalação](upgrading.md#armazenamento-local-das-ferramentas) no mesmo terminal. Gere a chave localmente e guarde em configuração protegida, mantendo-a entre reinicializações:
 
 ```bash
 uv run --locked python -c 'import secrets; print(secrets.token_urlsafe(64))'
@@ -32,7 +32,7 @@ uv run --locked --no-dev python manage.py check --deploy
 uv run --locked --no-dev daphne -b 127.0.0.1 -p 3000 config.asgi:application
 ```
 
-Esses comandos pressupõem os valores de produção configurados e pastas existentes. `check --deploy` pode indicar decisões pendentes de configuração; verifique também o endereço público conforme descrito abaixo. O último comando usa HTTP em loopback atrás do proxy TLS. `main.py` usa o `runserver` de desenvolvimento; `config.wsgi` não atende WebSockets.
+Esses comandos pressupõem os valores de produção configurados e pastas existentes. `check --deploy` pode indicar decisões pendentes de configuração; verifique também o endereço público conforme descrito abaixo. O último comando usa HTTP em loopback atrás do proxy TLS. A execução normal de `main.py` inicia o supervisor gerenciado e o Daphne; `main.py --dev` usa o `runserver` de desenvolvimento. A execução direta do Daphne acima deixa supervisão de processos e atualizações com o operador. `config.wsgi` não atende WebSockets.
 
 ## Proxy reverso Nginx
 
@@ -103,9 +103,47 @@ Nginx redireciona HTTP para HTTPS; este checkout não ativa o redirecionamento S
 
 Sirva `/static/` a partir de `staticfiles/`, gerado por `collectstatic`. Recursos atendidos por views próprias, inclusive módulos de frontend, continuam dependendo das rotas da aplicação. Com debug desativado, o Django não serve automaticamente os arquivos coletados pelo handler estático de desenvolvimento.
 
-Mantenha `MEDIA_ROOT` privado: mapas, PDFs, diários, áudio, cartas e pacotes de módulos são atendidos por rotas protegidas. Um alias público `/media/` ignoraria as verificações. Faça backup do armazenamento junto com o banco. Coleções opcionais em `data/vtt/compendiums/` também precisam de backup.
+Mantenha `MEDIA_ROOT` privado: mapas, PDFs, diários, áudio, cartas e pacotes de módulos são atendidos por rotas protegidas. Um alias público `/media/` ignoraria as verificações. Faça backup do armazenamento junto com o banco, incluindo anexos retidos pelo histórico de diários excluídos. Coleções opcionais no `GRAVEWRIGHT_CONTENT_ROOT` configurado também precisam de backup: configurações padrão usam `data/vtt/compendiums/`, enquanto o Runner usa `data/compendiums/`.
 
 Configure limites de upload e timeouts do servidor externo. O limite padrão de bytes de mapa é 50 GiB, enquanto pixels decodificados, dimensões e quantidade de tiles têm limites separados; aceitar muitos bytes não significa que haverá memória suficiente para processar o arquivo.
+
+### Uploads de mapas grandes
+
+A geração do mapa continua síncrona dentro da requisição de upload. Ela executa fora do loop de eventos, mas um mapa grande ou a espera por outro mapa pode ultrapassar o timeout de resposta do proxy reverso. Dimensione `proxy_read_timeout` com base nos tempos de processamento observados; os `300s` do exemplo não garantem o processamento de qualquer imagem. Um timeout do proxy pode desconectar quem enviou o arquivo enquanto o servidor continua processando; confira a lista de cenas antes de tentar novamente.
+
+Para mapas maiores, instale as dependências opcionais do libvips no ambiente que executa o servidor e aumente `GRAVEWRIGHT_MAP_MAX_PIXELS` somente conforme necessário. Nos comandos de implantação por código-fonte acima, use `uv sync --locked --no-dev --extra vips`; mantenha o extra nas sincronizações seguintes. Os instaladores nativos e a preparação de atualizações gerenciadas selecionam as dependências padrão sem esse extra. `GRAVEWRIGHT_MAP_TILER=vips` faz a falta de suporte nativo impedir a inicialização; `auto` recorre ao Pillow, cujo teto separado `GRAVEWRIGHT_MAP_PILLOW_MAX_PIXELS` tem padrão de 64 milhões de pixels. Consulte [configuração](configuration.md#geração-de-tiles-e-imagens-grandes) antes de aumentar qualquer teto.
+
+A geração é serializada por processo; vários workers ASGI ainda podem somar uso de memória e disco. Libvips processa mapas comuns em faixas, enquanto rotações e alguns codecs exigem recursos adicionais. Reserve espaço com permissão de escrita em `data/runner/tmp/` dentro da instalação para a fonte codificada, o conjunto completo de tiles preparados e os arquivos temporários nativos, além do armazenamento final de mídia. Overrides explícitos da raiz do Runner ou da pasta temporária de uploads Django mantêm a prioridade documentada. Meça formatos, transparências e orientações representativos no servidor de destino antes de elevar limites; essa mudança não acrescenta processamento em segundo plano nem uma cota global de memória.
+
+## Esperas persistentes do Blueprint
+
+A aplicação ASGI inicia automaticamente o executor de Delay quando o reactor do
+Daphne começa. Isso inclui o Runner habitual; não exige comando separado nem
+navegador conectado. Outros hosts ASGI precisam ativar lifespan de início e
+encerramento. WSGI não fornece esse ciclo de vida. Comandos comuns de
+gerenciamento do Django não iniciam o executor. O sinalizador de manutenção
+existente do atualizador conserva a fila durante a verificação de saúde do
+servidor até confirmar ou reverter a atualização.
+
+Aplique as migrações antes da inicialização. Continuações pendentes ficam no
+mesmo banco privado da cena, sobrevivem ao reinício dos processos e ficam
+disponíveis ao vencer o prazo. Automação pausada na cena as conserva pendentes
+até retomar. O executor consulta a cada 250 ms, em lotes de 20; a execução depende
+da carga e da disponibilidade. O encerramento aguarda a transação atual terminar.
+Se o processo terminar durante uma transação, a continuação não gravada permanece
+pendente para uma tentativa futura. Consulte os logs do servidor para falhas de
+banco e **Automação → Aguardando** para trabalho pendente.
+
+Cada processo ASGI pode manter seu executor; transações do banco serializam a
+tomada das tarefas e os efeitos, evitando aplicação duplicada entre executores
+concorrentes. `GRAVEWRIGHT_AUTOMATION_WORKER_ENABLED=false` desativa o executor
+daquele processo sem apagar esperas. Exportações, snapshots e clones de campanha
+omitem continuações pendentes; um backup completo do banco as inclui. Assim, um
+banco restaurado pode retomar trabalho vencido na inicialização. Use a opção de
+executor desativado ao inspecionar uma cópia de recuperação, antes de ativar sua
+automação de forma intencional. Veja
+[configuração](configuration.md#executor-de-delay-do-blueprint) e
+[Delay persistente](map-builder.md#delay-persistente).
 
 ## Vários processos
 
@@ -117,7 +155,9 @@ Use um gerenciador de serviços para supervisionar ASGI e Redis, guardar logs e 
 
 ## Backup e restauração
 
-Exportações são pacotes portáveis de conteúdo; snapshots são pontos de recuperação da campanha. Nenhum deles é um backup completo da instância. Exportações omitem ou ajustam vínculos, proprietários e parte do histórico privado; o estado de instalação de módulos está fora do grafo exportado. Consulte [archives.py](../../gravewright/administration/archives.py).
+Exportações são pacotes portáveis de conteúdo; snapshots são pontos de recuperação da campanha. Na **0.3.2**, exportações completas, cópias e snapshots incluem relógios, pistas, preparação de sessões, cronologia, metadados do painel e histórico/lixeira de diários com anexos retidos. Importações portáveis remapeiam referências, sem criar membros na campanha nem restaurar permissões dos usuários de origem. Snapshots restauram painéis somente de mestres atuais. Pacotes antigos sem metadados de preparação preservam a preparação e o histórico existentes no destino. Consulte [gestão de campanha](campaign-management.md) para as regras de seleção/painel e [archives.py](../../gravewright/administration/archives.py) para o grafo de conteúdo.
+
+Nenhum formato é um backup completo da instância: contas de usuário, configurações do host, estado dos módulos instalados, recibos de comandos e esperas pendentes do Blueprint ficam fora dos pacotes portáveis. Um backup completo de banco/mídia os inclui. Anexos da lixeira continuam ocupando armazenamento privado até serem liberados pela limpeza do histórico; não remova esses arquivos manualmente.
 
 Para um backup completo consistente:
 
@@ -130,7 +170,13 @@ Não copie somente `db.sqlite3` da raiz nem restaure código antigo sobre banco 
 
 ## Atualizações e serviços opcionais
 
-A descoberta de versões do núcleo é opcional por `GRAVEWRIGHT_RELEASES_REPOSITORY=owner/repo`. Espera artefatos Django compatíveis com metadados SHA-256. O atualizador atual informa estado e artefato; não substitui a instalação em execução. Confira os bytes baixados, faça backup, revise migrações e atualize o código manualmente.
+Ao atualizar o pacote publicado 0.1.1 pela Administração, o supervisor antigo
+continua executando. Pare o Runner, extraia o ZIP 0.1.2 sobre a pasta original e
+execute o novo instalador usando a mesma pasta de dados pessoais. Essa troca
+única habilita apps Django e a nova substituição de arquivos. Preserve os dados
+pessoais e a pasta `updates` durante a transição.
+
+A descoberta usa `GRAVEWRIGHT_RELEASES_REPOSITORY`, com padrão `Gravewright/gravewright`; um valor vazio a desativa. Artefatos Django compatíveis exigem metadados SHA-256. Instalações iniciadas pelo Runner ou `main.py` permitem atualizar pela Administração, com substituição de arquivos, migrações, reinício e recuperação. Servidores ASGI iniciados diretamente exigem atualização pelo operador.
 
 O marketplace usa catálogo HTTPS e arquivo local de chaves públicas Ed25519 confiáveis. URL vazia deixa a descoberta online sem configuração. Revise autores e código antes de instalar módulos, pois executam na origem da aplicação. Veja [módulos](modules.md).
 
@@ -144,12 +190,16 @@ habitual. No Linux e macOS, `uv run --locked python main.py` também inicia o
 fluxo de atualização; `--dev` é reservado ao desenvolvimento com autoreload.
 Não é necessário iniciar um modo especial para usar o botão de atualização.
 
-Em Administração → Atualizações, escolha o canal, verifique a versão e clique
-em **Fazer backup e instalar atualização**. O download, validação SHA-256,
+Em Administração → Atualizações, verifique a versão e clique
+em **Instalar atualização**. O download, validação SHA-256,
 preparação de dependências, backup, migrações, reinício e recuperação são
-controlados por essa tela nos três sistemas operacionais. Alpha usa o canal
-Desenvolvimento. Acesso e conexões de mesa são interrompidos durante a troca;
-a tela acompanha o retorno do servidor.
+controlados por essa tela nos três sistemas operacionais. A modal de progresso
+mostra a etapa confirmada e o tempo decorrido. A porcentagem do download usa
+os bytes recebidos; as outras etapas usam um indicador de atividade.
+Mantenha o Runner aberto durante a instalação. As conexões de mesa são
+interrompidas durante a troca; as consultas ficam mais espaçadas enquanto
+o servidor está indisponível e pausam com a página oculta ou sem conexão.
+A página recarrega após o servidor confirmar que a versão esperada está rodando.
 
 O pacote `Gravewright-VERSAO-django.zip` deve ter digest SHA-256 publicado no
 GitHub, versão superior e os arquivos do supervisor. O repositório padrão é
@@ -158,20 +208,23 @@ consulta. A release inicial `0.1.0-alpha.0`, anterior ao supervisor, não pode
 aplicar atualizações: é necessário distribuir este inicializador atualizado
 para habilitar o fluxo da interface nessa instalação antiga.
 
-A versão nova fica em um diretório separado. Banco, mídia, compêndios e os
-arquivos estáticos compartilhados do Runner são preservados. Falhas de
-migração ou inicialização restauram a versão anterior e seus dados. Uma
-transação interrompida é recuperada ao iniciar novamente. Checkouts Git com
-alterações locais são protegidos contra substituição. Não execute outro
-servidor contra o mesmo banco durante a atualização.
+A atualização substitui os arquivos na pasta original do projeto, incluindo `Install Windows.bat`, scripts, assets e o runner gerado. Arquivos da versão anterior que não existem na release nova são removidos. `.env`, ambientes Python, caches e diretórios de dados/extensões locais são preservados. As dependências da versão nova são preparadas isoladamente antes da substituição.
 
-O Runner guarda versões, backups e `update.log` na pasta `updates` dentro de
-seu diretório de dados. O inicializador por `main.py` usa o diretório de estado
-do usuário: `%LOCALAPPDATA%/Gravewright/updates` no Windows,
-`~/Library/Application Support/Gravewright/updates` no macOS e
-`$XDG_STATE_HOME/gravewright/updates` (ou `~/.local/state/gravewright/updates`)
-no Linux. Preserve esses diretórios e reserve espaço para backups, que não são
-apagados automaticamente.
+A opção **Manter cópia .old para rollback** vem marcada. Após o sucesso, a pasta `retained/` do atualizador guarda o código anterior e os snapshots correspondentes em `.gravewright-rollback`. O nome vem da pasta de instalação: por exemplo, `data/updates/retained/gravewright.old` para um Runner extraído como `gravewright`; colisões acrescentam um identificador único. A execução normal por `main.py` usa `data/updates/<installation-hash>/retained/`. Use o caminho real registrado pela instalação, em vez de construí-lo pela versão de destino. Desmarcar elimina a cópia temporária após o sucesso. Durante a instalação sempre existe recuperação temporária: falhas de migração, substituição ou inicialização restauram código, inicializadores e dados. Uma transação interrompida é recuperada na próxima inicialização.
+
+Para restaurar uma cópia retida, encerre o Runner e execute com o Python da instalação (o caminho aparece no BAT gerado):
+
+```bat
+"CAMINHO_DO_PYTHON\python.exe" -X utf8 scripts\rollback_update.py "data\updates\retained\gravewright.old"
+```
+
+A restauração também retorna banco e mídia ao momento do backup; alterações feitas depois dele serão perdidas. Preserve a pasta de estado e os ambientes de atualização junto da cópia `.old`, pois ela referencia o Python anterior. Checkouts Git com alterações locais continuam bloqueados contra atualização. Não execute outro servidor contra o mesmo banco durante atualização ou restauração.
+
+O Runner guarda versões, backups e `update.log` em `data/updates/` dentro da
+pasta descompactada. O inicializador por `main.py` também mantém seu estado em
+`data/updates/` dentro do projeto, no Windows, Linux e macOS. Nenhum estado padrão
+do atualizador é compartilhado em AppData, HOME ou XDG. Preserve `data/` e reserve
+espaço para os ambientes e as cópias `.old` retidas.
 
 O workflow `Automatic updates` testa Windows, Linux e macOS nativamente.
 Para reproduzir, execute `uv run python tests/e2e/automatic_updates.py` e

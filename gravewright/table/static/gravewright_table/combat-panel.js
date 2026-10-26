@@ -13,6 +13,99 @@
 
 
 (function () {
+    let activeMenu, menuSequence = 0;
+
+    function closeMenu(restoreFocus = false) {
+        activeMenu?.close(restoreFocus);
+    }
+
+    function openMenu(details, trigger, originals, last = false) {
+        closeMenu();
+        const doc = trigger.ownerDocument, view = doc.defaultView;
+        const panel = trigger.closest('[data-native-directory]');
+        const popup = doc.createElement('div');
+        popup.className = 'gw-combat-menu__list directory-context-menu';
+        popup.id = `combat-actions-${++menuSequence}`;
+        popup.setAttribute('role', 'menu');
+        popup.setAttribute('aria-label', trigger.getAttribute('aria-label'));
+        Object.assign(popup.style, {position: 'fixed', right: 'auto', top: '0px', left: '0px',
+            zIndex: String(Math.max(1500, (Number.parseInt(view.getComputedStyle(panel || trigger).zIndex) || 0) + 1)),
+            boxSizing: 'border-box', minWidth: `${Math.max(0, Math.min(180, view.innerWidth - 16))}px`,
+            maxWidth: `${Math.max(0, view.innerWidth - 16)}px`, maxHeight: `${Math.max(0, view.innerHeight - 16)}px`, overflowY: 'auto'});
+        const releases = [];
+        const listen = (target, type, handler, options) => {
+            target.addEventListener(type, handler, options);
+            releases.push(() => target.removeEventListener(type, handler, options));
+        };
+        let observer;
+        const close = restoreFocus => {
+            if (activeMenu?.popup !== popup) return;
+            activeMenu = undefined;
+            observer?.disconnect();
+            for (const release of releases) release();
+            popup.remove();
+            details.open = false;
+            trigger.setAttribute('aria-expanded', 'false');
+            trigger.removeAttribute('aria-controls');
+            if (restoreFocus && trigger.isConnected) trigger.focus();
+        };
+        activeMenu = {popup, panel, close};
+        for (const original of originals.querySelectorAll('button')) {
+            const choice = original.cloneNode(true);
+            choice.setAttribute('role', 'menuitem');
+            choice.tabIndex = -1;
+            choice.addEventListener('click', event => {
+                event.preventDefault();event.stopPropagation();
+                const enabled = original.isConnected && !original.disabled;
+                close(true);
+                // Keep the original button in the panel so its delegated command
+                // retains the combatant identity and the native action handler.
+                if (enabled) original.click();
+            });
+            popup.appendChild(choice);
+        }
+        details.open = true;
+        trigger.setAttribute('aria-expanded', 'true');
+        trigger.setAttribute('aria-controls', popup.id);
+        doc.body.appendChild(popup);
+        const anchor = trigger.getBoundingClientRect(), box = popup.getBoundingClientRect();
+        const top = anchor.bottom + box.height + 4 <= view.innerHeight - 8 ? anchor.bottom + 4 : anchor.top - box.height - 4;
+        popup.style.left = `${Math.max(8, Math.min(anchor.right - box.width, view.innerWidth - box.width - 8))}px`;
+        popup.style.top = `${Math.max(8, Math.min(top, view.innerHeight - box.height - 8))}px`;
+        const choices = () => [...popup.querySelectorAll('button')].filter(button => !button.disabled);
+        (last ? choices().at(-1) : choices()[0])?.focus();
+        const outside = event => {if (!popup.contains(event.target) && !trigger.contains(event.target)) close(false);};
+        listen(doc, 'pointerdown', outside, true);
+        listen(doc, 'click', outside, true);
+        listen(doc, 'keydown', event => {
+            if (event.key === 'Escape') {event.preventDefault();event.stopPropagation();close(true);return;}
+            if (event.key === 'Tab') {close(true);return;}
+            if (!popup.contains(event.target) || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            const buttons = choices(), index = buttons.indexOf(doc.activeElement);
+            buttons[event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+                : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+        });
+        const scrollPosition = target => target === view || target === doc
+            ? [view.scrollX || 0, view.scrollY || 0] : [target.scrollLeft || 0, target.scrollTop || 0];
+        const scrollPositions = new Map([[view, scrollPosition(view)], [doc, scrollPosition(doc)]]);
+        for (let parent = trigger.parentElement; parent; parent = parent.parentElement) scrollPositions.set(parent, scrollPosition(parent));
+        listen(view, 'scroll', event => {
+            if (popup.contains(event.target)) return;
+            const previous = scrollPositions.get(event.target), current = scrollPosition(event.target);
+            // Clicking a clipped trigger can queue its scroll-into-view event
+            // before this menu opens. Only a later position change dismisses it.
+            if (!previous || previous.some((value, index) => value !== current[index])) close(false);
+        }, true);
+        for (const event of ['resize', 'pagehide', 'gravewright:module-scene']) listen(view, event, () => close(false));
+        observer = new view.MutationObserver(records => {
+            if (!trigger.isConnected || panel?.hidden || panel?.hasAttribute('data-window-minimized')
+                || records.some(record => record.target === panel && record.type === 'attributes')) close(false);
+        });
+        observer.observe(doc.body, {childList: true, subtree: true});
+        if (panel) observer.observe(panel, {attributes: true, attributeFilter: ['hidden', 'class', 'style', 'data-window-minimized']});
+    }
+
     const FALLBACK_LABELS = {
         start: "Start combat",
         end: "End combat",
@@ -22,20 +115,12 @@
         waitingGm: "Waiting for the GM.",
         round: "Round",
         turn: "Turn",
-        initiative: "Side initiative",
-        friendly: "Friendly side",
-        hostile: "Hostile side",
-        unassigned: "Assign side",
-        activations: "Activations per round",
-        rollSides: "Roll side representatives",
-        chooseFirst: "Winner: choose which side acts first",
-        firstFriendly: "Friendly side first",
-        firstHostile: "Hostile side first",
-        representatives: "Representatives",
-        winner: "Initiative winner",
-        sideScore: "Side total",
-        rollOne: "Roll this side representative",
-        setInitiative: "Side initiative",
+        initiative: "Initiative",
+        rollAll: "Roll initiative",
+        rollNpcs: "Roll for NPCs",
+        rollMissing: "Roll the missing ones",
+        rollOne: "Roll for this combatant",
+        setInitiative: "Set initiative",
         previousTurn: "Previous turn",
         nextTurn: "Next turn",
         previousRound: "Previous round",
@@ -53,6 +138,10 @@
         nextUp: "Next",
         moveUp: "Move up",
         moveDown: "Move down",
+        configure: "Configure initiative",
+        bar1: "Bar 1",
+        bar2: "Bar 2",
+        adjustResource: "Adjust resource",
     };
 
     function el(tag, className, text) {
@@ -81,6 +170,19 @@
     function labelsFor(panel) {
         const data = panel?.dataset || {};
         const out = { ...FALLBACK_LABELS };
+        if (document.documentElement.lang.toLowerCase().startsWith('pt')) Object.assign(out, {
+            start: 'Iniciar combate', end: 'Encerrar combate', empty: 'Nenhum combatente nesta cena.',
+            noCombatants: 'Nenhum combatente na ordem.', inactive: 'Fora de combate', waitingGm: 'Aguardando o mestre.',
+            round: 'Rodada', turn: 'Turno', initiative: 'Iniciativa', rollAll: 'Rolar iniciativa',
+            rollNpcs: 'Rolar para NPCs', rollMissing: 'Rolar iniciativas pendentes', rollOne: 'Rolar iniciativa',
+            setInitiative: 'Definir iniciativa', previousTurn: 'Turno anterior', nextTurn: 'Próximo turno',
+            previousRound: 'Rodada anterior', nextRound: 'Próxima rodada', addSelected: 'Adicionar tokens selecionados',
+            actions: 'Ações do combatente', centerToken: 'Centralizar token', openSheet: 'Abrir ficha',
+            setTurn: 'Definir turno atual', remove: 'Remover do combate', hide: 'Ocultar dos jogadores',
+            reveal: 'Exibir aos jogadores', markDefeated: 'Marcar como derrotado', clearDefeated: 'Remover derrota',
+            nextUp: 'Próximo', moveUp: 'Mover para cima', moveDown: 'Mover para baixo', configure: 'Configurar iniciativa',
+            bar1: 'Barra 1', bar2: 'Barra 2', adjustResource: 'Ajustar recurso',
+        });
         Object.keys(FALLBACK_LABELS).forEach((key) => {
             const value = data[`label${key.charAt(0).toUpperCase()}${key.slice(1)}`];
             if (value) out[key] = value;
@@ -154,11 +256,20 @@
 
 
 
-    function resourceBar(bar) {
+    function resourceBar(bar, combatant, L) {
         if (!bar) return null;
         const percent = bar.percent == null ? 0 : Math.max(0, Math.min(100, Number(bar.percent) || 0));
         const level = percent <= 25 ? "is-critical" : (percent <= 50 ? "is-wounded" : "is-healthy");
-        const wrap = el("div", `gw-combat-bar ${level}`);
+        const wrap = el("button", `gw-combat-bar ${level}`);
+        wrap.type = 'button';
+        wrap.dataset.combatAction = 'resource/edit';
+        wrap.dataset.combatantId = combatant.id;
+        wrap.dataset.resourceSlot = bar.slot || 'bar_1';
+        wrap.disabled = !combatant.canControl;
+        const label = bar.slot === 'bar_2' ? L.bar2 : L.bar1;
+        wrap.title = `${L.adjustResource}: ${label}`;
+        wrap.setAttribute('aria-label', `${L.adjustResource}: ${combatant.name}, ${label}, ${bar.value}/${bar.max}`);
+        if (bar.slot === 'bar_2') wrap.classList.add('gw-combat-bar--secondary');
         const track = el("span", "gw-combat-bar__track");
         const fill = el("span", "gw-combat-bar__fill");
         fill.style.width = `${percent}%`;
@@ -170,31 +281,32 @@
 
 
     function initiativeCell(combatant, state, isGm, L) {
-        const wrap = el("div", "gw-combat-combatant__side-config");
-        const side = isGm ? document.createElement("select") : el("span", "gw-combat-combatant__score");
-        if (isGm) {
-            side.setAttribute("aria-label", `${L.initiative}: ${combatant.name}`);
-            side.disabled = !!state.active;
-            side.dataset.combatSide = combatant.id;
-            [["", L.unassigned], ["friendly", L.friendly], ["hostile", L.hostile]].forEach(([value, label]) => {
-                const option = document.createElement("option"); option.value = value; option.textContent = label; side.append(option);
-            });
-            side.value = combatant.side || "";
+        const text = combatant.initiative == null ? "" : String(combatant.initiative);
+        if (!isGm) {
+            const cell = el("span", "gw-combat-combatant__score", text || "-");
+            cell.title = initiativeLabel(state, L);
+            return cell;
+        }
+        const numeric = state?.config?.input !== "text";
+        const input = el(
+            "input",
+            "gw-combat-combatant__score gw-combat-combatant__score--editable"
+            + (numeric ? "" : " gw-combat-combatant__score--text"),
+        );
+        if (numeric) {
+            input.type = "number";
+            input.step = "any";
         } else {
-            side.textContent = combatant.side === "friendly" ? L.friendly : combatant.side === "hostile" ? L.hostile : L.unassigned;
+            input.type = "text";
+            input.maxLength = 24;
         }
-        const score = el("span", "gw-combat-combatant__score", combatant.side_score == null ? "–" : String(combatant.side_score));
-        score.title = `${L.sideScore}: ${combatant.side === "friendly" ? L.friendly : L.hostile}`;
-        wrap.append(side, score);
-        if (isGm) {
-            const activations = document.createElement("input");
-            activations.type = "number"; activations.min = "1"; activations.max = "12"; activations.step = "1";
-            activations.value = String(combatant.activations || 1); activations.disabled = !!state.active;
-            activations.title = L.activations; activations.setAttribute("aria-label", `${L.activations}: ${combatant.name}`);
-            activations.dataset.combatActivations = combatant.id;
-            wrap.append(activations);
-        }
-        return wrap;
+        input.value = text;
+        input.placeholder = "-";
+        input.title = L.setInitiative;
+        input.setAttribute("aria-label", `${initiativeLabel(state, L)}: ${combatant.name}`);
+        input.dataset.combatInitiative = combatant.id;
+        input.dataset.combatVersion = state.version;
+        return input;
     }
 
     function combatantMenu(combatant, state, isGm, L) {
@@ -205,10 +317,13 @@
         const trigger = el("summary", "gw-combat-menu__trigger");
         trigger.title = L.actions;
         trigger.setAttribute("aria-label", L.actions);
+        trigger.setAttribute('aria-haspopup', 'menu');
+        trigger.setAttribute('aria-expanded', 'false');
         trigger.appendChild(icon("ph-dots-three-outline-vertical"));
         menu.appendChild(trigger);
 
         const list = el("div", "gw-combat-menu__list");
+        list.hidden = true;
         if (combatant.token_id) {
             list.append(
                 menuItem("token/focus", "ph-crosshair", L.centerToken, { data: { tokenId: combatant.token_id } }),
@@ -217,6 +332,11 @@
         }
         if (isGm) {
             const id = { combatantId: combatant.id };
+            if (canRoll(state)) {
+                list.appendChild(
+                    menuItem("initiative/roll-one", initiativeIcon(state), L.rollOne, { data: id }),
+                );
+            }
             if (combatant.can_move_up) {
                 list.appendChild(menuItem("order/up", "ph-arrow-up", L.moveUp, { data: id }));
             }
@@ -241,6 +361,15 @@
             );
         }
         if (list.children.length) menu.appendChild(list); else return wrap;
+        trigger.addEventListener('click', event => {
+            event.preventDefault();event.stopPropagation();
+            if (activeMenu?.popup && menu.open) closeMenu();
+            else openMenu(menu, trigger, list);
+        });
+        trigger.addEventListener('keydown', event => {
+            if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+            event.preventDefault();event.stopPropagation();openMenu(menu, trigger, list, event.key === 'ArrowUp');
+        });
         wrap.appendChild(menu);
         return wrap;
     }
@@ -255,7 +384,13 @@
         row.dataset.combatantId = combatant.id;
         row.dataset.tokenId = combatant.token_id || "";
 
-        row.append(el("span", "gw-combat-combatant__position", combatant.position), portrait(combatant));
+        const position = el("span", "gw-combat-combatant__position", combatant.is_current ? '★' : combatant.position);
+        if (combatant.is_current) {
+            position.classList.add('gw-combat-combatant__turn-star');
+            position.setAttribute('aria-label', L.turn);
+            position.title = L.turn;
+        }
+        row.append(position, portrait(combatant));
 
         const main = el("div", "gw-combat-combatant__main");
         main.appendChild(el("span", "gw-combat-combatant__name", combatant.name || "???"));
@@ -270,8 +405,10 @@
         });
         if (meta.length) main.appendChild(el("span", "gw-combat-combatant__meta", meta.join(" · ")));
 
-        const bar = resourceBar(combatant.bar);
-        if (bar) main.appendChild(bar);
+        for (const value of combatant.bars || (combatant.bar ? [combatant.bar] : [])) {
+            const bar = resourceBar(value, combatant, L);
+            if (bar) main.appendChild(bar);
+        }
         row.appendChild(main);
 
         row.append(initiativeCell(combatant, state, isGm, L), combatantMenu(combatant, state, isGm, L));
@@ -294,15 +431,11 @@
     }
 
     function toolbar(panel, state, L, active) {
-        const selected = Number(panel.dataset.selectedTokenCount || 0);
         const bar = el("div", "gw-combat-toolbar");
         bar.append(
-            button(active ? "end" : "start", active ? "ph-stop" : "ph-play", active ? L.end : L.start, { disabled: !active && !state?.config?.first_side }),
-            button("combatants/add-selected", "ph-plus-circle",
-                selected ? `${L.addSelected} (${selected})` : L.addSelected, { disabled: selected < 1 }),
+            button(active ? "end" : "start", active ? "ph-stop" : "ph-play", active ? L.end : L.start, {disabled: !state.sceneId || !active && !state.combatants?.length}),
             button("turn/previous", "ph-caret-left", L.previousTurn, { disabled: !active }),
             button("turn/next", "ph-caret-right", L.nextTurn, { primary: true, disabled: !active }),
-            button("combatants/add-actor", "ph-user-plus", "Add actor"),
             button("round/previous", "ph-arrow-counter-clockwise", L.previousRound, { disabled: !active || state.round <= 1 }),
             button("round/next", "ph-arrow-clockwise", L.nextRound, { disabled: !active }),
         );
@@ -311,60 +444,23 @@
     }
 
 
-    function initiativeSetup(state, L, isGm) {
-        const setup = el("section", "gw-combat-initiative-setup");
-        const roster = Array.isArray(state?.combatants) ? state.combatants : [];
-        const representatives = el("div", "gw-combat-initiative-setup__representatives");
-        representatives.appendChild(el("strong", null, L.representatives));
-        for (const side of ["friendly", "hostile"]) {
-            const select = document.createElement("select");
-            select.dataset.initiativeRepresentative = side;
-            const rows = roster.filter((row) => row.side === side && !row.defeated);
-            rows.forEach((row) => {
-                const option = document.createElement("option");
-                option.value = row.id; option.textContent = row.name; select.append(option);
-            });
-            select.disabled = !isGm || !!state.active || !rows.length;
-            select.setAttribute("aria-label", side === "friendly" ? L.friendly : L.hostile);
-            representatives.appendChild(select);
-        }
-        if (isGm && !state.active) {
-            setup.append(representatives, button("initiative/roll-sides", "ph-dice-five", L.rollSides, {
-                primary: true,
-                disabled: !roster.some((row) => row.side === "friendly" && !row.defeated) || !roster.some((row) => row.side === "hostile" && !row.defeated),
-            }));
-        }
-        const result = state?.config?.side_initiative;
-        if (result?.totals) {
-            setup.appendChild(el("p", "gw-combat-initiative-setup__result",
-                `${L.friendly}: ${result.totals.friendly} · ${L.hostile}: ${result.totals.hostile} · ${L.winner}: ${result.winner === "friendly" ? L.friendly : L.hostile}`));
-            if (isGm && !state.active) {
-                setup.appendChild(el("p", null, L.chooseFirst));
-                setup.append(
-                    button("initiative/first-side", "ph-arrow-right", L.firstFriendly, { data: { side: "friendly" } }),
-                    button("initiative/first-side", "ph-arrow-right", L.firstHostile, { data: { side: "hostile" } }),
-                );
-            }
-            if (result.firstSide) setup.appendChild(el("p", "gw-combat-initiative-setup__result",
-                `First: ${result.firstSide === "friendly" ? L.friendly : L.hostile}`));
-        }
-        return setup;
+    function canRoll(state) {
+        return state?.config?.can_roll !== false && state?.config?.input === "roll";
     }
 
-    function activationSequence(state) {
-        const sequence = Array.isArray(state?.turn_order) ? state.turn_order : [];
-        if (!state?.active || !sequence.length) return null;
-        const strip = el("div", "gw-combat-activation-sequence");
-        sequence.forEach((slot, index) => {
-            const item = el("span", "gw-combat-activation-sequence__item", `${index + 1}. ${slot.name}`);
-            item.classList.toggle("is-current", !!slot.current);
-            item.classList.add(slot.side === "friendly" ? "is-friendly" : "is-hostile");
-            strip.appendChild(item);
-        });
-        return strip;
+    function rollBar(state, L, active) {
+        const bar = el("div", "gw-combat-rollbar");
+        const die = initiativeIcon(state);
+        bar.append(
+            button("initiative/roll-all", die, L.rollAll, { disabled: !active, primary: true }),
+            button("initiative/roll-npcs", "ph-skull", L.rollNpcs, { disabled: !active }),
+            button("initiative/roll-missing", "ph-question", L.rollMissing, { disabled: !active }),
+        );
+        return bar;
     }
 
     function renderPanel(panel, state) {
+        if (activeMenu?.panel === panel) closeMenu();
         const target = panel.querySelector("[data-combat-state]");
         if (!target) return;
         const L = labelsFor(panel);
@@ -378,11 +474,13 @@
         if (state?.config?.accent) target.style.setProperty("--gw-combat-accent", state.config.accent);
 
         target.appendChild(header(state, L, active));
-        const sequence = activationSequence(state);
-        if (sequence) target.appendChild(sequence);
         if (isGm) {
             target.appendChild(toolbar(panel, state, L, active));
-            if (!active) target.appendChild(initiativeSetup(state, L, isGm));
+            if (canRoll(state)) target.appendChild(rollBar(state, L, combatants.length > 0));
+        } else if (active && combatants.some(row => row.current && row.canControl)) {
+            const controls = el('div', 'gw-combat-toolbar');
+            controls.appendChild(button('turn/next', 'ph-caret-right', L.nextTurn, {primary: true}));
+            target.appendChild(controls);
         }
 
         const list = el("div", "gw-combat-list");

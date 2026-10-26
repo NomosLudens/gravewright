@@ -9,6 +9,8 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
+from .systems import default_system_id
+
 
 def cover_path(instance, filename):
     return f'campaigns/{instance.id}/{uuid.uuid4().hex}{Path(filename).suffix.lower()}'
@@ -30,7 +32,7 @@ class Campaign(models.Model):
                               related_name='owned_campaigns')
     name = models.CharField(max_length=80)
     description = models.TextField(max_length=500, blank=True)
-    system = models.CharField(max_length=120, default='gravewright-pdf-system', blank=True)
+    system = models.CharField(max_length=120, default=default_system_id, blank=True)
     cover = models.ImageField(upload_to=cover_path, blank=True)
     image_url = models.URLField(max_length=2048, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
@@ -118,3 +120,68 @@ class StreamerLink(models.Model):
     digest = models.CharField(max_length=64, unique=True)
     expires_at = models.DateTimeField(db_index=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
+
+
+class SessionPlan(models.Model):
+    """GM-only plan for one game session: ordered materials, checklist and wrap-up."""
+    class Status(models.TextChoices):
+        PLANNED = 'planned', 'Planned'
+        COMPLETED = 'completed', 'Completed'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name='session_plans')
+    title = models.CharField(max_length=120)
+    scheduled_for = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=10, choices=Status, default=Status.PLANNED)
+    # Validated lists of {id, kind, refId, label, done} and {id, text, done}.
+    steps = models.JSONField(default=list)
+    checklist = models.JSONField(default=list)
+    notes = models.TextField(max_length=8000, blank=True)
+    summary = models.TextField(max_length=8000, blank=True)
+    pending = models.JSONField(default=list)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    revision = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['status', 'scheduled_for', 'created_at', 'id']
+
+
+class CampaignEvent(models.Model):
+    """GM timeline entry with an authored in-world date and an optional calendar date."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name='timeline_events')
+    title = models.CharField(max_length=120)
+    world_date = models.CharField(max_length=80, blank=True)
+    # Authored chronological position; calendars are not interpreted by the core.
+    position = models.IntegerField(default=0)
+    date = models.DateField(null=True, blank=True)
+    upcoming = models.BooleanField(default=False)
+    description = models.TextField(max_length=4000, blank=True)
+    links = models.JSONField(default=list)
+    revision = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['position', 'date', 'created_at', 'id']
+
+
+class PreparationBoard(models.Model):
+    """One GM's own pinned documents and dashboard widget order for a campaign."""
+    membership = models.OneToOneField(Membership, on_delete=models.CASCADE, primary_key=True)
+    pins = models.JSONField(default=list)
+    widgets = models.JSONField(default=list)
+    revision = models.PositiveIntegerField(default=1)
+
+
+class PreparationReceipt(models.Model):
+    """Preparation command result keyed by campaign, user and request UUID."""
+    campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name='+')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='+')
+    request_id = models.UUIDField()
+    result = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['campaign', 'user', 'request_id'], name='preparation_unique_command')]

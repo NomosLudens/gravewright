@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 from uuid import UUID
 
-from django.db import transaction
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST
 
@@ -17,9 +16,9 @@ from gravewright.accounts.views import read_json
 from gravewright.campaigns.views import authenticated
 from .packages import ModuleFailure
 
-CONTRACT = json.loads((Path(__file__).parent / 'contracts/frontend.json').read_text())
+CONTRACT = json.loads((Path(__file__).parent / 'contracts/frontend.json').read_text(encoding='utf-8'))
 DOMAINS = {'actors': actors, 'tokens': tokens, 'maps': maps, 'journals': journals}
-RESOURCE_DOMAINS = {'items', 'combat', 'cards', 'audio', 'compendiums'}
+RESOURCE_DOMAINS = {'items', 'combat', 'cards', 'audio', 'compendiums', 'clocks', 'clues', 'mindmaps'}
 
 
 def invoke(campaign_id, user_id, domain, method, payload, request_id=None, scene_id=None):
@@ -34,12 +33,67 @@ def invoke(campaign_id, user_id, domain, method, payload, request_id=None, scene
     p = dict(payload)
     # A mounted scene is authoritative; a payload cannot silently retarget it.
     if scene_id is not None:
+        if domain in ('clocks', 'clues', 'mindmaps') and p.get('scopeSceneId') is not None and str(p['scopeSceneId']) != str(scene_id):
+            raise ModuleFailure('stale_context')
+        if domain == 'maps' and method == 'navigate' and any(key in p and p[key] is None for key in ('sceneId', 'mapId')):
+            raise ModuleFailure('stale_context')
         for key in ('sceneId', 'mapId'):
             if p.get(key) is not None and str(p[key]) != str(scene_id):
                 raise ModuleFailure('stale_context')
         p['sceneId'] = p['mapId'] = str(scene_id)
+    if domain == 'mindmaps' and 'sceneId' in p and 'mapId' in p and str(p['sceneId']) != str(p['mapId']):
+        raise ModuleFailure('invalid_data')
     scene = p.get('sceneId') or p.get('mapId')
     try:
+        if domain == 'journals' and method in ('resources', 'resolve'):
+            allowed = {'resources': {'query', 'kinds', 'limit'}, 'resolve': {'reference'}}[method] | {'sceneId', 'mapId'}
+            if set(p) - allowed or ('sceneId' in p and 'mapId' in p and p['sceneId'] != p['mapId']):
+                raise ModuleFailure('invalid_data')
+            if method == 'resources':
+                return journals.resources(campaign_id, user_id, query=p.get('query', ''),
+                    kinds=p.get('kinds'), limit=p.get('limit', 80), scene_id=scene)
+            return journals.resolve(campaign_id, user_id, p.get('reference'))
+        if domain == 'mindmaps' and method in ('read', 'resources', 'resolve'):
+            from gravewright.table import mindmaps
+            contexts = {'sceneId', 'mapId'}
+            allowed = {'read': {'id'}, 'resources': {'query', 'kinds', 'limit'}, 'resolve': {'reference'}}[method] | contexts
+            if set(p) - allowed:
+                raise ModuleFailure('invalid_data')
+            if method == 'read':
+                return mindmaps.public_read(campaign_id, user_id, p.get('id'), scene)
+            if method == 'resources':
+                return mindmaps.public_resources(campaign_id, user_id, query=p.get('query', ''),
+                    kinds=p.get('kinds'), limit=p.get('limit', 80), scene_id=scene)
+            return mindmaps.public_resolve(campaign_id, user_id, p.get('reference'))
+        if domain in ('mapBuilder', 'blueprints') or domain == 'maps' and method == 'exportUniversalVtt':
+            if method != 'state' and method not in CONTRACT['domains'].get(domain, {}):
+                raise ModuleFailure('unavailable')
+            from gravewright.maps.public import invoke as maps_invoke
+            return maps_invoke(campaign_id, user_id, domain, method, p, request_id, scene_id=scene_id)
+        if domain == 'system':
+            from api import systems
+            if method == 'state':
+                return systems.capabilities(campaign_id, user_id)
+            if method == 'call':
+                return systems.call(campaign_id, user_id, p.get('operation'), p.get('data', {}),
+                                    UUID(str(request_id)), scene_id=scene_id)
+            raise ModuleFailure('unavailable')
+        if domain == 'library':
+            from api import library
+            if method == 'state':
+                return library.state(campaign_id, user_id)
+            action = CONTRACT['domains']['library'].get(method)
+            if action is None:
+                raise ModuleFailure('unavailable')
+            return library.command(campaign_id, user_id, action, p, UUID(str(request_id)))
+        if domain == 'ownership':
+            from api import ownership
+            if method in ('state', 'read'):
+                return ownership.state(campaign_id, user_id, p.get('kind'), p.get('id'))
+            if method == 'update':
+                return ownership.command(campaign_id, user_id, p.get('kind'), p.get('id'),
+                                         p, UUID(str(request_id)))
+            raise ModuleFailure('unavailable')
         if domain in CONTRACT['domains']:
             if method == 'state':
                 if domain in RESOURCE_DOMAINS:
@@ -79,7 +133,7 @@ def invoke(campaign_id, user_id, domain, method, payload, request_id=None, scene
                              opposed_test_id=p.get('opposed_test_id', p.get('opposedTestId')))
         if domain == 'table':
             if method == 'search':
-                return table.search(campaign_id, user_id, p.get('query', ''))
+                return table.search(campaign_id, user_id, p.get('query', ''), kind=p.get('kind',''), recent=p.get('recent'))
             if method == 'lobby':
                 return table.lobby(campaign_id, user_id)
             if method == 'updateLobby':
@@ -92,7 +146,7 @@ def invoke(campaign_id, user_id, domain, method, payload, request_id=None, scene
         code = {'forbidden': 'permission_denied', 'not_a_member': 'permission_denied',
                 'gm_required': 'permission_denied', 'owner_required': 'permission_denied',
                 'blocked': 'permission_denied', 'invalid_input': 'invalid_data'}.get(code, code)
-        if code not in ('not_found', 'permission_denied', 'conflict', 'invalid_data'):
+        if code not in ('not_found', 'permission_denied', 'conflict', 'invalid_data', 'unavailable'):
             code = 'invalid_data'
         raise ModuleFailure(code, str(error)) from None
     except (ValueError, TypeError, KeyError):
@@ -101,9 +155,12 @@ def invoke(campaign_id, user_id, domain, method, payload, request_id=None, scene
 
 @require_POST
 @authenticated
-@transaction.atomic
 def call(request, table_id, module_id=None):
-    """Share domain dispatch between host pages and lease-bound browser modules."""
+    """Share leased dispatch while native services own their transaction scopes.
+
+    In particular, map rendering prepares files outside its write transaction
+    and rechecks authority and revisions when committing the prepared result.
+    """
     data = read_json(request)
     allowed = {'domain', 'method', 'payload', 'requestId'}
     if module_id is not None:
@@ -120,6 +177,12 @@ def call(request, table_id, module_id=None):
     if module_id is not None:
         from .views import identity
         _, _, scene = identity(request, table_id, module_id, data)
-    value = invoke(table_id, request.user.pk, data.get('domain'), data.get('method'),
-                   data.get('payload', {}), data.get('requestId'), scene)
+    try:
+        value = invoke(table_id, request.user.pk, data.get('domain'), data.get('method'),
+                       data.get('payload', {}), data.get('requestId'), scene)
+    except ModuleFailure as error:
+        failure = {'error': error.code}
+        if error.message != error.code:
+            failure['message'] = error.message
+        return JsonResponse(failure, status=error.status)
     return JsonResponse({'value': value})

@@ -86,6 +86,20 @@ contém somente UUIDs normalizados de campanha e usuário: construí-lo não con
 permissões nem armazena papéis em cache. Os serviços públicos recebem identificadores
 e resolvem novamente o vínculo.
 
+O registro de domínios do navegador é gerado de `modules/contracts/frontend.json`.
+O despacho autenticado delega transações aos serviços, mantendo a renderização de
+mapas fora de uma transação global do transporte. Chamadas binárias usam rota
+separada de multipart/bytes com as mesmas verificações de campanha e montagem.
+`maps/library_services.py` e `table/permission_services.py` compartilham as regras
+nativas da biblioteca e de permissões com as fachadas Python e o navegador.
+
+`campaigns/system_api.py` fornece registro explícito de callbacks do sistema ativo
+na campanha. Pacotes confiáveis registram descrições e handlers de leitura/escrita
+na inicialização; participação, limites JSON e bloqueio de escritas de streamers
+continuam no host. Recursos, revisões e recibos continuam sob responsabilidade
+do provedor. O pacote PDF registra suas próprias operações de mapeamento,
+modelos e ações salvas; o despacho do host não contém condições do PDF System.
+
 A autorização WebSocket também relê a sessão no banco, o backend de autenticação
 configurado e o hash de autenticação de sessão do usuário. Verifica vínculos ao
 receber comandos, nos manipuladores de entrega e durante heartbeats. Remover um
@@ -97,11 +111,30 @@ de mensagens de sincronização, busca, viewport e heartbeat; os pontos de escri
 também os rejeitam. Controles no navegador são conveniências, não a autorização.
 
 **A visibilidade de cenas exige duas condições para quem não é mestre:** a cena deve
-ter `visibility='players'` e ser o `Broadcast` atual da campanha. Marcar uma cena
+ter `visibility='players'` e ser o destino atual do destinatário. Um
+`SceneAssignment` do jogador substitui o `Broadcast` da campanha; os demais
+jogadores e streamers continuam seguindo a transmissão. Marcar uma cena
 inativa como visível não a torna acessível. A mesma resolução protege manifestos,
 blocos de imagem, tokens e chat associado à cena.
 
+O comando explícito `maps.activate` do mestre define a visibilidade para jogadores
+e a transmissão na mesma transação. Com `playerIds`, define o destino somente
+dos jogadores selecionados da campanha, preservando os demais destinos e a
+navegação do mestre. Ativar para todos remove os destinos individuais e reúne
+a mesa. As atribuições persistem ao reconectar e são removidas com a cena ou a
+participação; são separadas da `SceneNavigation` privada do mestre.
+A mudança de visibilidade avança a revisão
+da cena; ativar uma cena já visível mantém sua revisão. Gerar no Map Builder
+e navegar em particular não publicam a cena.
+
 ## Comandos, tentativas repetidas e revisões
+
+A atividade de ponteiros é transitória. `maps.cursor` aceita posições limitadas
+à cena de jogadores e mestres; o servidor fornece a identidade e a cor de
+identificação salva. A entrega verifica novamente o acesso do destinatário à cena
+e sua assinatura atual. O tráfego de ponteiros possui limite próprio e não consome
+o orçamento de comandos. Sair ou desconectar envia um evento de remoção; posições
+de cursores não entram no banco da campanha, em recibos ou em arquivos exportados.
 
 A maioria dos comandos persistentes de recursos da mesa segue esta sequência:
 
@@ -149,11 +182,38 @@ remoção armazenados como hash, limites de resgate e remoção de participantes
 de streamer criam uma identidade visitante específica com validade e revogação.
 A interface Inside reúne esses fluxos em `web/inside.py`.
 
+O gerenciamento abre por `campaigns/management_views.py` sem socket da mesa,
+renderizador Pixi ou registro de presença. `management.py` autoriza os mestres
+atuais; `preparation.py` valida planos de sessão, eventos, painel de cada mestre
+e recibos das operações. Conexões e prévias de jogadores leem documentos nativos
+sem copiar seu estado. Datas do calendário são datas ISO opcionais; datas do
+mundo permanecem texto autoral. Veja [Gerenciar uma campanha](campaign-management.md).
+
 ### Atores, fichas PDF e tokens
 
 Um `Actor` é a fonte reutilizável do personagem. `pdf_system/schema.py` normaliza a
 ficha, incluindo referências a PDFs, campos, barras, configurações de token e efeitos
 ativos. Metadados do ator e dados da ficha têm contadores de revisão distintos.
+O PDF System também controla `pdf.manualFields` opcional: definições de áreas
+editáveis criadas pelo mestre e vinculadas ao PDF de origem. Retângulos normalizados
+por página preservam posições no zoom e na navegação; os valores usam chaves
+estáveis em `fields`. Somente o mestre altera o mapeamento, enquanto jogadores
+autorizados preenchem seus controles. Fichas de atores e tokens independentes usam
+o mesmo esquema e as mesmas verificações de revisão.
+O campo opcional `pdf.fieldActions` vincula fórmulas de rolagem criadas pelo mestre
+a campos nativos ou manuais por origem do PDF. O parser de dados valida a
+configuração sem rolar; a execução resolve `@value` e usa o fluxo normal de
+rolagem e chat. A modal salva um candidato isolado pela revisão existente da
+ficha, incluindo transferências dos valores das barras do token.
+`pdf.fieldBindings` registra endereços validados para referências `@{field-key}`;
+`pdf.calculatedFields` usa fórmulas determinísticas que o servidor recalcula
+após validar dependências e rejeitar ciclos. O histórico restaura definições
+preservando os valores atuais do personagem. Registros de
+`pdf_system.MappingTemplate` por campanha guardam mapeamentos portáteis sem PDFs
+ou valores dos personagens, com operações revisionadas exclusivas do mestre e
+aplicação em lote atômica. Arquivos de campanha incluem esses modelos. O
+diagnóstico no navegador compara o mapeamento com o documento atual, e a
+exportação preenchida cria uma cópia achatada separada.
 
 Um `Token` posiciona o ator em uma cena. Tokens vinculados usam `Actor.data`; tokens
 desvinculados usam `snapshot` e `sheet_version` próprios. A primeira colocação é
@@ -199,6 +259,55 @@ Edições de jogadores preservam conteúdo oculto do mestre e não podem associa
 arquivos arbitrários. `presentations.py` emite e resolve tickets vinculados ao
 destinatário, sem tornar públicos os arquivos originais.
 
+`journals/history.py` armazena snapshots `Revision` limitados por documento e
+documentos excluídos. Restaurar revalida visibilidade/acesso padrão, dependências
+de missões e disponibilidade física dos anexos na transação do diário. A versão
+substituída fica registrada para permitir desfazer a restauração. A limpeza de
+arquivos confere tanto assets ativos quanto versões retidas após o commit.
+Histórico e lixeira são exclusivos dos mestres e não integram as projeções comuns.
+
+### Relógios de progresso e descobertas de pistas
+
+`table/clocks.py` e `table/clues.py` controlam registros persistentes e versionados
+de campanha/cena e seus recibos. São marcadores genéricos de progresso, separados
+dos relógios de efeitos de combate pertencentes ao sistema. Clientes da mesa usam
+estados projetados em tempo real; o gestor lê os mesmos registros por HTTP.
+
+Visibilidade e avanço opcional por jogadores são regras do servidor. Projeções de
+pistas omitem registros não descobertos e notas privadas; somente descobertas
+concluídas e visíveis a jogadores chegam a jogadores e streamers. Os auxiliares
+`blueprint_clocks.py` e `blueprint_clues.py` do MapBuilder executam vínculos
+específicos criados pelo mestre, validando campanha e cena. Eles não concedem
+edição geral ao participante nem revelam dados privados. Simulação não escreve;
+o ensaio no servidor executa dentro de uma transação revertida. Veja
+[Relógios](clocks.md) e [Pistas](clues.md).
+
+### Mapas mentais colaborativos e identidades de recursos
+
+`table/mindmaps.py` controla grafos de campanha/cena, jogadores editores,
+visibilidade privada, validação estrutural e revisões. Mesa e gestor editam os
+mesmos registros `MindMap`. `table/domain.py` serializa escritas com recibos
+`MindMapReceipt` separados; novas tentativas revalidam a autorização e retornam
+projeções atuais. `api/mindmaps.py` e o domínio `mindmaps` do navegador expõem
+essas operações nativas sem contornar suas verificações.
+
+`table/resource_links.py` registra 37 identidades nativas tipadas e metadados de
+arquivos. Um `Resolver` por requisição reaproveita projeções autorizadas dos
+domínios, sem buscar nomes irrestritos. Vínculos armazenam identidades; leituras
+atuais acrescentam rótulos permitidos. Recursos ausentes e negados usam o mesmo
+marcador opaco para permitir outras edições sem revelar os destinos. Revogar
+acesso ao recurso continua valendo mesmo com um rascunho não salvo. O texto dos
+tópicos pertence ao público do mapa inteiro. Veja [Mapas mentais](mindmaps.md)
+e o [contrato da API](api.md#mapas-mentais-colaborativos-e-vínculos-tipados).
+
+O auxiliar `maps/blueprint_mindmaps.py` valida destinos de cena e delega somente
+o efeito de conclusão criado pelo mestre. Abrir verifica a leitura de cada
+destinatário; o ensaio no servidor reverte escritas e notificações.
+`administration/mindmap_archives.py` usa o registro tipado para remapear recursos
+copiados sem reescrever notas autorais ou identidades locais dos tópicos.
+Cópias portáteis limpam editores selecionados; snapshots mantêm o acesso na
+mesma campanha.
+
 ### Chat e dados
 
 O histórico combina mensagens da mesa e da cena selecionada ou transmitida,
@@ -236,6 +345,34 @@ O auxiliar declarativo de fórmulas em `combat/formula_engine.py` é distinto da
 gramática de dados do chat. A iniciativa de KALLISTIS usa o motor de resolução
 de dois d10 do sistema e uma ordem de ativações autoritativa no servidor.
 
+O PDF System fornece seus próprios padrões de combate e cálculo de iniciativa
+pelo registro de sistemas. A fórmula padrão é `1d20 + @initiative`; a variável
+`@initiative` lê o valor canônico `init` alimentado pelo mapeamento do PDF.
+Tokens vinculados usam a ficha do personagem; tokens independentes usam sua
+cópia. A API de combate permite fórmulas por cena e rolagens antes do início.
+O gerenciador do PDF System oferece iniciativa numérica manual, sem controles
+de rolagem ou fórmula. Tokens são adicionados pelo menu de contexto. Alterações
+na ordem preservam o combatente do turno atual. Outros sistemas não herdam
+essas regras do PDF System. Os tokens atual e próximo recebem indicadores
+expansivos verde e amarelo, também usados na lateral do gerenciador.
+
+Condições de tokens aceitam `duration: {type: "turns" | "rounds",
+value: 1..10000, expires: "start" | "end"}` opcional. O servidor inicializa
+`remaining`; turnos seguem o token afetado e rodadas seguem as mudanças de rodada
+do combate. Apenas tokens participantes daquela cena avançam. Condições expiradas
+são removidas; permanentes continuam. Voltar turnos e encerrar o combate não
+alteram os contadores. Recibos evitam contagem duplicada em reenvios. Os dois modos
+de condições exibem o tempo restante e o momento de expiração nos tooltips.
+
+O diretório nativo de compêndios filtra os metadados localmente por nome, tipo de
+documento e coleção. A prévia busca somente a entrada autorizada selecionada e
+exibe texto na modal compartilhada. O mestre pode importar pela entrada, pela
+prévia ou arrastando ao diretório correspondente. O arrasto informa campanha,
+compêndio, entrada e tipo; o destino confere esses dados no catálogo visível antes
+de usar o comando de importação autorizado existente. Jogadores podem visualizar
+compêndios acessíveis, mas não importar. Arquivos e dependências continuam usando
+o mecanismo de importação existente.
+
 ## Arquivos portáteis e administração
 
 `administration/archives.py` define explicitamente os modelos de conteúdo permitidos.
@@ -248,13 +385,25 @@ nativo, mantendo participantes, códigos e histórico de snapshots. Esses arquiv
 não são backups completos do servidor: contas, sessões, configurações e pacotes
 instalados são dados operacionais separados.
 
+`administration/preparation_archives.py` valida e remapeia preparação, painéis,
+versões dos diários e arquivos de anexos retidos. Importações portáteis atribuem
+um painel da origem ao mestre importador sem criar participantes; snapshots
+restauram o painel de cada mestre atual. Arquivos antigos sem metadados de
+preparação preservam preparação/histórico existentes ao restaurar. Exportações
+de recursos para compêndios omitem esses dados privados. Relógios e pistas mantêm
+escopo de campanha/cena, e referências Blueprint apontam aos destinos copiados,
+sem controlar a campanha de origem.
+
 A importação valida caminhos, tamanho do ZIP, tamanho descompactado, modelos, campos
 e hashes antes de criar conteúdo. Adicionar um modelo ou relacionamento de arquivo
 exige revisar a seleção, o grafo de dependências e as regras de importação, além da
 definição do modelo.
 
 `administration/updates.py` consulta metadados de versões de código-fonte do
-repositório configurado e armazena o estado em cache. Ele não substitui a instalação
-em execução. Preferências do servidor e auditoria usam modelos separados; recursos
+repositório configurado e armazena o estado em cache. `administration/automatic_updates.py`
+encaminha atualizações solicitadas pelo proprietário ao supervisor, que substitui
+arquivos e gerencia backup, migrações, reinício e recuperação. O mesmo supervisor
+ativa apps Django do marketplace em ambientes Python isolados.
+Preferências do servidor e auditoria usam modelos separados; recursos
 habilitados dependem da configuração. Leia [Implantação](deployment.md) e
 [Desenvolvimento](development.md) antes de ampliar esses fluxos.

@@ -1,5 +1,14 @@
-// gravewright/maps/frontend/shared/config/i18n/text.js
+// features/table-library/ui/ContentDirectory.native.js
+import { openPermissions } from "/static/gravewright_table/permissions.js";
+
+// shared/config/i18n/text.js
 var listeners = /* @__PURE__ */ new Set();
+function onTextChange(listener) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
 function notifyTextChange() {
   for (const listener of listeners)
     listener();
@@ -23,14 +32,20 @@ function text(source, ...values) {
 }
 if (typeof window !== "undefined") {
   const apply = (detail) => registerTextResolver((source) => {
-    const translated = detail.messages?.text?.[source];
-    return typeof translated === "string" ? translated : source;
+    const messages = detail.messages?.text ?? detail.messages ?? {};
+    if (typeof messages[source] === "string") return messages[source];
+    const translated = messages[source.trim()];
+    return typeof translated === "string" ? source.replace(source.trim(), () => translated) : source;
   }, () => detail.id || "en");
   window.addEventListener("gravewright:locale", (event) => apply(event.detail));
   if (window.gravewrightLocale) apply(window.gravewrightLocale);
+  else {
+    const config = document.getElementById("gravewright-language");
+    if (config) apply(JSON.parse(config.textContent));
+  }
 }
 
-// gravewright/maps/frontend/shared/lifecycle/scope.js
+// shared/lifecycle/scope.js
 var ResourceScope = class {
   #abort = new AbortController();
   #cleanups = [];
@@ -70,7 +85,7 @@ var ResourceScope = class {
   }
 };
 
-// gravewright/maps/frontend/native/widget.js
+// native/widget.js
 var CELL = /* @__PURE__ */ Symbol("cell");
 var expressions = /* @__PURE__ */ new Map();
 function evaluate(code, ctx, eventMode = false) {
@@ -478,8 +493,8 @@ function widget(markup, setup) {
   };
 }
 
-// gravewright/maps/frontend/features/table-library/ui/ContentDirectory.native.js
-var ContentDirectory_native_default = widget([{ "tag": "section", "attrs": { "class": "content-directory" }, "bind": { "aria-label": 'gwText("Table compendiums")' }, "events": [], "children": [{ "tag": "p", "attrs": { "role": "alert" }, "bind": {}, "events": [], "children": [{ "value": "error" }], "when": "error" }, { "tag": "p", "attrs": { "class": "content-directory__empty" }, "bind": {}, "events": [], "children": [{ "tag": "PhBooks", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("No active content package.")' }], "when": "!packages.length && !error" }, { "tag": "details", "attrs": { "class": "content-directory__package" }, "bind": { "key": "item.id" }, "events": [{ "event": "toggle", "code": "$event.target.open && openPackage(item);", "mods": [] }], "children": [{ "tag": "summary", "attrs": { "class": "content-directory__heading" }, "bind": {}, "events": [], "children": [{ "tag": "PhBooks", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": "item.name || item.id" }] }, { "tag": "details", "attrs": { "class": "content-directory__pack" }, "bind": { "key": "pack.id" }, "events": [{ "event": "toggle", "code": "$event.target.open && openPack(item, pack);", "mods": [] }], "children": [{ "tag": "summary", "attrs": { "class": "content-directory__heading" }, "bind": {}, "events": [], "children": [{ "tag": "PhFolder", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": "pack.label || pack.name || pack.id" }] }, { "tag": "div", "attrs": { "class": "content-directory__entry" }, "bind": { "key": "entry.id" }, "events": [], "children": [{ "tag": "span", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "entry.name || entry.id" }] }, { "tag": "button", "attrs": { "class": "content-directory__import", "type": "button" }, "bind": { "disabled": "!!busy", "aria-label": "`Importar ${entry.name || entry.id}`" }, "events": [{ "event": "click", "code": "importEntry(item, pack, entry);", "mods": [] }], "children": [{ "tag": "PhDownloadSimple", "attrs": {}, "bind": {}, "events": [], "children": [] }] }], "each": { "names": ["entry"], "value": "pack.entries" } }, { "tag": "p", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Empty package.")' }], "when": "pack.entries?.length === 0" }], "each": { "names": ["pack"], "value": "item.packs" } }], "each": { "names": ["item"], "value": "packages" } }] }], (options2, { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose }) => {
+// features/table-library/ui/ContentDirectory.native.js
+var ContentDirectory_native_default = widget([{ "tag": "section", "attrs": { "class": "content-directory" }, "bind": { "aria-label": 'gwText("Table compendiums")' }, "events": [], "children": [{ "tag": "p", "attrs": { "role": "alert" }, "bind": {}, "events": [], "children": [{ "value": "error" }], "when": "error" }, { "tag": "p", "attrs": { "class": "content-directory__empty" }, "bind": {}, "events": [], "children": [{ "tag": "PhBooks", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("No active content package.")' }], "when": "!packages.length && !error" }, { "tag": "details", "attrs": { "class": "content-directory__package" }, "bind": { "key": "item.id" }, "events": [{ "event": "toggle", "code": "$event.target.open && openPackage(item);", "mods": [] }], "children": [{ "tag": "summary", "attrs": { "class": "content-directory__heading" }, "bind": {}, "events": [], "children": [{ "tag": "PhBooks", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": "item.name || item.id" }] }, { "tag": "button", "attrs": { "type": "button" }, "bind": {}, "events": [{ "event": "click", "code": "permissions(item);", "mods": ["stop", "prevent"] }], "children": [{ "value": 'gwText("Permissions")' }], "when": "props.gm" }, { "tag": "details", "attrs": { "class": "content-directory__pack" }, "bind": { "key": "pack.id" }, "events": [{ "event": "toggle", "code": "$event.target.open && openPack(item, pack);", "mods": [] }], "children": [{ "tag": "summary", "attrs": { "class": "content-directory__heading" }, "bind": {}, "events": [], "children": [{ "tag": "PhFolder", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": "pack.label || pack.name || pack.id" }] }, { "tag": "div", "attrs": { "class": "content-directory__entry" }, "bind": { "key": "entry.id" }, "events": [], "children": [{ "tag": "span", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "entry.name || entry.id" }] }, { "tag": "button", "attrs": { "class": "content-directory__import", "type": "button" }, "bind": { "disabled": "!!busy", "aria-label": "`Importar ${entry.name || entry.id}`" }, "events": [{ "event": "click", "code": "importEntry(item, pack, entry);", "mods": [] }], "children": [{ "tag": "PhDownloadSimple", "attrs": {}, "bind": {}, "events": [], "children": [] }] }], "each": { "names": ["entry"], "value": "pack.entries" } }, { "tag": "p", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Empty package.")' }], "when": "pack.entries?.length === 0" }], "each": { "names": ["pack"], "value": "item.packs" } }], "each": { "names": ["item"], "value": "packages" } }] }], (options2, { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose }) => {
   const PhBooks = "PhBooks";
   const PhFolder = "PhFolder";
   const PhDownloadSimple = "PhDownloadSimple";
@@ -488,6 +503,13 @@ var ContentDirectory_native_default = widget([{ "tag": "section", "attrs": { "cl
   const packages = ref([]), error = ref(""), busy = ref("");
   const scope = new ResourceScope(), http = new HttpClient(void 0, () => scope.signal);
   const query = `?campaign_id=${encodeURIComponent(props.containerId)}`;
+  async function permissions(item) {
+    try {
+      await openPermissions("compendiums", item.id, { onSave: load });
+    } catch (cause) {
+      error.value = cause.message;
+    }
+  }
   async function load() {
     try {
       const data = await http.get(`/game/content/active-packages${query}`);
@@ -529,10 +551,10 @@ var ContentDirectory_native_default = widget([{ "tag": "section", "attrs": { "cl
   }
   onMounted(load);
   onBeforeUnmount(() => scope.dispose());
-  return { gwText: text, PhBooks, PhFolder, PhDownloadSimple, ResourceScope, HttpClient, props, packages, error, busy, scope, http, query, load, openPackage, openPack, importEntry, emit: options2.emit };
+  return { permissions, gwText: text, PhBooks, PhFolder, PhDownloadSimple, ResourceScope, HttpClient, props, packages, error, busy, scope, http, query, load, openPackage, openPack, importEntry, emit: options2.emit };
 });
 
-// gravewright/maps/frontend/features/table-library/model/library-upload.js
+// features/table-library/model/library-upload.js
 var IMAGE_ACCEPT = "image/png,image/jpeg,image/webp";
 var AUDIO_ACCEPT = "audio/ogg,audio/opus,audio/mpeg,audio/mp4,audio/wav,.ogg,.opus,.mp3,.m4a,.wav";
 var mimeByExtension = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", ogg: "audio/ogg", opus: "audio/opus", mp3: "audio/mpeg", m4a: "audio/mp4", wav: "audio/wav", pdf: "application/pdf" };
@@ -566,7 +588,7 @@ function uploadError(error) {
   return text("Could not complete the action. Check the connection and try again.");
 }
 
-// gravewright/maps/frontend/features/table-library/ui/DeckUpload.native.js
+// features/table-library/ui/DeckUpload.native.js
 var DeckUpload_native_default = widget([{ "tag": "form", "attrs": { "class": "deck-upload" }, "bind": {}, "events": [{ "event": "submit", "code": "create;", "mods": ["prevent"] }], "children": [{ "tag": "p", "attrs": { "class": "deck-upload__intro" }, "bind": {}, "events": [], "children": [{ "value": 'gwText("One image per card, with an optional shared back for the deck.")' }] }, { "tag": "fieldset", "attrs": {}, "bind": { "disabled": "busy || !!definition" }, "events": [], "children": [{ "tag": "label", "attrs": { "class": "deck-upload__field" }, "bind": {}, "events": [], "children": [{ "value": 'gwText("Deck name")' }, { "tag": "input", "attrs": { "name": "name", "minlength": "2", "maxlength": "120", "required": "" }, "bind": { "placeholder": 'gwText("Deck name")' }, "events": [], "children": [], "model": { "path": "name", "mods": [] } }] }, { "tag": "div", "attrs": { "class": "deck-upload__files" }, "bind": {}, "events": [], "children": [{ "tag": "label", "attrs": { "class": "deck-upload__file" }, "bind": {}, "events": [], "children": [{ "tag": "PhCardsThree", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "tag": "span", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Card fronts")' }, { "tag": "small", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("PNG, JPEG or WebP \\xB7 up to 10 MB per image")' }] }] }, { "tag": "input", "attrs": { "type": "file", "name": "fronts", "multiple": "" }, "bind": { "accept": "IMAGE_ACCEPT", "aria-label": 'gwText("Card fronts")' }, "events": [{ "event": "change", "code": 'files($event, "front");', "mods": [] }], "children": [] }] }, { "tag": "label", "attrs": { "class": "deck-upload__file" }, "bind": {}, "events": [], "children": [{ "tag": "img", "attrs": {}, "bind": { "src": "back.url", "alt": 'gwText("Card back preview")' }, "events": [], "children": [], "when": "back" }, { "tag": "PhUploadSimple", "attrs": {}, "bind": {}, "events": [], "children": [], "otherwise": true }, { "tag": "span", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'back ? back.file.name : gwText("Optional back")' }, { "tag": "small", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Used for all cards")' }] }] }, { "tag": "input", "attrs": { "type": "file", "name": "back" }, "bind": { "accept": "IMAGE_ACCEPT", "aria-label": 'gwText("Card backs")' }, "events": [{ "event": "change", "code": 'files($event, "back");', "mods": [] }], "children": [] }] }] }, { "tag": "button", "attrs": { "type": "button", "class": "deck-upload__remove-back" }, "bind": {}, "events": [{ "event": "click", "code": "dispose(back);\nback = void 0;", "mods": [] }], "children": [{ "value": 'gwText("Remove card back")' }], "when": "back" }, { "tag": "div", "attrs": { "class": "deck-upload__previews" }, "bind": {}, "events": [], "children": [{ "tag": "article", "attrs": { "class": "deck-upload__card" }, "bind": { "key": "draft.url" }, "events": [], "children": [{ "tag": "img", "attrs": { "loading": "lazy" }, "bind": { "src": "draft.url", "alt": "draft.name" }, "events": [], "children": [] }, { "tag": "button", "attrs": { "type": "button" }, "bind": { "aria-label": 'gwText("Remove {0}", draft.name)' }, "events": [{ "event": "click", "code": "remove(index);", "mods": [] }], "children": [{ "tag": "PhX", "attrs": {}, "bind": {}, "events": [], "children": [] }] }, { "tag": "input", "attrs": { "maxlength": "191", "required": "" }, "bind": { "aria-label": 'gwText("Card {0} name", index + 1)' }, "events": [], "children": [], "model": { "path": "draft.name", "mods": [] } }], "each": { "names": ["draft", "index"], "value": "fronts" } }], "when": "fronts.length" }] }, { "tag": "p", "attrs": { "class": "deck-upload__error", "role": "alert" }, "bind": {}, "events": [], "children": [{ "value": "error" }], "when": "error" }, { "tag": "p", "attrs": { "class": "deck-upload__notice", "role": "status" }, "bind": {}, "events": [], "children": [{ "value": "notice" }], "when": "notice" }, { "tag": "progress", "attrs": { "max": "100" }, "bind": { "value": "progress", "aria-label": 'gwText("Card upload progress")' }, "events": [], "children": [], "when": "busy" }, { "tag": "footer", "attrs": { "class": "deck-upload__footer" }, "bind": {}, "events": [], "children": [{ "tag": "span", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "fronts.length" }, { "text": " " }, { "value": 'gwText("card(s)")' }] }, { "tag": "button", "attrs": { "type": "submit" }, "bind": { "disabled": "busy || !fronts.length || name.trim().length < 2" }, "events": [], "children": [{ "tag": "PhUploadSimple", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'busy ? gwText("Uploading\\u2026") : definition ? gwText("Add to table") : gwText("Create deck")' }] }] }] }], (options2, { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose }) => {
   const PhCardsThree = "PhCardsThree";
   const PhUploadSimple = "PhUploadSimple";
@@ -671,7 +693,7 @@ var DeckUpload_native_default = widget([{ "tag": "form", "attrs": { "class": "de
   return { gwText: text, PhCardsThree, PhUploadSimple, PhX, HttpClient, ResourceScope, IMAGE_ACCEPT, uploadError, uploadFile, validateUpload, props, emit, scope, http, root: root2, name, fronts, back, busy, error, notice, progress, definition, dispose: dispose2, files, remove, clear, upload, create };
 });
 
-// gravewright/maps/frontend/features/audio/ui/IndividualAudioControl.native.js
+// features/audio/ui/IndividualAudioControl.native.js
 var IndividualAudioControl_native_default = widget([{ "tag": "div", "attrs": { "class": "individual-audio", "role": "group" }, "bind": { "aria-label": 'gwText("Audio on this device")' }, "events": [], "children": [{ "tag": "button", "attrs": { "class": "individual-audio__toggle", "type": "button" }, "bind": { "aria-label": 'enabled ? gwText("Mute audio") : gwText("Enable audio")', "title": 'enabled ? gwText("Mute only on this device") : gwText("Play audio on this device")', "aria-pressed": "enabled" }, "events": [{ "event": "click", "code": 'emit("toggle");', "mods": [] }], "children": [{ "tag": "component", "attrs": { "aria-hidden": "true" }, "bind": { "is": "enabled && volume > 0 ? PhSpeakerHigh : PhSpeakerSlash" }, "events": [], "children": [] }] }, { "tag": "input", "attrs": { "class": "individual-audio__volume", "type": "range", "min": "0", "max": "100", "step": "1" }, "bind": { "value": "Math.round(volume * 100)", "aria-label": 'gwText("Individual volume")', "aria-valuetext": "`${Math.round(volume * 100)}% \\u2014 somente neste dispositivo`", "title": "`Volume individual: ${Math.round(volume * 100)}%`" }, "events": [{ "event": "input", "code": "changeVolume;", "mods": [] }], "children": [] }, { "tag": "button", "attrs": { "class": "individual-audio__toggle" }, "bind": { "aria-label": 'gwText("Individual mixer")', "aria-expanded": "expanded" }, "events": [{ "event": "click", "code": "expanded = !expanded;", "mods": [] }], "children": [{ "tag": "PhSlidersHorizontal", "attrs": {}, "bind": {}, "events": [], "children": [] }] }, { "tag": "div", "attrs": { "class": "individual-audio__mixer" }, "bind": {}, "events": [{ "event": "keydown", "code": "expanded = false;", "mods": ["esc", "stop"] }], "children": [{ "tag": "strong", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Audio on this device")' }] }, { "tag": "label", "attrs": {}, "bind": { "key": "key" }, "events": [], "children": [{ "value": "label" }, { "tag": "input", "attrs": { "type": "range", "min": "0", "max": "1", "step": "0.01" }, "bind": { "value": "channels[key] ?? 1", "aria-label": "`Volume de ${label}`" }, "events": [{ "event": "input", "code": 'emit("channels", { ...channels, [key]: Number($event.target.value) });', "mods": [] }], "children": [] }], "each": { "names": ["[key", "label]"], "value": '[["music", gwText("Music")], ["ambience", gwText("Ambience")], ["sfx", gwText("Effects")], ["cinematic", gwText("Cinematic")]]' } }, { "tag": "small", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": `gwText("Does not change other players' volume.")` }] }], "when": "expanded" }] }], (options2, { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose }) => {
   const PhSpeakerHigh = "PhSpeakerHigh";
   const PhSpeakerSlash = "PhSpeakerSlash";
@@ -685,7 +707,10 @@ var IndividualAudioControl_native_default = widget([{ "tag": "div", "attrs": { "
   return { gwText: text, PhSpeakerHigh, PhSpeakerSlash, PhSlidersHorizontal, emit, expanded, changeVolume };
 });
 
-// gravewright/maps/frontend/features/cards/model/hand.js
+// features/cards/ui/CardHand.native.js
+import { openPermissions as openPermissions2 } from "/static/gravewright_table/permissions.js";
+
+// features/cards/model/hand.js
 function fanLayout(count, available) {
   let width = 130, step = width * 0.62;
   if (count > 1 && width + (count - 1) * step > available) step = Math.max(width * 0.26, (available - width) / (count - 1));
@@ -703,34 +728,27 @@ function cardFace(card, flipped) {
   return (flipped ? card.backUrl : card.frontUrl) || "";
 }
 
-// gravewright/maps/frontend/features/cards/ui/CardHand.native.js
-var CardHand_native_default = widget([{ "tag": "section", "attrs": { "ref": "host", "class": "card-hand" }, "bind": { "aria-label": 'gwText("Your hand")' }, "events": [], "children": [{ "tag": "header", "attrs": { "class": "card-hand__bar" }, "bind": {}, "events": [], "children": [{ "tag": "PhCardsThree", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "tag": "select", "attrs": {}, "bind": { "aria-label": 'gwText("Deck")', "disabled": "!state.decks.length" }, "events": [], "children": [{ "tag": "option", "attrs": { "value": "" }, "bind": {}, "events": [], "children": [{ "value": 'gwText("No deck available")' }], "when": "!state.decks.length" }, { "tag": "option", "attrs": {}, "bind": { "key": "d.id", "value": "d.id" }, "events": [], "children": [{ "value": "d.name" }], "each": { "names": ["d"], "value": "state.decks" } }], "model": { "path": "deckId", "mods": [] } }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy || !deck?.draw_count" }, "events": [{ "event": "click", "code": "deck && openDraw(deck);", "mods": [] }], "children": [{ "tag": "PhPlus", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("Draw")' }] }, { "tag": "small", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "deck?.draw_count ?? 0" }, { "text": " " }, { "value": 'gwText("remaining")' }] }, { "tag": "button", "attrs": {}, "bind": { "aria-pressed": "manage" }, "events": [{ "event": "click", "code": "manage = !manage;", "mods": [] }], "children": [{ "tag": "PhCardsThree", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'manage ? gwText("Hand") : gwText("Decks")' }], "when": "gm" }] }, { "tag": "p", "attrs": { "class": "card-hand__error", "role": "alert" }, "bind": {}, "events": [], "children": [{ "value": "error" }], "when": "error" }, { "tag": "div", "attrs": { "class": "card-hand__fan" }, "bind": { "style": '({ "--card-width": `${layout.width}px`, "--overlap": `${layout.overlap}px` })' }, "events": [], "children": [{ "tag": "p", "attrs": { "class": "card-hand__empty" }, "bind": {}, "events": [], "children": [{ "value": 'gwText("Your hand is empty. Draw a card.")' }], "when": "!cards.length" }, { "tag": "article", "attrs": { "class": "card-hand__card", "tabindex": "0" }, "bind": { "key": "card.id", "style": "pose(index)", "draggable": "!busy", "aria-label": "card.name", "title": 'gwText("Drag to the table")' }, "events": [{ "event": "dragstart", "code": "drag($event, card);", "mods": [] }, { "event": "dblclick", "code": "preview = card;", "mods": [] }, { "event": "keydown", "code": "preview = card;", "mods": ["enter", "prevent"] }], "children": [{ "tag": "img", "attrs": { "draggable": "false" }, "bind": { "src": "cardFace(card, flipped.has(card.id))", "alt": 'flipped.has(card.id) ? gwText("Back") : card.name' }, "events": [], "children": [], "when": "cardFace(card, flipped.has(card.id))" }, { "tag": "PhCardsThree", "attrs": { "class": "card-hand__back" }, "bind": {}, "events": [], "children": [], "otherwise": true }, { "tag": "strong", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "card.name" }] }, { "tag": "div", "attrs": { "class": "card-hand__actions" }, "bind": {}, "events": [], "children": [{ "tag": "button", "attrs": {}, "bind": { "aria-label": "`Ampliar ${card.name}`" }, "events": [{ "event": "click", "code": "preview = card;", "mods": [] }], "children": [{ "tag": "PhMagnifyingGlassPlus", "attrs": {}, "bind": {}, "events": [], "children": [] }] }, { "tag": "button", "attrs": {}, "bind": { "aria-label": 'flipped.has(card.id) ? gwText("Show front") : gwText("Show back")' }, "events": [{ "event": "click", "code": "flip(card);", "mods": [] }], "children": [{ "tag": "PhArrowsClockwise", "attrs": {}, "bind": {}, "events": [], "children": [] }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy", "aria-label": 'gwText("Discard card")' }, "events": [{ "event": "click", "code": 'command("discard", { card_ids: [card.id] });', "mods": [] }], "children": [{ "tag": "PhTrash", "attrs": {}, "bind": {}, "events": [], "children": [] }] }] }], "each": { "names": ["card", "index"], "value": "cards" } }], "when": "!manage" }, { "tag": "div", "attrs": { "class": "card-hand__decks" }, "bind": {}, "events": [], "children": [{ "tag": "details", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "summary", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Create deck")' }] }, { "tag": "DeckUpload", "attrs": {}, "bind": { "container-id": "containerId" }, "events": [{ "event": "created", "code": "refresh;", "mods": [] }], "children": [] }] }, { "tag": "p", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("No deck in play.")' }], "when": "!state.decks.length" }, { "tag": "article", "attrs": { "class": "card-hand__deck" }, "bind": { "key": "d.id" }, "events": [], "children": [{ "tag": "PhCardsThree", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "tag": "div", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "strong", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "d.name" }] }, { "tag": "small", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "d.draw_count" }, { "text": " " }, { "value": 'gwText("cards remaining")' }] }] }, { "tag": "div", "attrs": { "class": "card-hand__deck-actions" }, "bind": {}, "events": [], "children": [{ "tag": "button", "attrs": {}, "bind": { "disabled": "busy || !d.draw_count" }, "events": [{ "event": "click", "code": "openDraw(d);", "mods": [] }], "children": [{ "tag": "PhPlus", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("Draw")' }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": 'command("shuffle", { deck_instance_id: d.id });', "mods": [] }], "children": [{ "tag": "PhShuffle", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("Shuffle")' }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": 'command("reset", { deck_instance_id: d.id });', "mods": [] }], "children": [{ "tag": "PhArrowsClockwise", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("Recall")' }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": "deleteDeck = d;", "mods": [] }], "children": [{ "tag": "PhTrash", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("Remove")' }] }] }], "each": { "names": ["d"], "value": "state.decks" } }], "otherwise": true }, { "tag": "Teleport", "attrs": { "to": "body" }, "bind": {}, "events": [], "children": [{ "tag": "div", "attrs": { "class": "card-hand__veil" }, "bind": {}, "events": [{ "event": "keydown", "code": "", "mods": ["stop"] }, { "event": "click", "code": "preview = void 0;", "mods": ["self"] }, { "event": "keydown", "code": "preview = void 0;", "mods": ["esc", "stop"] }], "children": [{ "tag": "section", "attrs": { "class": "card-hand__preview", "role": "dialog", "aria-modal": "true" }, "bind": { "aria-label": "preview.name" }, "events": [], "children": [{ "tag": "header", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "strong", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'flipped.has(preview.id) ? gwText("Back") : preview.name' }] }, { "tag": "button", "attrs": { "autofocus": "" }, "bind": { "aria-label": 'gwText("Close preview")' }, "events": [{ "event": "click", "code": "preview = void 0;", "mods": [] }], "children": [{ "tag": "PhX", "attrs": {}, "bind": {}, "events": [], "children": [] }] }] }, { "tag": "img", "attrs": {}, "bind": { "src": "cardFace(preview, flipped.has(preview.id))", "alt": "preview.name" }, "events": [], "children": [], "when": "cardFace(preview, flipped.has(preview.id))" }, { "tag": "PhCardsThree", "attrs": {}, "bind": {}, "events": [], "children": [], "otherwise": true }] }], "when": "preview" }, { "tag": "div", "attrs": { "class": "card-hand__veil" }, "bind": {}, "events": [{ "event": "keydown", "code": "", "mods": ["stop"] }, { "event": "click", "code": "!busy && (drawDeck = void 0);", "mods": ["self"] }, { "event": "keydown", "code": "!busy && (drawDeck = void 0);", "mods": ["esc", "stop"] }], "children": [{ "tag": "form", "attrs": { "class": "card-hand__draw", "role": "dialog", "aria-modal": "true" }, "bind": { "aria-label": 'gwText("Draw cards")' }, "events": [{ "event": "submit", "code": "draw;", "mods": ["prevent"] }], "children": [{ "tag": "header", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "PhCardsThree", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "tag": "div", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "small", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "drawDeck.name" }] }, { "tag": "strong", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Draw cards")' }] }] }, { "tag": "button", "attrs": { "type": "button" }, "bind": { "disabled": "busy", "aria-label": 'gwText("Close draw dialog")' }, "events": [{ "event": "click", "code": "drawDeck = void 0;", "mods": [] }], "children": [{ "tag": "PhX", "attrs": {}, "bind": {}, "events": [], "children": [] }] }] }, { "tag": "div", "attrs": { "class": "card-hand__choices" }, "bind": {}, "events": [], "children": [{ "tag": "fieldset", "attrs": {}, "bind": { "disabled": "busy" }, "events": [], "children": [{ "tag": "legend", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Destination")' }] }, { "tag": "label", "attrs": {}, "bind": { "key": "choice.id" }, "events": [], "children": [{ "tag": "input", "attrs": { "type": "radio" }, "bind": { "value": "choice.id" }, "events": [], "children": [], "model": { "path": "destination", "mods": [] } }, { "tag": "component", "attrs": {}, "bind": { "is": "choice.icon" }, "events": [], "children": [] }, { "value": "choice.label" }], "each": { "names": ["choice"], "value": '[{ id: "hand", label: gwText("Hand"), icon: PhHand }, { id: "table", label: gwText("Table"), icon: PhMapTrifold }, { id: "chat", label: "Chat", icon: PhChatCircleText }]' } }] }, { "tag": "fieldset", "attrs": {}, "bind": { "disabled": "busy" }, "events": [], "children": [{ "tag": "legend", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("State")' }] }, { "tag": "label", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "input", "attrs": { "type": "radio", "value": "face_up" }, "bind": {}, "events": [], "children": [], "model": { "path": "face", "mods": [] } }, { "tag": "PhEye", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("Front")' }] }, { "tag": "label", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "input", "attrs": { "type": "radio", "value": "face_down" }, "bind": {}, "events": [], "children": [], "model": { "path": "face", "mods": [] } }, { "tag": "PhEyeSlash", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("Back")' }] }] }] }, { "tag": "label", "attrs": { "class": "card-hand__quantity" }, "bind": {}, "events": [], "children": [{ "value": 'gwText("Quantity")' }, { "tag": "span", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "button", "attrs": { "type": "button" }, "bind": { "disabled": "busy || count <= 1", "aria-label": 'gwText("Decrease quantity")' }, "events": [{ "event": "click", "code": "count--;", "mods": [] }], "children": [{ "tag": "PhMinus", "attrs": {}, "bind": {}, "events": [], "children": [] }] }, { "tag": "input", "attrs": { "type": "number", "min": "1", "step": "1", "required": "" }, "bind": { "max": "drawDeck.draw_count", "disabled": "busy" }, "events": [], "children": [], "model": { "path": "count", "mods": ["number"] } }, { "tag": "button", "attrs": { "type": "button" }, "bind": { "disabled": "busy || count >= drawDeck.draw_count", "aria-label": 'gwText("Increase quantity")' }, "events": [{ "event": "click", "code": "count++;", "mods": [] }], "children": [{ "tag": "PhPlus", "attrs": {}, "bind": {}, "events": [], "children": [] }] }] }, { "tag": "small", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "drawDeck.draw_count" }, { "value": 'gwText(" available")' }] }] }, { "tag": "p", "attrs": { "class": "card-hand__error", "role": "alert" }, "bind": {}, "events": [], "children": [{ "value": "error" }], "when": "error" }, { "tag": "footer", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "button", "attrs": { "type": "button" }, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": "drawDeck = void 0;", "mods": [] }], "children": [{ "value": 'gwText("Cancel")' }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy" }, "events": [], "children": [{ "value": 'busy ? gwText("Drawing\\u2026") : gwText("Draw")' }] }] }] }], "when": "drawDeck" }, { "tag": "div", "attrs": { "class": "card-hand__veil" }, "bind": {}, "events": [{ "event": "keydown", "code": "", "mods": ["stop"] }], "children": [{ "tag": "section", "attrs": { "class": "card-hand__draw", "role": "dialog" }, "bind": { "aria-label": 'gwText("Remove deck")' }, "events": [], "children": [{ "tag": "strong", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Remove ")' }, { "value": "deleteDeck.name" }, { "text": "?" }] }, { "tag": "p", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": `gwText("This deck's cards in hands, the discard pile, and the table will be removed.")` }] }, { "tag": "footer", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "button", "attrs": {}, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": "deleteDeck = void 0;", "mods": [] }], "children": [{ "value": 'gwText("Cancel")' }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": 'command("delete", { deck_instance_id: deleteDeck.id }).then((result) => {\n  if (result) deleteDeck = void 0;\n});', "mods": [] }], "children": [{ "value": 'gwText("Remove")' }] }] }] }], "when": "deleteDeck" }] }] }], (options2, { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose }) => {
-  const PhCardsThree = "PhCardsThree";
-  const PhPlus = "PhPlus";
-  const PhMinus = "PhMinus";
-  const PhMagnifyingGlassPlus = "PhMagnifyingGlassPlus";
-  const PhArrowsClockwise = "PhArrowsClockwise";
-  const PhTrash = "PhTrash";
-  const PhShuffle = "PhShuffle";
-  const PhX = "PhX";
-  const PhHand = "PhHand";
-  const PhEye = "PhEye";
-  const PhEyeSlash = "PhEyeSlash";
-  const PhChatCircleText = "PhChatCircleText";
-  const PhMapTrifold = "PhMapTrifold";
-  const HttpClient = options2.HttpClient;
-  const props = options2.props;
-  const emit = options2.emit;
-  const scope = new ResourceScope(), http = new HttpClient(void 0, () => scope.signal), root2 = `/api/containers/${encodeURIComponent(props.containerId)}/library`;
-  const state = ref({ decks: [], hand: [] }), deckId = ref(""), manage = ref(false), busy = ref(false), error = ref(""), flipped = ref(/* @__PURE__ */ new Set()), preview = ref(), drawDeck = ref(), count = ref(1), destination = ref("hand"), face = ref("face_up"), deleteDeck = ref();
-  const host2 = ref(), available = ref(550);
-  let observer, visit = 0;
+// features/cards/ui/CardHand.native.js
+var CardHand_native_default = widget([{ "tag": "section", "attrs": { "ref": "host", "class": "card-hand" }, "bind": { "aria-label": 'gwText("Your hand")' }, "events": [], "children": [{ "tag": "header", "attrs": { "class": "card-hand__bar" }, "bind": {}, "events": [], "children": [{ "tag": "PhCardsThree", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "tag": "select", "attrs": {}, "bind": { "aria-label": 'gwText("Deck")', "disabled": "!state.decks.length" }, "events": [], "children": [{ "tag": "option", "attrs": { "value": "" }, "bind": {}, "events": [], "children": [{ "value": 'gwText("No deck available")' }], "when": "!state.decks.length" }, { "tag": "option", "attrs": {}, "bind": { "key": "d.id", "value": "d.id" }, "events": [], "children": [{ "value": "d.name" }], "each": { "names": ["d"], "value": "state.decks" } }], "model": { "path": "deckId", "mods": [] } }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy || !deck?.draw_count" }, "events": [{ "event": "click", "code": "deck && openDraw(deck);", "mods": [] }], "children": [{ "tag": "PhPlus", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("Draw cards")' }] }, { "tag": "small", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "deck?.draw_count ?? 0" }, { "text": " " }, { "value": 'gwText("cards remaining")' }] }, { "tag": "button", "attrs": {}, "bind": { "aria-pressed": "manage" }, "events": [{ "event": "click", "code": "manage = !manage;", "mods": [] }], "children": [{ "tag": "PhCardsThree", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'manage ? gwText("Hand") : gwText("Decks")' }], "when": "gm" }] }, { "tag": "p", "attrs": { "class": "card-hand__error", "role": "alert" }, "bind": {}, "events": [], "children": [{ "value": "error" }], "when": "error" }, { "tag": "div", "attrs": { "class": "card-hand__fan" }, "bind": { "style": '({ "--card-width": `${layout.width}px`, "--overlap": `${layout.overlap}px` })' }, "events": [], "children": [{ "tag": "p", "attrs": { "class": "card-hand__empty" }, "bind": {}, "events": [], "children": [{ "value": 'gwText("Your hand is empty. Draw a card.")' }], "when": "!cards.length" }, { "tag": "article", "attrs": { "class": "card-hand__card", "tabindex": "0" }, "bind": { "key": "card.id", "style": "pose(index)", "draggable": "!busy", "aria-label": "card.name", "title": 'gwText("Drag to the table")' }, "events": [{ "event": "dragstart", "code": "drag($event, card);", "mods": [] }, { "event": "dblclick", "code": "openPreview(card);", "mods": [] }, { "event": "keydown", "code": "openPreview(card);", "mods": ["enter", "prevent"] }], "children": [{ "tag": "img", "attrs": { "draggable": "false" }, "bind": { "src": "cardFace(card, flipped.has(card.id))", "alt": 'flipped.has(card.id) ? gwText("Card back") : card.name' }, "events": [], "children": [], "when": "cardFace(card, flipped.has(card.id))" }, { "tag": "PhCardsThree", "attrs": { "class": "card-hand__back" }, "bind": {}, "events": [], "children": [], "otherwise": true }, { "tag": "strong", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "card.name" }] }, { "tag": "div", "attrs": { "class": "card-hand__actions" }, "bind": {}, "events": [], "children": [{ "tag": "button", "attrs": {}, "bind": { "aria-label": 'gwText("Preview: {0}", card.name)' }, "events": [{ "event": "click", "code": "openPreview(card);", "mods": [] }], "children": [{ "tag": "PhMagnifyingGlassPlus", "attrs": {}, "bind": {}, "events": [], "children": [] }] }, { "tag": "button", "attrs": {}, "bind": { "aria-label": 'flipped.has(card.id) ? gwText("Show front") : gwText("Show back")' }, "events": [{ "event": "click", "code": "flip(card);", "mods": [] }], "children": [{ "tag": "PhArrowsClockwise", "attrs": {}, "bind": {}, "events": [], "children": [] }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy", "aria-label": 'gwText("Discard card")' }, "events": [{ "event": "click", "code": 'command("discard", { card_ids: [card.id] });', "mods": [] }], "children": [{ "tag": "PhTrash", "attrs": {}, "bind": {}, "events": [], "children": [] }] }] }], "each": { "names": ["card", "index"], "value": "cards" } }], "when": "!manage" }, { "tag": "div", "attrs": { "class": "card-hand__decks" }, "bind": {}, "events": [], "children": [{ "tag": "details", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "summary", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Create deck")' }] }, { "tag": "DeckUpload", "attrs": {}, "bind": { "container-id": "containerId" }, "events": [{ "event": "created", "code": "refresh;", "mods": [] }], "children": [] }] }, { "tag": "p", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("No deck in play.")' }], "when": "!state.decks.length" }, { "tag": "article", "attrs": { "class": "card-hand__deck" }, "bind": { "key": "d.id" }, "events": [], "children": [{ "tag": "PhCardsThree", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "tag": "div", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "strong", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "d.name" }] }, { "tag": "small", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "d.draw_count" }, { "text": " " }, { "value": 'gwText("cards remaining")' }] }] }, { "tag": "div", "attrs": { "class": "card-hand__deck-actions" }, "bind": {}, "events": [], "children": [{ "tag": "button", "attrs": {}, "bind": { "disabled": "busy || !d.draw_count" }, "events": [{ "event": "click", "code": "openDraw(d);", "mods": [] }], "children": [{ "tag": "PhPlus", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("Draw cards")' }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": 'command("shuffle", { deck_instance_id: d.id });', "mods": [] }], "children": [{ "tag": "PhShuffle", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("Shuffle")' }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": 'command("reset", { deck_instance_id: d.id });', "mods": [] }], "children": [{ "tag": "PhArrowsClockwise", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("Recall")' }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": "openDelete(d);", "mods": [] }], "children": [{ "tag": "PhTrash", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("Remove")' }] }, { "tag": "button", "attrs": { "type": "button" }, "bind": {}, "events": [{ "event": "click", "code": "permissions(d);", "mods": ["stop", "prevent"] }], "children": [{ "value": 'gwText("Permissions")' }], "when": "props.gm" }] }], "each": { "names": ["d"], "value": "state.decks" } }], "otherwise": true }] }], (options2, { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose }) => {
+  const PhCardsThree = "PhCardsThree", PhPlus = "PhPlus", PhMagnifyingGlassPlus = "PhMagnifyingGlassPlus", PhArrowsClockwise = "PhArrowsClockwise", PhTrash = "PhTrash", PhShuffle = "PhShuffle";
+  const props = options2.props, emit = options2.emit;
+  const scope = new ResourceScope(), http = new options2.HttpClient(void 0, () => scope.signal), root2 = `/api/containers/${encodeURIComponent(props.containerId)}/library`;
+  const state = ref({ decks: [], hand: [] }), deckId = ref(""), manage = ref(false), busy = ref(false), error = ref(""), flipped = ref(/* @__PURE__ */ new Set());
+  const host2 = ref(), available = ref(550), count = ref(1), destination = ref("hand"), face = ref("face_up");
+  let observer, visit = 0, childModal, preview, drawDeck;
   const deck = computed(() => state.value.decks.find((d) => d.id === deckId.value));
   const cards = computed(() => state.value.hand.filter((c) => c.deck_instance_id === deckId.value));
   const layout = computed(() => fanLayout(cards.value.length, available.value - 42));
   function pose(index) {
     const p = fanPose(index, cards.value.length);
     return { "--rotation": `${p.rotation}deg`, "--arc": `${p.arc}px`, "--order": index + 1 };
+  }
+  async function permissions(item) {
+    try {
+      await openPermissions2("cards", item.id, { onSave: refresh2, nested: true });
+    } catch (cause) {
+      error.value = cause.message;
+    }
   }
   async function refresh2() {
     const id = ++visit;
@@ -740,7 +758,8 @@ var CardHand_native_default = widget([{ "tag": "section", "attrs": { "ref": "hos
       state.value = next;
       if (!next.decks.some((d) => d.id === deckId.value)) deckId.value = next.decks[0]?.id ?? "";
       flipped.value = new Set([...flipped.value].filter((id2) => next.hand.some((c) => c.id === id2)));
-      if (preview.value && !next.hand.some((c) => c.id === preview.value.id)) preview.value = void 0;
+      if (preview && !next.hand.some((c) => c.id === preview.id)) closeChild();
+      syncChild();
     } catch {
       if (!scope.closed) error.value = text("Could not load your cards.");
     }
@@ -759,8 +778,89 @@ var CardHand_native_default = widget([{ "tag": "section", "attrs": { "ref": "hos
       if (!scope.closed) busy.value = false;
     }
   }
+  function element(tag, className2, text2) {
+    const node = document.createElement(tag);
+    if (className2) node.className = className2;
+    if (text2 !== void 0) node.textContent = text2;
+    return node;
+  }
+  function glyph(name) {
+    return document.querySelector("#map-native-icons")?.content.querySelector(`[data-icon="${name}"][data-weight="regular"]`)?.firstElementChild?.cloneNode(true);
+  }
+  function control(label, action, icon) {
+    const node = element("button");
+    node.type = "button";
+    if (icon) {
+      node.setAttribute("aria-label", label);
+      const svg = glyph(icon);
+      if (svg) node.append(svg);
+      else node.textContent = label;
+    } else node.textContent = label;
+    node.onclick = action;
+    return node;
+  }
+  function closeChild(force = false) {
+    childModal?.close(force);
+  }
+  function openChild(kind, title) {
+    if (busy.value) return;
+    closeChild();
+    error.value = "";
+    const modal = options2.openModal(title, { kind, canClose: () => !busy.value });
+    childModal = modal;
+    modal.addEventListener("close", () => {
+      if (childModal !== modal) return;
+      childModal = void 0;
+      preview = drawDeck = void 0;
+    }, { once: true });
+    return modal;
+  }
+  function syncChild() {
+    const modal = childModal;
+    if (!modal) return;
+    for (const node of modal.querySelectorAll("button,input,fieldset")) node.disabled = busy.value;
+    const alert = modal.querySelector('[role="alert"]');
+    if (alert) {
+      alert.textContent = error.value;
+      alert.hidden = !error.value;
+    }
+    if (!drawDeck) return;
+    drawDeck = state.value.decks.find((item) => item.id === drawDeck.id) || drawDeck;
+    const amount = modal.querySelector('[name="count"]');
+    if (amount) {
+      amount.max = drawDeck.draw_count;
+      if (document.activeElement !== amount) amount.value = count.value;
+    }
+    for (const node of modal.querySelectorAll('[name="destination"]')) node.checked = node.value === destination.value;
+    for (const node of modal.querySelectorAll('[name="face"]')) node.checked = node.value === face.value;
+    const decrease = modal.querySelector('[data-quantity="decrease"]'), increase = modal.querySelector('[data-quantity="increase"]');
+    if (decrease) decrease.disabled = busy.value || count.value <= 1;
+    if (increase) increase.disabled = busy.value || count.value >= drawDeck.draw_count;
+    const submit = modal.querySelector('[type="submit"]');
+    if (submit) submit.disabled = busy.value || !drawDeck.draw_count;
+    const remaining = modal.querySelector("[data-remaining]");
+    if (remaining) remaining.textContent = `${drawDeck.draw_count} ${text("cards remaining")}`;
+  }
+  function openPreview(card) {
+    const modal = openChild("preview", flipped.value.has(card.id) ? text("Card back") : card.name);
+    if (!modal) return;
+    preview = card;
+    const src = cardFace(card, flipped.value.has(card.id));
+    if (src) {
+      const image = element("img");
+      image.src = src;
+      image.alt = flipped.value.has(card.id) ? text("Card back") : card.name;
+      image.draggable = false;
+      modal.body.append(image);
+    } else {
+      const icon = glyph("PhCardsThree");
+      if (icon) modal.body.append(icon);
+    }
+  }
   function openDraw(target) {
-    drawDeck.value = target;
+    const modal = openChild("draw", text("Draw cards"));
+    if (!modal) return;
+    drawDeck = target;
     count.value = 1;
     try {
       destination.value = sessionStorage.getItem("gravewright.cards.draw.destination") || "hand";
@@ -769,22 +869,108 @@ var CardHand_native_default = widget([{ "tag": "section", "attrs": { "ref": "hos
     }
     if (!["hand", "table", "chat"].includes(destination.value)) destination.value = "hand";
     if (!["face_up", "face_down"].includes(face.value)) face.value = "face_up";
+    const form = element("form");
+    form.id = "cards-draw-" + crypto.randomUUID();
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      void draw();
+    };
+    const choices = element("div", "card-hand__choices");
+    function choiceGroup(name, title, values, selected) {
+      const group = element("fieldset");
+      group.append(element("legend", "", title));
+      for (const [value, label, icon] of values) {
+        const choice = element("label"), input = element("input");
+        input.type = "radio";
+        input.name = name;
+        input.value = value;
+        input.checked = selected.value === value;
+        input.onchange = () => {
+          selected.value = value;
+          syncChild();
+        };
+        choice.append(input);
+        const svg = glyph(icon);
+        if (svg) choice.append(svg);
+        choice.append(document.createTextNode(label));
+        group.append(choice);
+      }
+      choices.append(group);
+    }
+    choiceGroup("destination", text("Destination"), [["hand", text("Hand"), "PhHand"], ["table", text("Table"), "PhMapTrifold"], ["chat", text("Chat"), "PhChatCircleText"]], destination);
+    choiceGroup("face", text("Face"), [["face_up", text("Face up"), "PhEye"], ["face_down", text("Face down"), "PhEyeSlash"]], face);
+    const quantity = element("label", "card-hand__quantity", text("Quantity")), stepper = element("span"), amount = element("input");
+    amount.type = "number";
+    amount.name = "count";
+    amount.min = "1";
+    amount.step = "1";
+    amount.required = true;
+    amount.max = target.draw_count;
+    amount.value = "1";
+    amount.oninput = () => {
+      count.value = amount.valueAsNumber;
+      syncChild();
+    };
+    const decrease = control(text("Decrease quantity"), () => {
+      count.value = Math.max(1, count.value - 1);
+      syncChild();
+    }, "PhMinus");
+    const increase = control(text("Increase quantity"), () => {
+      count.value = Math.min(drawDeck.draw_count, count.value + 1);
+      syncChild();
+    }, "PhPlus");
+    decrease.dataset.quantity = "decrease";
+    increase.dataset.quantity = "increase";
+    stepper.append(decrease, amount, increase);
+    const remaining = element("small");
+    remaining.dataset.remaining = "";
+    quantity.append(stepper, remaining);
+    const alert = element("p", "card-hand__error");
+    alert.setAttribute("role", "alert");
+    alert.hidden = true;
+    form.append(choices, quantity, alert);
+    modal.body.append(element("small", "card-modal__subtitle", target.name), form);
+    const cancel = control(text("Cancel"), () => closeChild()), submit = element("button", "", text("Draw cards"));
+    submit.type = "submit";
+    submit.setAttribute("form", form.id);
+    modal.footer.append(cancel, submit);
+    syncChild();
+    amount.focus();
+  }
+  function openDelete(target) {
+    const modal = openChild("remove", text("Remove deck"));
+    if (!modal) return;
+    modal.body.append(element("strong", "", `${text("Remove")} ${target.name}?`), element("p", "", text("This deck's cards in hands, the discard pile, and the table will be removed.")));
+    const alert = element("p", "card-hand__error");
+    alert.setAttribute("role", "alert");
+    alert.hidden = true;
+    modal.body.append(alert);
+    const cancel = control(text("Cancel"), () => closeChild());
+    const remove = control(text("Remove"), async () => {
+      const result = await command2("delete", { deck_instance_id: target.id });
+      if (result && childModal === modal) closeChild();
+    });
+    remove.classList.add("card-modal__danger");
+    modal.footer.append(cancel, remove);
+    cancel.focus();
   }
   async function draw() {
-    if (!drawDeck.value || busy.value) return;
+    if (!drawDeck || busy.value) return;
     if (destination.value !== "hand" && !props.blockId) {
       error.value = text("Open a scene to use this destination.");
+      syncChild();
       return;
     }
-    const result = await command2("draw", { deck_instance_id: drawDeck.value.id, count: count.value, destination: destination.value === "table" ? "hand" : destination.value, reveal: face.value === "face_up", ...destination.value === "chat" ? { block_id: props.blockId } : {} });
+    const selectedDestination = destination.value, reveal = face.value === "face_up";
+    const result = await command2("draw", { deck_instance_id: drawDeck.id, count: count.value, destination: selectedDestination === "table" ? "hand" : selectedDestination, reveal, ...selectedDestination === "chat" ? { block_id: props.blockId } : {} });
     if (!result || scope.closed) return;
     try {
-      sessionStorage.setItem("gravewright.cards.draw.destination", destination.value);
+      sessionStorage.setItem("gravewright.cards.draw.destination", selectedDestination);
       sessionStorage.setItem("gravewright.cards.draw.face", face.value);
     } catch {
     }
-    drawDeck.value = void 0;
-    if (destination.value === "table") emit("place", result.cards ?? [], face.value === "face_up");
+    closeChild();
+    if (selectedDestination === "table") emit("place", result.cards ?? [], reveal);
   }
   function flip(card) {
     const next = new Set(flipped.value);
@@ -798,17 +984,17 @@ var CardHand_native_default = widget([{ "tag": "section", "attrs": { "ref": "hos
       return;
     }
     event.dataTransfer?.setData("application/x-gravewright-hand-card", JSON.stringify({ cardId: card.id, reveal: !flipped.value.has(card.id) }));
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+    emit("dragstart");
   }
   watch(() => props.revision, () => void refresh2());
-  function escape(event) {
-    if (event.key === "Escape" && !busy.value) {
-      preview.value = void 0;
-      drawDeck.value = void 0;
-      deleteDeck.value = void 0;
-    }
-  }
+  watch(() => busy.value, (value) => {
+    emit("busy", value);
+    syncChild();
+  });
+  watch(() => error.value, syncChild);
+  defineExpose({ canClose: () => !busy.value });
   onMounted(() => {
-    window.addEventListener("keydown", escape);
     void refresh2();
     observer = new ResizeObserver((entries) => {
       available.value = entries[0]?.contentRect.width ?? 550;
@@ -816,14 +1002,14 @@ var CardHand_native_default = widget([{ "tag": "section", "attrs": { "ref": "hos
     if (host2.value) observer.observe(host2.value);
   });
   onBeforeUnmount(() => {
-    window.removeEventListener("keydown", escape);
+    closeChild(true);
     scope.dispose();
     observer?.disconnect();
   });
-  return { gwText: text, PhCardsThree, PhPlus, PhMinus, PhMagnifyingGlassPlus, PhArrowsClockwise, PhTrash, PhShuffle, PhX, PhHand, PhEye, PhEyeSlash, PhChatCircleText, PhMapTrifold, HttpClient, ResourceScope, DeckUpload: DeckUpload_native_default, cardFace, fanLayout, fanPose, props, emit, scope, http, root: root2, state, deckId, manage, busy, error, flipped, preview, drawDeck, count, destination, face, deleteDeck, host: host2, available, observer, visit, deck, cards, layout, pose, refresh: refresh2, command: command2, openDraw, draw, flip, drag, escape };
+  return { permissions, gwText: text, PhCardsThree, PhPlus, PhMagnifyingGlassPlus, PhArrowsClockwise, PhTrash, PhShuffle, DeckUpload: DeckUpload_native_default, cardFace, props, emit, state, deckId, manage, busy, error, flipped, host: host2, available, deck, cards, layout, pose, refresh: refresh2, command: command2, openPreview, openDelete, openDraw, draw, flip, drag };
 });
 
-// gravewright/maps/frontend/features/cards/ui/CardPlacement.native.js
+// features/cards/ui/CardPlacement.native.js
 var CardPlacement_native_default = widget([{ "tag": "svg", "attrs": { "ref": "root", "class": "card-placement" }, "bind": {}, "events": [{ "event": "pointermove", "code": "move;", "mods": ["stop"] }, { "event": "pointerdown", "code": "place;", "mods": ["stop", "prevent"] }, { "event": "pointerup", "code": "", "mods": ["stop"] }, { "event": "contextmenu", "code": '!busy && emit("close");', "mods": ["stop", "prevent"] }], "children": [{ "tag": "g", "attrs": { "opacity": ".75" }, "bind": { "transform": "`translate(${viewport.x} ${viewport.y}) scale(${viewport.scale}) translate(${point.x} ${point.y})`" }, "events": [], "children": [{ "tag": "rect", "attrs": { "x": "-28", "y": "-40", "width": "56", "height": "80", "rx": "5", "fill": "#182328", "stroke": "#c09a5a" }, "bind": {}, "events": [], "children": [] }, { "tag": "image", "attrs": { "x": "-28", "y": "-40", "width": "56", "height": "80" }, "bind": { "href": "cardFace(cards[index], !reveal)" }, "events": [], "children": [] }], "when": "point && cards[index]" }] }, { "tag": "p", "attrs": { "class": "card-placement__hint", "role": "status" }, "bind": {}, "events": [], "children": [{ "value": 'error || (busy ? gwText("Playing card\\u2026") : gwText("Click to play {0}/{1}. Esc cancels; remaining cards stay in your hand.", index + 1, cards.length))' }] }], (options2, { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose }) => {
   const BlockStateApi = class {
     command(c, b, area, action, data) {
@@ -875,7 +1061,7 @@ var CardPlacement_native_default = widget([{ "tag": "svg", "attrs": { "ref": "ro
   return { gwText: text, BlockStateApi, HttpClient, cardFace, props, emit, root: root2, point, busy, index, error, abort, api, move, place, cancel };
 });
 
-// gravewright/maps/frontend/shared/ui/directory/DirectoryContextMenu.native.js
+// shared/ui/directory/DirectoryContextMenu.native.js
 var DirectoryContextMenu_native_default = widget([{ "tag": "menu", "attrs": { "ref": "menu", "class": "gw-folder-menu directory-context-menu" }, "bind": { "aria-label": "label", "style": "{ left: `${position.x}px`, top: `${position.y}px` }" }, "events": [{ "event": "click", "code": "", "mods": ["stop"] }, { "event": "contextmenu", "code": "", "mods": ["prevent", "stop"] }], "children": [{ "tag": "slot", "attrs": {}, "bind": {}, "events": [], "children": [] }] }], (options2, { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose }) => {
   const props = options2.props;
   const emit = options2.emit;
@@ -927,7 +1113,7 @@ var DirectoryContextMenu_native_default = widget([{ "tag": "menu", "attrs": { "r
   return { props, emit, menu, position, place, outside, other, keyboard };
 });
 
-// gravewright/maps/frontend/features/cards/ui/SceneCardWorkspace.native.js
+// features/cards/ui/SceneCardWorkspace.native.js
 var SceneCardWorkspace_native_default = widget([{ "tag": "svg", "attrs": { "ref": "root", "class": "scene-cards" }, "bind": {}, "events": [{ "event": "pointermove", "code": "move;", "mods": [] }, { "event": "pointerup", "code": "up;", "mods": [] }, { "event": "pointercancel", "code": "cancel;", "mods": [] }], "children": [{ "tag": "g", "attrs": {}, "bind": { "transform": "`translate(${viewport.x} ${viewport.y}) scale(${viewport.scale})`" }, "events": [], "children": [{ "tag": "g", "attrs": {}, "bind": { "key": "card.id", "transform": "`translate(${card.x} ${card.y}) rotate(${card.rotation}) scale(${card.scale || 1})`" }, "events": [], "children": [{ "tag": "rect", "attrs": { "class": "scene-cards__hit", "x": "-28", "y": "-40", "width": "56", "height": "80", "rx": "5", "fill": "transparent", "role": "button" }, "bind": { "class": '({ "scene-cards__hit--enabled": tool === "select" && card.can_manage })', "stroke": 'selected === card.id ? "#ffe29a" : "none"', "stroke-width": "2 / (viewport.scale * (card.scale || 1))", "tabindex": 'tool === "select" && card.can_manage ? 0 : -1', "aria-label": 'card.card?.face_state === "face_up" ? card.card?.name || gwText("Card on the table") : gwText("Face-down card")', "aria-pressed": "selected === card.id" }, "events": [{ "event": "pointerdown", "code": "down($event, card);", "mods": [] }, { "event": "contextmenu", "code": "context($event, card);", "mods": [] }, { "event": "wheel", "code": "wheel($event, card);", "mods": [] }, { "event": "keydown", "code": "selected = card.id;", "mods": ["enter", "stop"] }], "children": [] }], "each": { "names": ["card"], "value": "rows" } }] }] }, { "tag": "p", "attrs": { "class": "scene-cards__hint" }, "bind": { "role": 'error ? "alert" : "status"' }, "events": [], "children": [{ "value": 'error || (busy ? gwText("Saving card\\u2026") : gwText("Drag to move \\xB7 Shift + wheel to rotate \\xB7 F to flip \\xB7 Delete to discard"))' }], "when": "error || busy || selected" }, { "tag": "Teleport", "attrs": { "to": "body" }, "bind": {}, "events": [], "children": [{ "tag": "DirectoryContextMenu", "attrs": {}, "bind": { "x": "menu.x", "y": "menu.y", "label": 'gwText("Card on the table")' }, "events": [{ "event": "close", "code": "menu = void 0;", "mods": [] }], "children": [{ "tag": "button", "attrs": {}, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": "flip;", "mods": [] }], "children": [{ "tag": "PhArrowsClockwise", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'current.card?.face_state === "face_up" ? gwText("Flip face down") : gwText("Flip face up")' }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": "rotate(-90);", "mods": [] }], "children": [{ "tag": "PhArrowCounterClockwise", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("Rotate 90\\xB0 left")' }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": "rotate(90);", "mods": [] }], "children": [{ "tag": "PhArrowClockwise", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("Rotate 90\\xB0 right")' }] }, { "tag": "button", "attrs": { "class": "gw-folder-menu__danger" }, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": "remove;", "mods": [] }], "children": [{ "tag": "PhTrash", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("Remove from table (discard)")' }] }], "when": "menu && current" }] }], (options2, { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose }) => {
   const PhArrowsClockwise = "PhArrowsClockwise";
   const PhArrowClockwise = "PhArrowClockwise";
@@ -1097,7 +1283,7 @@ var SceneCardWorkspace_native_default = widget([{ "tag": "svg", "attrs": { "ref"
   return { gwText: text, PhArrowsClockwise, PhArrowClockwise, PhArrowCounterClockwise, PhTrash, BlockStateApi, HttpClient, DirectoryContextMenu: DirectoryContextMenu_native_default, props, emit, root: root2, selected, preview, busy, error, menu, abort, api, rows, current, drag, rotationTimer, show, point, release, cancel, down, move, command: command2, up, context, rotate: rotate2, wheel, flip, remove, outside, key };
 });
 
-// gravewright/maps/frontend/features/audio/ui/SoundtrackPanel.native.js
+// features/audio/ui/SoundtrackPanel.native.js
 var SoundtrackPanel_native_default = widget([{ "tag": "section", "attrs": { "class": "soundtrack-panel" }, "bind": {}, "events": [], "children": [{ "tag": "header", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "strong", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Soundtracks and ambience")' }] }, { "tag": "button", "attrs": {}, "bind": {}, "events": [{ "event": "click", "code": 'create("playlist");', "mods": [] }], "children": [{ "tag": "PhPlus", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "text": "Playlist" }] }, { "tag": "button", "attrs": {}, "bind": {}, "events": [{ "event": "click", "code": 'create("preset");', "mods": [] }], "children": [{ "tag": "PhPlus", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "text": "Preset" }] }] }, { "tag": "p", "attrs": { "role": "alert" }, "bind": {}, "events": [], "children": [{ "value": "error" }], "when": "error" }, { "tag": "form", "attrs": {}, "bind": {}, "events": [{ "event": "submit", "code": "save;", "mods": ["prevent"] }], "children": [{ "tag": "label", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Name")' }, { "tag": "input", "attrs": { "required": "", "maxlength": "80" }, "bind": {}, "events": [], "children": [], "model": { "path": "name", "mods": [] } }] }, { "tag": "div", "attrs": { "class": "soundtrack-panel__row" }, "bind": {}, "events": [], "children": [{ "tag": "button", "attrs": { "type": "button" }, "bind": { "key": "label" }, "events": [{ "event": "click", "code": "name = label;", "mods": [] }], "children": [{ "value": "label" }], "each": { "names": ["label"], "value": '[gwText("Exploration"), gwText("Tavern"), gwText("Combat")]' } }], "when": 'kind === "preset"' }, { "tag": "label", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Order")' }, { "tag": "select", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "option", "attrs": { "value": "sequential" }, "bind": {}, "events": [], "children": [{ "value": 'gwText("Sequential")' }] }, { "tag": "option", "attrs": { "value": "shuffle" }, "bind": {}, "events": [], "children": [{ "value": 'gwText("Random")' }] }], "model": { "path": "mode", "mods": [] } }], "when": 'kind === "playlist"' }, { "tag": "label", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Transition (seconds)")' }, { "tag": "input", "attrs": { "type": "number", "min": "0", "max": "30", "step": "0.5", "required": "" }, "bind": {}, "events": [], "children": [], "model": { "path": "fade", "mods": ["number"] } }] }, { "tag": "div", "attrs": { "class": "soundtrack-panel__row" }, "bind": {}, "events": [], "children": [{ "tag": "select", "attrs": {}, "bind": { "aria-label": 'gwText("Add track")' }, "events": [], "children": [{ "tag": "option", "attrs": { "value": "" }, "bind": {}, "events": [], "children": [{ "value": 'gwText("Choose a sound")' }] }, { "tag": "option", "attrs": {}, "bind": { "key": "s.id", "value": "s.id" }, "events": [], "children": [{ "value": "s.name" }], "each": { "names": ["s"], "value": "sounds" } }], "model": { "path": "chosen", "mods": [] } }, { "tag": "button", "attrs": { "type": "button" }, "bind": { "disabled": "busy || !chosen || entries.length >= 64" }, "events": [{ "event": "click", "code": "add;", "mods": [] }], "children": [{ "tag": "PhPlus", "attrs": {}, "bind": {}, "events": [], "children": [] }] }] }, { "tag": "ol", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "li", "attrs": {}, "bind": { "key": "index" }, "events": [], "children": [{ "tag": "span", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "sounds.find((s) => s.id === entry.soundId)?.name" }, { "text": " " }, { "tag": "small", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "time(entry.duration)" }] }, { "tag": "input", "attrs": { "type": "range", "min": "0", "max": "1", "step": "0.01" }, "bind": { "aria-label": 'gwText("Layer volume")' }, "events": [], "children": [], "model": { "path": "entry.gain", "mods": ["number"] } }] }, { "tag": "button", "attrs": { "type": "button" }, "bind": { "disabled": "index === 0", "aria-label": 'gwText("Move track up")' }, "events": [{ "event": "click", "code": "entries.splice(index - 1, 0, entries.splice(index, 1)[0]);", "mods": [] }], "children": [{ "tag": "PhArrowUp", "attrs": {}, "bind": {}, "events": [], "children": [] }] }, { "tag": "button", "attrs": { "type": "button" }, "bind": { "disabled": "index === entries.length - 1", "aria-label": 'gwText("Move track down")' }, "events": [{ "event": "click", "code": "entries.splice(index + 1, 0, entries.splice(index, 1)[0]);", "mods": [] }], "children": [{ "tag": "PhArrowDown", "attrs": {}, "bind": {}, "events": [], "children": [] }] }, { "tag": "button", "attrs": { "type": "button" }, "bind": { "aria-label": 'gwText("Remove track")' }, "events": [{ "event": "click", "code": "entries.splice(index, 1);", "mods": [] }], "children": [{ "tag": "PhTrash", "attrs": {}, "bind": {}, "events": [], "children": [] }] }], "each": { "names": ["entry", "index"], "value": "entries" } }] }, { "tag": "small", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'kind === "preset" ? gwText("Layers play together and loop.") : gwText("Tracks advance automatically with crossfades.")' }] }, { "tag": "div", "attrs": { "class": "soundtrack-panel__row" }, "bind": {}, "events": [], "children": [{ "tag": "button", "attrs": { "type": "submit" }, "bind": { "disabled": "busy || !entries.length" }, "events": [], "children": [{ "value": 'gwText("Save")' }] }, { "tag": "button", "attrs": { "type": "button" }, "bind": {}, "events": [{ "event": "click", "code": "editing = false;", "mods": [] }], "children": [{ "value": 'gwText("Cancel")' }] }] }], "when": "editing" }, { "tag": "template", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "label", "attrs": { "class": "soundtrack-panel__repeat" }, "bind": {}, "events": [], "children": [{ "tag": "input", "attrs": { "type": "checkbox" }, "bind": {}, "events": [], "children": [], "model": { "path": "repeat", "mods": [] } }, { "value": 'gwText("Loop playlist")' }] }, { "tag": "article", "attrs": {}, "bind": { "key": "item.id" }, "events": [], "children": [{ "tag": "span", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "item.name" }, { "tag": "small", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'item.kind === "preset" ? gwText("Ambience") : item.playback_mode === "shuffle" ? gwText("Shuffled playlist") : gwText("Sequential playlist")' }] }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy", "aria-label": 'gwText("Play composition")' }, "events": [{ "event": "click", "code": 'command("start", { id: item.id, kind: item.kind, repeat });', "mods": [] }], "children": [{ "tag": "PhPlay", "attrs": {}, "bind": {}, "events": [], "children": [] }] }], "each": { "names": ["item"], "value": '[...lists.playlists.map((x) => ({ ...x, kind: "playlist" })), ...lists.presets.map((x) => ({ ...x, kind: "preset" }))]' } }], "otherwise": true }, { "tag": "div", "attrs": { "class": "soundtrack-panel__transport" }, "bind": {}, "events": [], "children": [{ "tag": "strong", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "state.name" }] }, { "tag": "span", "attrs": {}, "bind": { "key": "track.id" }, "events": [], "children": [{ "value": "track.name" }, { "text": " \xB7 " }, { "value": "time(track.position ?? Date.now() / 1e3 - track.startedAt)" }, { "text": " / " }, { "value": "time(track.duration)" }], "each": { "names": ["track"], "value": "state.playbacks.filter((t) => t.startedAt <= Date.now() / 1e3 && !t.fade)" } }, { "tag": "div", "attrs": { "class": "soundtrack-panel__row" }, "bind": {}, "events": [], "children": [{ "tag": "button", "attrs": {}, "bind": { "aria-label": 'gwText("Previous track")', "disabled": "busy" }, "events": [{ "event": "click", "code": 'command("previous");', "mods": [] }], "children": [{ "tag": "PhSkipBack", "attrs": {}, "bind": {}, "events": [], "children": [] }], "when": 'state.kind === "playlist"' }, { "tag": "button", "attrs": {}, "bind": { "aria-label": 'state.state === "paused" ? gwText("Resume") : gwText("Pause")', "disabled": "busy" }, "events": [{ "event": "click", "code": 'command(state.state === "paused" ? "resume" : "pause");', "mods": [] }], "children": [{ "tag": "component", "attrs": {}, "bind": { "is": 'state.state === "paused" ? PhPlay : PhPause' }, "events": [], "children": [] }] }, { "tag": "button", "attrs": {}, "bind": { "aria-label": 'gwText("Stop composition")', "disabled": "busy" }, "events": [{ "event": "click", "code": 'command("stop");', "mods": [] }], "children": [{ "tag": "PhStop", "attrs": {}, "bind": {}, "events": [], "children": [] }] }, { "tag": "button", "attrs": {}, "bind": { "aria-label": 'gwText("Next track")', "disabled": "busy" }, "events": [{ "event": "click", "code": 'command("next");', "mods": [] }], "children": [{ "tag": "PhSkipForward", "attrs": {}, "bind": {}, "events": [], "children": [] }], "when": 'state.kind === "playlist"' }] }], "when": 'state.state !== "stopped"' }] }], (options2, { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose }) => {
   const PhPlay = "PhPlay";
   const PhPause = "PhPause";
@@ -1217,7 +1403,11 @@ var SoundtrackPanel_native_default = widget([{ "tag": "section", "attrs": { "cla
   return { gwText: text, PhPlay, PhPause, PhStop, PhSkipForward, PhSkipBack, PhPlus, PhTrash, PhArrowUp, PhArrowDown, HttpClient, props, emit, scope, http, base: base2, lists, state, editing, kind, name, mode, fade, repeat, chosen, busy, error, entries, timer, probes, time, refresh: refresh2, definitions, add, save, command: command2, create };
 });
 
-// gravewright/maps/frontend/features/selection/model/objects.js
+// ../static/gravewright_maps/region-filters.js
+var regionFilterDispositions = Object.freeze(["friendly", "neutral", "hostile", "unknown"]);
+var regionFilterVisibility = Object.freeze(["any", "visible", "hidden"]);
+
+// features/selection/model/objects.js
 function rotate(p, c, degrees) {
   const a = degrees * Math.PI / 180, dx = p.x - c.x, dy = p.y - c.y;
   return { x: c.x + dx * Math.cos(a) - dy * Math.sin(a), y: c.y + dx * Math.sin(a) + dy * Math.cos(a) };
@@ -1227,7 +1417,7 @@ function transformedPoint(p, center, dx, dy, rotation) {
   return { x: q.x + dx, y: q.y + dy };
 }
 
-// gravewright/maps/frontend/features/audio/ui/AudioWorkspace.native.js
+// features/audio/ui/AudioWorkspace.native.js
 var AudioWorkspace_native_default = widget([{ "tag": "svg", "attrs": { "ref": "root", "class": "audio-workspace" }, "bind": { "class": '({ "audio-workspace--placing": placing })' }, "events": [{ "event": "pointermove", "code": "move;", "mods": [] }, { "event": "pointerdown", "code": "place;", "mods": [] }], "children": [{ "tag": "g", "attrs": {}, "bind": { "transform": "`translate(${viewport.x} ${viewport.y}) scale(${viewport.scale})`" }, "events": [], "children": [{ "tag": "g", "attrs": {}, "bind": { "key": "source.id", "transform": "sourceTransform(source)" }, "events": [], "children": [{ "tag": "circle", "attrs": { "fill": "#65c9b808", "stroke": "#65c9b8" }, "bind": { "cx": "source.x", "cy": "source.y", "r": "source.radius", "stroke-opacity": "0.35", "stroke-width": "1 / viewport.scale" }, "events": [], "children": [] }, { "tag": "circle", "attrs": { "class": "audio-workspace__source" }, "bind": { "cx": "source.x", "cy": "source.y", "r": "9 / viewport.scale", "fill": 'source.enabled ? "#65c9b8" : "#777"' }, "events": [{ "event": "dblclick", "code": "edit(source.id);", "mods": ["stop"] }], "children": [] }, { "tag": "text", "attrs": { "fill": "#b1e7dc" }, "bind": { "x": "source.x + 13 / viewport.scale", "y": "source.y", "font-size": "11 / viewport.scale" }, "events": [], "children": [{ "value": 'library.sounds.find((s) => s.id === source.sound_id)?.name || gwText("Audio source")' }] }], "each": { "names": ["source"], "value": "state.spatialSounds" } }, { "tag": "circle", "attrs": { "fill": "#65c9b822", "stroke": "#65c9b8" }, "bind": { "cx": "position.x", "cy": "position.y", "r": "radius * toPixels", "stroke-width": "2 / viewport.scale" }, "events": [], "children": [], "when": "placing && position" }] }], "when": "viewport && !embedded" }, { "tag": "Teleport", "attrs": { "to": "body" }, "bind": { "disabled": "embedded" }, "events": [], "children": [{ "tag": "section", "attrs": { "class": "audio-panel" }, "bind": { "class": '({ "audio-panel--embedded": embedded })', "aria-label": 'gwText("Scene audio")' }, "events": [], "children": [{ "tag": "header", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "strong", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "PhWaveform", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'editor ? gwText("Edit source") : gwText("Scene audio")' }] }, { "tag": "button", "attrs": {}, "bind": { "aria-label": 'gwText("Close audio")' }, "events": [{ "event": "click", "code": "close;", "mods": [] }], "children": [{ "tag": "PhX", "attrs": {}, "bind": {}, "events": [], "children": [] }], "when": "!embedded" }] }, { "tag": "p", "attrs": { "role": "alert" }, "bind": {}, "events": [], "children": [{ "value": "error" }], "when": "error" }, { "tag": "button", "attrs": {}, "bind": {}, "events": [{ "event": "click", "code": 'emit("unlock");', "mods": [] }], "children": [{ "tag": "PhSpeakerHigh", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": `gwText("Play this scene's audio")` }] }, { "tag": "template", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "form", "attrs": { "class": "audio-panel__editor" }, "bind": {}, "events": [{ "event": "submit", "code": "save;", "mods": ["prevent"] }], "children": [{ "tag": "strong", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "library.sounds.find((s) => s.id === chosen)?.name" }] }, { "tag": "label", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Range (")' }, { "value": "unit" }, { "text": ")" }, { "tag": "input", "attrs": { "type": "number", "min": "0.01", "max": "100000", "step": "any", "required": "" }, "bind": {}, "events": [], "children": [], "model": { "path": "radius", "mods": ["number"] } }] }, { "tag": "label", "attrs": {}, "bind": {}, "events": [], "children": [{ "text": "Volume " }, { "value": "Math.round(gain * 100)" }, { "text": "%" }, { "tag": "input", "attrs": { "type": "range", "min": "0", "max": "1", "step": "0.01" }, "bind": {}, "events": [], "children": [], "model": { "path": "gain", "mods": ["number"] } }] }, { "tag": "label", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Volume falloff")' }, { "tag": "select", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "option", "attrs": { "value": "smooth" }, "bind": {}, "events": [], "children": [{ "value": 'gwText("Smooth")' }] }, { "tag": "option", "attrs": { "value": "linear" }, "bind": {}, "events": [], "children": [{ "text": "Linear" }] }], "model": { "path": "falloff", "mods": [] } }] }, { "tag": "label", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "input", "attrs": { "type": "checkbox" }, "bind": {}, "events": [], "children": [], "model": { "path": "loop", "mods": [] } }, { "value": 'gwText("Loop")' }] }, { "tag": "label", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "input", "attrs": { "type": "checkbox" }, "bind": {}, "events": [], "children": [], "model": { "path": "walls", "mods": [] } }, { "value": 'gwText("Respect walls")' }] }, { "tag": "label", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "input", "attrs": { "type": "checkbox" }, "bind": {}, "events": [], "children": [], "model": { "path": "enabled", "mods": [] } }, { "value": 'gwText("Active")' }] }, { "tag": "button", "attrs": { "type": "submit" }, "bind": { "disabled": "busy" }, "events": [], "children": [{ "value": 'gwText("Save source")' }], "when": "editor" }, { "tag": "p", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Click the map to place the source. Esc cancels.")' }], "otherwise": true }], "when": "editor || placing" }, { "tag": "template", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "input", "attrs": {}, "bind": { "aria-label": 'gwText("Search audio")', "placeholder": 'gwText("Search the table library")' }, "events": [], "children": [], "model": { "path": "query", "mods": [] } }, { "tag": "div", "attrs": { "class": "audio-panel__list" }, "bind": {}, "events": [], "children": [{ "tag": "article", "attrs": {}, "bind": { "key": "sound.id" }, "events": [], "children": [{ "tag": "strong", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "sound.name" }, { "tag": "small", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'sound.kind === "music" ? gwText("Music") : sound.kind === "ambience" ? gwText("Ambience") : gwText("Effect")' }] }] }, { "tag": "div", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "button", "attrs": {}, "bind": { "title": 'gwText("Local preview")', "aria-label": 'gwText("Local preview")' }, "events": [{ "event": "click", "code": "listen(sound);", "mods": [] }], "children": [{ "tag": "PhSpeakerHigh", "attrs": {}, "bind": {}, "events": [], "children": [] }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": 'command("audio", "play", { sound_id: sound.id });', "mods": [] }], "children": [{ "tag": "PhPlay", "attrs": {}, "bind": {}, "events": [], "children": [] }, { "value": 'gwText("Scene")' }], "when": 'sound.kind !== "sound-effect"' }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": "select(sound);", "mods": [] }], "children": [{ "value": 'gwText("Place")' }], "when": "viewport" }] }], "each": { "names": ["sound"], "value": "sounds" } }] }, { "tag": "details", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "summary", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Add library file")' }] }, { "tag": "label", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Category")' }, { "tag": "select", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "option", "attrs": { "value": "music" }, "bind": {}, "events": [], "children": [{ "value": 'gwText("Music")' }] }, { "tag": "option", "attrs": { "value": "ambience" }, "bind": {}, "events": [], "children": [{ "value": 'gwText("Ambience")' }] }, { "tag": "option", "attrs": { "value": "sound-effect" }, "bind": {}, "events": [], "children": [{ "value": 'gwText("Effect")' }] }], "model": { "path": "category", "mods": [] } }] }, { "tag": "article", "attrs": {}, "bind": { "key": "asset.id" }, "events": [], "children": [{ "tag": "span", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "asset.name || asset.filename" }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": "register(asset);", "mods": [] }], "children": [{ "value": 'gwText("Add")' }] }], "each": { "names": ["asset"], "value": 'library.assets.filter((a) => a.content_type.startsWith("audio/"))' } }, { "tag": "p", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Upload files through Library at the top.")' }] }] }], "otherwise": true }, { "tag": "SoundtrackPanel", "attrs": {}, "bind": { "key": "blockId", "container-id": "containerId", "block-id": "blockId", "sounds": "library.sounds", "assets": "library.assets" }, "events": [{ "event": "refresh", "code": 'emit("refresh");', "mods": [] }], "children": [] }, { "tag": "h4", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Playback in this scene")' }] }, { "tag": "article", "attrs": {}, "bind": { "key": "playback.id" }, "events": [], "children": [{ "tag": "strong", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": "library.sounds.find((s) => s.asset_id === playback.asset.id)?.name || playback.channel" }, { "tag": "input", "attrs": { "type": "range", "min": "0", "max": "1", "step": "0.01" }, "bind": { "aria-label": 'gwText("Track volume")', "value": "playback.baseGain ?? playback.gain", "disabled": "busy" }, "events": [{ "event": "change", "code": 'command("playbacks", "update", { playback_id: playback.id, expected_version: playback.version, patch: { gain: Number($event.target.value) } });', "mods": [] }], "children": [] }] }, { "tag": "div", "attrs": {}, "bind": {}, "events": [], "children": [{ "tag": "button", "attrs": {}, "bind": { "disabled": "busy", "aria-label": 'gwText("Play")' }, "events": [{ "event": "click", "code": 'command("playbacks", "update", { playback_id: playback.id, expected_version: playback.version, patch: { state: "playing" } });', "mods": [] }], "children": [{ "tag": "PhPlay", "attrs": {}, "bind": {}, "events": [], "children": [] }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy", "aria-label": 'gwText("Pause")' }, "events": [{ "event": "click", "code": 'command("playbacks", "update", { playback_id: playback.id, expected_version: playback.version, patch: { state: "paused" } });', "mods": [] }], "children": [{ "tag": "PhPause", "attrs": {}, "bind": {}, "events": [], "children": [] }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy", "aria-label": 'gwText("Stop")' }, "events": [{ "event": "click", "code": 'command("playbacks", "stop", { playback_id: playback.id, expected_version: playback.version });', "mods": [] }], "children": [{ "tag": "PhStop", "attrs": {}, "bind": {}, "events": [], "children": [] }] }] }], "each": { "names": ["playback"], "value": 'state.audio.filter((a) => a.state !== "stopped")' } }, { "tag": "h4", "attrs": {}, "bind": {}, "events": [], "children": [{ "value": 'gwText("Spatial sources")' }] }, { "tag": "article", "attrs": {}, "bind": { "key": "source.id" }, "events": [], "children": [{ "tag": "button", "attrs": {}, "bind": {}, "events": [{ "event": "click", "code": "edit(source.id);", "mods": [] }], "children": [{ "value": 'library.sounds.find((s) => s.id === source.sound_id)?.name || gwText("Source")' }, { "text": " \xB7 " }, { "value": 'source.enabled ? gwText("active") : gwText("off")' }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy" }, "events": [{ "event": "click", "code": 'command("spatial-sounds", "update", { rid: source.id, expected_version: source.version, patch: { enabled: !source.enabled } });', "mods": [] }], "children": [{ "tag": "component", "attrs": {}, "bind": { "is": "source.enabled ? PhPause : PhPlay" }, "events": [], "children": [] }] }, { "tag": "button", "attrs": {}, "bind": { "disabled": "busy", "aria-label": 'gwText("Delete source")' }, "events": [{ "event": "click", "code": 'command("spatial-sounds", "delete", { rid: source.id, expected_version: source.version });', "mods": [] }], "children": [{ "tag": "PhTrash", "attrs": {}, "bind": {}, "events": [], "children": [] }] }], "each": { "names": ["source"], "value": "state.spatialSounds" } }], "when": "gm" }, { "tag": "p", "attrs": { "class": "audio-panel__hint" }, "bind": {}, "events": [], "children": [{ "value": 'gwText("Table library \\xB7 Playback and sources for this scene. Spatial audio uses controlled tokens as listeners.")' }] }], "when": "panel" }] }], (options2, { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose }) => {
   const PhWaveform = "PhWaveform";
   const PhPlay = "PhPlay";
@@ -1390,12 +1580,14 @@ var AudioWorkspace_native_default = widget([{ "tag": "svg", "attrs": { "ref": "r
   return { gwText: text, SoundtrackPanel: SoundtrackPanel_native_default, transformedPoint, PhWaveform, PhPlay, PhPause, PhStop, PhX, PhSpeakerHigh, PhTrash, HttpClient, BlockStateApi, props, emit, abort, http, api, root: root2, library, query, busy, error, editor, chosen, placing, position, radius, gain, loop, walls, enabled, falloff, category, preview, sourceTransform, sounds, panel, toPixels, refresh: refresh2, command: command2, register, select, edit, move, place, save, stopPreview, listen, close: close2, key };
 });
 
-// gravewright/maps/frontend/native/table-modules.js
+// native/table-modules.js
 import { getPath, mergePatch } from "/static/gravewright_web/vendor/datastar-1.0.3.js";
 import { gravewright } from "/static/gravewright_modules/frontend-api.js";
 import { executeNative } from "/static/gravewright_modules/domain-api.js";
+import { mountModal } from "/static/gravewright_table/modal.js";
 var root = document.querySelector("#table-workspace");
 var campaign = root?.dataset.tableId;
+var mediaScope = new AbortController();
 var states = {};
 var widgets = {};
 var nodes = {};
@@ -1407,21 +1599,26 @@ var master = 0.7;
 var unlocked = false;
 var placement;
 var clockOffset = 0;
+var handModal;
+var handDragFrame;
 var channels = { music: 1, ambience: 1, sfx: 1, cinematic: 1 };
 var map = () => window.gravewrightMaps?.current;
 var rt = () => window.gravewrightRealtime;
 var who = () => root?.dataset.role === "gm";
 var previewToken = () => who() && window.gravewrightTokenSelection?.length === 1 ? window.gravewrightTokenSelection[0] : null;
 async function fresh(module) {
+  mediaScope.signal.throwIfAborted();
   const requestedScene = scene;
-  const v = await gravewright[module].state({ sceneId: scene, previewTokenId: module === "audio" ? previewToken() : null });
+  const v = await gravewright[module].state({ sceneId: scene, previewTokenId: module === "audio" ? previewToken() : null }, { signal: mediaScope.signal });
+  mediaScope.signal.throwIfAborted();
   if (["cards", "audio"].includes(module) && requestedScene !== scene) return v;
   states[module] = v;
   if (module === "audio" && v.serverTime) clockOffset = v.serverTime - Date.now() / 1e3;
   return v;
 }
 async function command(module, action, data = {}) {
-  return executeNative(gravewright, module, action, { sceneId: scene, ...data });
+  mediaScope.signal.throwIfAborted();
+  return executeNative(gravewright, module, action, { sceneId: scene, ...data }, { signal: mediaScope.signal });
 }
 function cardById(id) {
   return [...states.cards?.hand || [], ...states.cards?.cards || []].find((c) => c.id === id);
@@ -1520,7 +1717,49 @@ async function areaCommand(area, action, data = {}) {
   return result;
 }
 function options(props, emit) {
-  return { props, emit, HttpClient: Client, command: areaCommand, read: () => fresh("cards") };
+  return { props, emit, HttpClient: Client, command: areaCommand, read: () => fresh("cards"), openModal: (title, config) => openCardModal(title, { ...config, nested: true }) };
+}
+function openCardModal(label, { kind = "hand", nested = false, canClose = () => true } = {}) {
+  const modal = document.createElement("section"), header = document.createElement("header"), title = document.createElement("strong"), dismiss = document.createElement("button"), body = document.createElement("div");
+  modal.className = `table-modal-window card-modal card-modal--${kind}`;
+  if (kind === "hand") modal.classList.add("card-hand-modal");
+  else modal.classList.add(`card-hand__${kind}`);
+  modal.dataset.movable = "";
+  modal.dataset.windowKey = `cards-${kind}`;
+  header.dataset.moveHandle = "";
+  const titleId = "cards-title-" + crypto.randomUUID();
+  title.id = titleId;
+  modal.setAttribute("aria-labelledby", titleId);
+  dismiss.type = "button";
+  dismiss.dataset.close = "";
+  dismiss.setAttribute("aria-label", text("Close"));
+  const glyph = document.querySelector("#map-native-icons")?.content.querySelector('[data-icon="PhX"][data-weight="regular"]')?.firstElementChild;
+  if (glyph) dismiss.append(glyph.cloneNode(true));
+  else dismiss.textContent = "\xD7";
+  const setTitle = (value) => {
+    title.textContent = value;
+    modal.setAttribute("aria-label", value);
+  };
+  setTitle(label);
+  header.append(title, dismiss);
+  body.className = kind === "hand" ? "card-hand-modal__body" : "table-modal-body card-modal__body";
+  modal.append(header, body);
+  modal.body = body;
+  modal.setTitle = setTitle;
+  let footer;
+  Object.defineProperty(modal, "footer", { get() {
+    if (!footer) {
+      footer = document.createElement("footer");
+      modal.append(footer);
+    }
+    return footer;
+  } });
+  dismiss.onclick = () => {
+    if (canClose()) modal.close();
+  };
+  const unlisten = onTextChange(() => dismiss.setAttribute("aria-label", text("Close")));
+  modal.addEventListener("close", unlisten, { once: true });
+  return mountModal(modal, { nested, canClose });
 }
 function host(name) {
   if (!nodes[name]) {
@@ -1530,11 +1769,21 @@ function host(name) {
   }
   return nodes[name];
 }
+function resumeHand() {
+  cancelAnimationFrame(handDragFrame);
+  handDragFrame = void 0;
+  if (handModal?.isConnected) handModal.resume();
+}
 function close(name) {
+  if (name === "hand" && handModal) {
+    handModal.close();
+    return;
+  }
   widgets[name]?.destroy();
   delete widgets[name];
   nodes[name]?.remove();
   delete nodes[name];
+  if (name === "placement") resumeHand();
 }
 function cardProjection(c) {
   return { id: c.id, x: c.x, y: c.y, rotation: c.rotation, scale: c.scale, z_index: c.z_index, width: 56, height: 80, version: c.version, card: { ...c, src: c.face_state === "face_up" ? c.frontUrl : c.backUrl }, can_manage: c.canControl, can_move: c.canControl, can_reveal: c.canControl };
@@ -1558,13 +1807,32 @@ function refresh() {
 }
 function showHand() {
   if (widgets.hand) {
-    close("hand");
+    if (widgets.hand.call("canClose")) close("hand");
     return;
   }
-  widgets.hand = CardHand_native_default(host("hand"), options(base(), (event, cards, reveal) => {
+  const modal = openCardModal(text("Your hand"), { canClose: () => widgets.hand?.call("canClose") !== false }), mount = modal.body, dismiss = modal.querySelector("[data-close]");
+  nodes.hand = mount;
+  const unlisten = onTextChange(() => modal.setTitle(text("Your hand")));
+  modal.addEventListener("close", () => {
+    cancelAnimationFrame(handDragFrame);
+    document.removeEventListener("dragend", resumeHand, true);
+    unlisten();
+    if (handModal === modal) handModal = void 0;
+    close("hand");
+  }, { once: true });
+  handModal = modal;
+  widgets.hand = CardHand_native_default(mount, options(base(), (event, cards, reveal) => {
+    if (event === "busy") dismiss.disabled = !!cards;
+    if (event === "dragstart") {
+      document.addEventListener("dragend", resumeHand, { capture: true, once: true });
+      handDragFrame = requestAnimationFrame(() => {
+        if (handModal === modal) modal.suspend();
+      });
+    }
     if (event === "place" && scene) {
       placement = { cards, reveal };
       close("placement");
+      modal.suspend();
       widgets.placement = CardPlacement_native_default(host("placement"), options({ ...base(), ...placement }, (type) => {
         if (type === "close") close("placement");
         if (type === "refresh") void fresh("cards").then(refresh);
@@ -1587,6 +1855,7 @@ function showAudio() {
   }));
 }
 function syncAudio() {
+  if (mediaScope.signal.aborted || root?.dataset.management === "true" && !unlocked) return;
   const state = states.audio;
   if (!state) return;
   const now = Date.now() / 1e3 + clockOffset, desired = /* @__PURE__ */ new Map(), tracks = new Map((state.tracks || []).map((t) => [t.id, t]));
@@ -1641,6 +1910,7 @@ window.addEventListener("gravewright:connected", () => {
   for (const module of ["cards", "audio"]) rt().subscribeModule(module, scene, module === "audio" ? previewToken() : null);
 });
 window.addEventListener("gravewright:module-scene", () => {
+  if (mediaScope.signal.aborted) return;
   scene = map()?.id || null;
   delete states.cards;
   delete states.audio;
@@ -1654,7 +1924,7 @@ window.addEventListener("gravewright:module-scene", () => {
   close("cards");
   close("placement");
   close("audio");
-  if (scene) {
+  if (scene && root?.dataset.management !== "true") {
     widgets.cards = SceneCardWorkspace_native_default(host("cards"), options({ ...base(), cards: [], active: true }, (event, value) => {
       if (event === "refresh") void fresh("cards").then(refresh);
       if (event === "preview") window.gravewrightMaps?.board?.previewCard(value);
@@ -1707,17 +1977,27 @@ window.gravewrightTableMedia = { areaCommand, showHand, showAudio, mountCompendi
   unlocked = true;
   syncAudio();
 } };
-setInterval(() => {
+var playbackTimer = setInterval(() => {
   if (scene && unlocked) void fresh("audio").then(syncAudio).catch(() => {
   });
 }, 2e3);
-window.addEventListener("pagehide", () => {
+function disposeMedia() {
+  if (mediaScope.signal.aborted) return;
+  mediaScope.abort();
+  unlocked = false;
+  clearInterval(playbackTimer);
+  clearInterval(fadeTimer);
+  cancelAnimationFrame(handDragFrame);
   for (const row of media.values()) {
     row.audio.pause();
     row.audio.removeAttribute("src");
+    row.audio.load();
   }
+  media.clear();
   for (const name of Object.keys(widgets)) close(name);
-});
+}
+window.addEventListener("pagehide", disposeMedia, { once: true });
+window.addEventListener("gravewright:access-revoked", disposeMedia, { once: true });
 var muteButton = document.querySelector('[data-audio-control="mute"]');
 var volume = document.querySelector('[data-audio-control="volume"]');
 var mixer = document.querySelector('[data-audio-control="mixer"]');

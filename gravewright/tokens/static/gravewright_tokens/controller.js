@@ -1,4 +1,4 @@
-// gravewright/maps/frontend/shared/config/i18n/text.js
+// shared/config/i18n/text.js
 var listeners = /* @__PURE__ */ new Set();
 function notifyTextChange() {
   for (const listener of listeners)
@@ -33,14 +33,20 @@ function text(source, ...values) {
 }
 if (typeof window !== "undefined") {
   const apply = (detail) => registerTextResolver((source) => {
-    const translated = detail.messages?.text?.[source];
-    return typeof translated === "string" ? translated : source;
+    const messages = detail.messages?.text ?? detail.messages ?? {};
+    if (typeof messages[source] === "string") return messages[source];
+    const translated = messages[source.trim()];
+    return typeof translated === "string" ? source.replace(source.trim(), () => translated) : source;
   }, () => detail.id || "en");
   window.addEventListener("gravewright:locale", (event) => apply(event.detail));
   if (window.gravewrightLocale) apply(window.gravewrightLocale);
+  else {
+    const config = document.getElementById("gravewright-language");
+    if (config) apply(JSON.parse(config.textContent));
+  }
 }
 
-// gravewright/maps/frontend/features/tokens/model/token-interaction.js
+// features/tokens/model/token-interaction.js
 function hitToken(point, tokens, cell) {
   return [...tokens].reverse().find((t) => point.x >= t.gridX * cell && point.x <= (t.gridX + t.cells) * cell && point.y >= t.gridY * cell && point.y <= (t.gridY + (t.heightCells ?? t.cells)) * cell);
 }
@@ -64,12 +70,12 @@ function movementBlocked(token, to, walls, cell) {
   });
 }
 
-// gravewright/maps/frontend/features/tokens/model/token-vision.js
+// features/tokens/model/token-vision.js
 function distancePerCell(value) {
   return Number.isFinite(value) && value > 0 ? value : 1;
 }
 
-// gravewright/maps/frontend/features/tokens/model/token-route.js
+// features/tokens/model/token-route.js
 function routeMeasurements(route, measureValue) {
   const scale = distancePerCell(measureValue);
   const segments = route.slice(1).map((step, index) => {
@@ -102,7 +108,7 @@ function routePosition(route, lengths, distance) {
   return { tokens: to.map((token, i) => ({ ...token, gridX: from[i].gridX + (token.gridX - from[i].gridX) * t, gridY: from[i].gridY + (token.gridY - from[i].gridY) * t })), passed: segment, done: false };
 }
 
-// gravewright/maps/frontend/features/tokens/model/token-pathfinding.js
+// features/tokens/model/token-pathfinding.js
 function suggestTokenRoute(route, walls, cell, width, height, limits = {}) {
   if (route.length < 2 || !(cell > 0) || !Number.isFinite(width + height + cell))
     return;
@@ -194,26 +200,102 @@ function suggestTokenRoute(route, walls, cell, width, height, limits = {}) {
   }
 }
 
-// gravewright/maps/frontend/features/tokens/model/token-motion.js
+// features/tokens/model/token-motion.js
 var TOKEN_SETTLE_MS = 120;
+function tokenTeleported(from, to) {
+  return (from.teleportVersion ?? 0) !== (to.teleportVersion ?? 0);
+}
 function interpolateTokens(from, to, progress) {
   const starts = new Map(from.map((token) => [token.id, token]));
   const t = 1 - Math.pow(1 - Math.max(0, Math.min(1, progress)), 3);
   return to.map((token) => {
     const start = starts.get(token.id);
-    if (!start || t === 1)
+    if (!start || t === 1 || tokenTeleported(start, token))
       return token;
     return { ...token, gridX: start.gridX + (token.gridX - start.gridX) * t, gridY: start.gridY + (token.gridY - start.gridY) * t };
   });
 }
 
-// gravewright/maps/frontend/features/tokens/ui/controller.js
+// features/tokens/model/token-teleports.js
+function createTokenTeleports() {
+  const markers = /* @__PURE__ */ new Map(), versions = /* @__PURE__ */ new Map();
+  return {
+    apply(rows, teleports = []) {
+      const current = new Map(rows.map((token) => [token.id, token]));
+      for (const id of versions.keys()) {
+        if (!current.has(id)) {
+          versions.delete(id);
+          markers.delete(id);
+        }
+      }
+      for (const token of rows)
+        versions.set(token.id, Math.max(versions.get(token.id) ?? 0, token.version));
+      for (const marker of Array.isArray(teleports) ? teleports : []) {
+        const token = marker && current.get(marker.id);
+        if (token && Number.isSafeInteger(marker.version) && marker.version > 0 && marker.version === token.version && marker.version === versions.get(marker.id))
+          markers.set(marker.id, Math.max(markers.get(marker.id) ?? 0, marker.version));
+      }
+      return rows.map((token) => ({ ...token, teleportVersion: markers.get(token.id) ?? 0 }));
+    },
+    clear() {
+      markers.clear();
+      versions.clear();
+    }
+  };
+}
+
+// features/tokens/model/token-snapshots.js
+function createTokenSnapshots() {
+  let current = [];
+  const pending = /* @__PURE__ */ new Set();
+  function accept(rows) {
+    const ids = new Set(rows.map((token) => token.id));
+    for (const request of pending)
+      for (const token of current)
+        if (!ids.has(token.id)) request.removed.add(token.id);
+    current = rows;
+    return rows;
+  }
+  return {
+    accept,
+    begin() {
+      const request = { original: new Map(current.map((token) => [token.id, token.version])), removed: /* @__PURE__ */ new Set() };
+      pending.add(request);
+      return request;
+    },
+    confirm(request, rows) {
+      pending.delete(request);
+      const latest = new Map(current.map((token) => [token.id, token]));
+      const ids = new Set(rows.map((token) => token.id));
+      const merged = rows.flatMap((token) => {
+        const fresh = latest.get(token.id);
+        if (!fresh && request.removed.has(token.id)) return [];
+        return [fresh && fresh.version > token.version ? fresh : token];
+      });
+      for (const token of current) {
+        const original = request.original.get(token.id);
+        if (!ids.has(token.id) && (original === void 0 || token.version > original))
+          merged.push(token);
+      }
+      return accept(merged);
+    },
+    cancel(request) {
+      pending.delete(request);
+    },
+    clear() {
+      current = [];
+      pending.clear();
+    }
+  };
+}
+
+// features/tokens/ui/controller.js
 import { renderingPreferences } from "/static/gravewright_maps/render-profile.js";
 
-// gravewright/maps/frontend/widgets/game-board/model/board-input.js
+// widgets/game-board/model/board-input.js
 var LONG_PRESS_MS = 700;
 
-// gravewright/maps/frontend/features/tokens/ui/controller.js
+// features/tokens/ui/controller.js
 function tokenController(element, options) {
   const props = { ...options.props }, emit = options.emit, nextTick = () => Promise.resolve();
   const box = (initial) => {
@@ -253,7 +335,7 @@ function tokenController(element, options) {
     const previous = new Map(displayed.value.map((t) => [t.id, t]));
     const from = rows.map((t) => {
       const old = previous.get(t.id);
-      return old && old.hidden === t.hidden && !movementBlocked(old, t, props.walls, props.cell) ? old : t;
+      return old && !tokenTeleported(old, t) && old.hidden === t.hidden && !movementBlocked(old, t, props.walls, props.cell) ? old : t;
     });
     const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches || renderingPreferences.current().capabilities.motion === "none";
     if (immediate || reduced || !rows.some((t, i) => t.gridX !== from[i].gridX || t.gridY !== from[i].gridY)) {
@@ -349,7 +431,6 @@ function tokenController(element, options) {
       for (const p of remote.values())
         if (p.stream === key2)
           p.expires = performance.now() + 700;
-      emit("refresh");
     } else
       return;
     if (drag)
@@ -493,12 +574,18 @@ function tokenController(element, options) {
     publish(first);
     routeFrame = requestAnimationFrame(tick);
   }
-  const selection = derive(() => props.tokens.filter((t) => selected.value.includes(t.id)));
+  const onLayer = (t) => props.gm || (t.layer || (t.hidden ? "gm" : "game")) === (props.layer || "game");
+  const selectable = (tokens) => tokens.filter(onLayer);
+  const selection = derive(() => props.tokens.filter((t) => onLayer(t) && selected.value.includes(t.id)));
   const interactive = derive(() => props.tool === "select");
   let closed = false, queue = Promise.resolve(), drag;
+  function accepted(result) {
+    if (!closed) emit("changed", result.tokens);
+    return result;
+  }
   const abort = new AbortController(), reader = { list: () => options.read() }, writer = {
-    command: (_a, _b, action, data) => options.command(action, data),
-    move: (_a, id, data) => options.command("move", { id, ...data }).then((r) => r.tokens.find((t) => t.id === id))
+    command: (_a, _b, action, data) => options.command(action, data).then(accepted),
+    move: (_a, id, data) => options.command("move", { id, ...data }).then(accepted)
   }, scope = {
     container: props.containerId,
     block: props.blockId,
@@ -529,23 +616,29 @@ function tokenController(element, options) {
         return;
       busy.value = true;
       error.value = "";
+      let recover = false;
       try {
-        await operation();
+        const result = await operation();
+        recover = result?.recover === true;
+        if (!closed && !recover) animate(remoteRows());
       } catch (e) {
+        recover = true;
         if (!closed)
           error.value = text("Could not complete the action. Check permissions or reload the scene state.");
       } finally {
         if (!closed) {
-          try {
-            const rows = await reader.list(scope.container, scope.map);
-            if (!closed) {
-              emit("changed", rows);
-              animate(remoteRows(rows));
-              emit("refresh");
+          if (recover) {
+            try {
+              const rows = await reader.list(scope.container, scope.map);
+              if (!closed) {
+                emit("changed", rows);
+                animate(remoteRows(rows));
+                emit("refresh");
+              }
+            } catch {
+              if (!closed)
+                animate(remoteRows());
             }
-          } catch {
-            if (!closed)
-              animate(remoteRows());
           }
           if (!closed) {
             finishBroadcast(error.value ? "cancel" : "end");
@@ -572,17 +665,17 @@ function tokenController(element, options) {
       });
       if (closed)
         return;
-      emit("changed", result.tokens);
       editor.value = void 0;
       confirm.value = false;
       if (result.createdIds.length)
         selected.value = result.createdIds;
+      return result;
     });
   }
   function down(e) {
     if (!interactive.value)
       return;
-    const p = point(e), token = hitToken(p, displayed.value, props.cell);
+    const p = point(e), token = hitToken(p, selectable(displayed.value), props.cell);
     if (e.button === 0 && e.ctrlKey && selected.value.length) {
       stop(e);
       addWaypoint(p, e.altKey);
@@ -665,7 +758,7 @@ function tokenController(element, options) {
     if (!interactive.value)
       return;
     if (!drag) {
-      emit("hover", hitToken(lastPoint, props.tokens, props.cell)?.id);
+      emit("hover", hitToken(lastPoint, selectable(props.tokens), props.cell)?.id);
       return;
     }
     if (drag.pointer !== e.pointerId)
@@ -677,7 +770,7 @@ function tokenController(element, options) {
       selected.value = [
         .../* @__PURE__ */ new Set([
           ...drag.additive ? drag.selection : [],
-          ...props.tokens.filter((t) => inMarquee(t, drag.from, lastPoint, props.cell) && (props.gm || t.canControl)).map((t) => t.id)
+          ...props.tokens.filter((t) => onLayer(t) && inMarquee(t, drag.from, lastPoint, props.cell) && (props.gm || t.canControl)).map((t) => t.id)
         ])
       ];
       return;
@@ -771,24 +864,52 @@ function tokenController(element, options) {
     else
       emit("preview", void 0);
   }
+  function tacticalCellPath(points) {
+    if (!points?.length)
+      return points ?? [];
+    const route2 = [{ gridX: Math.round(points[0].gridX), gridY: Math.round(points[0].gridY) }];
+    let current = { ...route2[0] };
+    for (const point2 of points.slice(1)) {
+      const x = Math.round(point2.gridX), y = Math.round(point2.gridY);
+      while (current.gridX !== x) {
+        current = { ...current, gridX: current.gridX + Math.sign(x - current.gridX) };
+        route2.push({ ...current });
+      }
+      while (current.gridY !== y) {
+        current = { ...current, gridY: current.gridY + Math.sign(y - current.gridY) };
+        route2.push({ ...current });
+      }
+    }
+    return route2;
+  }
   function saveMoves(from, to, paths, record, after) {
+    to = to.filter((t) => {
+      const old = from.find((value) => value.id === t.id);
+      return old && (old.gridX !== t.gridX || old.gridY !== t.gridY || (paths.get(t.id) ?? []).some((point2) => point2.gridX !== old.gridX || point2.gridY !== old.gridY));
+    });
+    if (!to.length) {
+      finishBroadcast("cancel");
+      after?.();
+      return;
+    }
     animate(merged(to));
     void run(async () => {
-      const accepted = [], starts = [];
+      const accepted2 = [], starts = [];
       let failed = 0;
       for (const t of to) {
         const old = from.find((v) => v.id === t.id);
-        if (old.gridX === t.gridX && old.gridY === t.gridY && !(paths.get(t.id) ?? []).some((p) => p.gridX !== old.gridX || p.gridY !== old.gridY))
-          continue;
         try {
           const result = await writer.move(scope.container, t.id, {
             gridX: t.gridX,
             gridY: t.gridY,
             expectedVersion: old.version,
-            path: paths.get(t.id)
+            path: props.tacticalTerrain?.initialized ? tacticalCellPath(paths.get(t.id)) : paths.get(t.id)
           });
-          accepted.push(result);
-          starts.push(old);
+          const moved = result.tokens.find((token) => token.id === t.id);
+          if (moved) {
+            accepted2.push(moved);
+            starts.push(old);
+          }
         } catch {
           failed++;
         }
@@ -799,13 +920,14 @@ function tokenController(element, options) {
         error.value = text("{0} movement(s) refused: wall, locked token, no control, or a change in another window.", failed);
       if (!failed)
         after?.();
-      if (record && accepted.length) {
+      if (record && accepted2.length) {
         undo.value = [
           ...undo.value.slice(-49),
-          { from: starts, to: accepted, paths }
+          { from: starts, to: accepted2, paths }
         ];
         redo.value = [];
       }
+      return { recover: failed > 0 };
     });
   }
   function history(back) {
@@ -832,7 +954,7 @@ function tokenController(element, options) {
   function menu(e) {
     if (!interactive.value)
       return;
-    const token = hitToken(point(e), displayed.value, props.cell);
+    const token = hitToken(point(e), selectable(displayed.value), props.cell);
     if (!token || !props.gm && !token.canControl)
       return;
     stop(e);
@@ -843,7 +965,7 @@ function tokenController(element, options) {
   function double(e) {
     if (!interactive.value)
       return;
-    const token = hitToken(point(e), displayed.value, props.cell);
+    const token = hitToken(point(e), selectable(displayed.value), props.cell);
     if (token?.canOpenSheet) {
       stop(e);
       cancel();
@@ -885,7 +1007,7 @@ function tokenController(element, options) {
     }
     if (mod && e.key.toLowerCase() === "a") {
       stop(e);
-      selected.value = props.tokens.filter((t) => props.gm || t.canControl).map((t) => t.id);
+      selected.value = props.tokens.filter((t) => onLayer(t) && (props.gm || t.canControl)).map((t) => t.id);
       return;
     }
     if (mod && e.key.toLowerCase() === "c") {
@@ -961,7 +1083,7 @@ function tokenController(element, options) {
   const listeners2 = Object.entries(events).map(([name, fn]) => {
     const handler = (e) => {
       fn(e);
-      options.repaint();
+      if (name !== "pointermove") options.repaint();
     };
     element.addEventListener(name, handler);
     return [name, handler];
@@ -1031,10 +1153,14 @@ function tokenController(element, options) {
       options.repaint();
       return result;
     },
-    update(next) {
-      const oldTool = props.tool;
+    update(next, repaint = true) {
+      const oldTool = props.tool, oldLayer = props.layer;
       Object.assign(props, next);
-      if (oldTool !== props.tool)
+      if (oldLayer !== props.layer) {
+        selected.value = [];
+        context.value = void 0;
+      }
+      if (oldTool !== props.tool || oldLayer !== props.layer)
         cancel();
       if (next.tokens) {
         const rows = props.tokens;
@@ -1043,7 +1169,7 @@ function tokenController(element, options) {
           if (!fresh?.canOpenSheet || fresh.linkMode !== sheet.value.linkMode || sheet.value.canControl && !fresh.canControl)
             sheet.value = void 0;
         }
-        selected.value = selected.value.filter((id) => rows.some((t) => t.id === id));
+        selected.value = selected.value.filter((id) => rows.some((t) => t.id === id && onLayer(t)));
         if (drag?.original.some((t) => !rows.some((r) => r.id === t.id && r.version === t.version && r.canControl && !r.locked)))
           cancel();
         if (route.value.length && route.value[0].some((t) => !rows.some((r) => r.id === t.id && r.version === t.version && r.canControl && !r.locked)))
@@ -1056,7 +1182,7 @@ function tokenController(element, options) {
       }
       if (next.walls && walking.value && route.value.length && !props.gm && route.value.slice(1).some((step, i) => step.some((t, j) => movementBlocked(route.value[i][j], t, props.walls, props.cell))))
         cancel();
-      options.repaint();
+      if (repaint) options.repaint();
     },
     destroy() {
       closed = true;
@@ -1073,5 +1199,7 @@ function tokenController(element, options) {
   };
 }
 export {
+  createTokenSnapshots,
+  createTokenTeleports,
   tokenController
 };

@@ -1,0 +1,473 @@
+{
+  "route_status": 200,
+  "route": "http://127.0.0.1:3001/game/<campaign>",
+  "canvas": [
+    {
+      "w": 1280,
+      "h": 800,
+      "r": {
+        "x": 0,
+        "y": 0,
+        "width": 1280,
+        "height": 800,
+        "top": 0,
+        "right": 1280,
+        "bottom": 800,
+        "left": 0
+      }
+    }
+  ],
+  "notice": "Knossos QA - G4\nLibrary\n1",
+  "received": [
+    {
+      "type": "table.joined",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "chat.history",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "table.presence",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "chat.history",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "resources.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "resources.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "resources.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "resources.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "resources.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "actors.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "chat.history",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "maps.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "journals.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "actors.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "chat.history",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "actors.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "resources.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "resources.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "tokens.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "resources.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "maps.layers",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "resources.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "resources.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "resources.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "resources.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "resources.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "scene.viewport.ready",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "tokens.error",
+      "error": "movement_exceeded",
+      "message": "Movement exceeds the current allowance."
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "api.changed",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "resources.state",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "maps.layers",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "session.ping",
+      "error": null,
+      "message": null
+    },
+    {
+      "type": "table.presence",
+      "error": null,
+      "message": null
+    }
+  ],
+  "sent": [
+    {
+      "type": "api.watch",
+      "payload": null
+    },
+    {
+      "type": "chat.sync",
+      "payload": null
+    },
+    {
+      "type": "resources.sync",
+      "payload": null
+    },
+    {
+      "type": "resources.sync",
+      "payload": null
+    },
+    {
+      "type": "resources.sync",
+      "payload": null
+    },
+    {
+      "type": "resources.sync",
+      "payload": null
+    },
+    {
+      "type": "resources.sync",
+      "payload": null
+    },
+    {
+      "type": "actors.sync",
+      "payload": null
+    },
+    {
+      "type": "maps.sync",
+      "payload": null
+    },
+    {
+      "type": "journals.sync",
+      "payload": null
+    },
+    {
+      "type": "actors.sync",
+      "payload": null
+    },
+    {
+      "type": "chat.sync",
+      "payload": null
+    },
+    {
+      "type": "scene.viewport.stop",
+      "payload": null
+    },
+    {
+      "type": "actors.sync",
+      "payload": null
+    },
+    {
+      "type": "tokens.sync",
+      "payload": null
+    },
+    {
+      "type": "maps.layers",
+      "payload": null
+    },
+    {
+      "type": "resources.sync",
+      "payload": null
+    },
+    {
+      "type": "resources.sync",
+      "payload": null
+    },
+    {
+      "type": "resources.sync",
+      "payload": null
+    },
+    {
+      "type": "resources.sync",
+      "payload": null
+    },
+    {
+      "type": "resources.sync",
+      "payload": null
+    },
+    {
+      "type": "scene.viewport",
+      "payload": null
+    },
+    {
+      "type": "token.drag",
+      "payload": null
+    },
+    {
+      "type": "token.drag",
+      "payload": null
+    },
+    {
+      "type": "token.drag",
+      "payload": null
+    },
+    {
+      "type": "token.drag",
+      "payload": null
+    },
+    {
+      "type": "token.drag",
+      "payload": null
+    },
+    {
+      "type": "tokens.command",
+      "payload": {
+        "tableId": "12279004-3006-48e4-8a28-95e62aea9465",
+        "action": "move",
+        "data": {
+          "id": "f1a42870-58de-46ab-b0c4-3e53b6f3b5fb",
+          "gridX": 4,
+          "gridY": 2,
+          "expectedVersion": 7,
+          "path": [
+            {
+              "gridX": 5,
+              "gridY": 2
+            },
+            {
+              "gridX": 4,
+              "gridY": 2
+            }
+          ],
+          "mapId": "38c749d2-f1ec-4b5c-8fc5-c668fe45c1ec"
+        },
+        "requestId": "4311efa8-b738-4272-a64e-46609feb2ba6"
+      }
+    },
+    {
+      "type": "scene.viewport",
+      "payload": null
+    },
+    {
+      "type": "maps.layers",
+      "payload": null
+    },
+    {
+      "type": "token.drag",
+      "payload": null
+    },
+    {
+      "type": "scene.viewport",
+      "payload": null
+    },
+    {
+      "type": "session.pong",
+      "payload": null
+    },
+    {
+      "type": "scene.viewport",
+      "payload": null
+    },
+    {
+      "type": "scene.viewport",
+      "payload": null
+    }
+  ],
+  "console_errors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ]
+}

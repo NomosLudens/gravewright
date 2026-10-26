@@ -1,0 +1,30 @@
+Checkout: /home/tonyus-dev/Portifolio/gravewright
+Branch: feat/tactics-godot-transport-20261014
+HEAD: 478b93be191479f45f074183da4cdee9ac96be23
+QA DB: /tmp/gravewright-tactics-qa-20261015/gravewright.sqlite3
+QA media: /tmp/gravewright-tactics-qa-20261015/media
+
+Django full regression:
+  GRAVEWRIGHT_DATABASE=/tmp/gravewright-tactics-qa-20261015/gravewright.sqlite3 GRAVEWRIGHT_MEDIA_ROOT=/tmp/gravewright-tactics-qa-20261015/media DJANGO_SETTINGS_MODULE=config.settings .venv/bin/python manage.py test --keepdb
+  RESULT: 405 tests, OK.
+
+Focused regression matching the 14-test reference:
+  GRAVEWRIGHT_DATABASE=/tmp/gravewright-tactics-qa-20261015/gravewright.sqlite3 GRAVEWRIGHT_MEDIA_ROOT=/tmp/gravewright-tactics-qa-20261015/media DJANGO_SETTINGS_MODULE=config.settings .venv/bin/python manage.py test --keepdb -v 1 gravewright.maps.tests.test_tactical_terrain gravewright.tokens.tests gravewright.combat.tests_gate03d
+  RESULT: 14 tests, OK.
+
+Additional raster upload/tile regression:
+  GRAVEWRIGHT_DATABASE=/tmp/gravewright-tactics-qa-20261015/gravewright.sqlite3 GRAVEWRIGHT_MEDIA_ROOT=/tmp/gravewright-tactics-qa-20261015/media DJANGO_SETTINGS_MODULE=config.settings .venv/bin/python manage.py test --keepdb -v 2 gravewright.maps.tests.test_tactical_terrain gravewright.tokens.tests gravewright.combat.tests_gate03d gravewright.maps.tests.test_maps.MapTests.test_upload_pyramid_and_authorized_tile_delivery
+  RESULT: 15 tests, OK (the same 14 plus authorized tile delivery).
+Godot import:
+  /home/tonyus-dev/.local/opt/godot-4.6.3/Godot_v4.6.3-stable_linux.x86_64 --headless --path tactics/godot --editor --quit
+  RESULT: exit 0; filesystem import/editor initialization completed.
+
+Godot Web Compatibility export:
+  /home/tonyus-dev/.local/opt/godot-4.6.3/Godot_v4.6.3-stable_linux.x86_64 --headless --path tactics/godot --export-release Web .godot/export/index.html
+  RESULT: exit 0; Web export pack completed.
+
+Git whitespace validation:
+  git diff --check
+  RESULT: passed after report and evidence updates.
+
+No product code changed. The pre-existing untracked tactics/godot/.godot/ cache/export directory was preserved.

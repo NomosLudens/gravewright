@@ -1,11 +1,16 @@
 import json
+import uuid
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from django.conf import settings
+from django.core.files.storage import default_storage
+from django.db import transaction
 from django.http import FileResponse, Http404, JsonResponse
 from django.views.decorators.http import require_GET, require_POST
+from gravewright.campaigns.models import Campaign
 from gravewright.journals.services import JournalError, member
-from . import services
-from .models import Scene, Tile
+from . import services, tiling
+from .models import Scene, Tile, SceneNavigation
 
 
 def notify(campaign_id):
@@ -15,23 +20,84 @@ def notify(campaign_id):
 
 
 @require_POST
+def empty(request, campaign_id):
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "Authentication required."}, status=403)
+    from . import empty_maps
+    try:
+        payload = json.loads(request.body)
+        result = empty_maps.create(campaign_id, request.user.pk, payload)
+        return JsonResponse(result, status=201)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"error": "Invalid empty map settings."}, status=400)
+    except (services.MapError, JournalError) as error:
+        return JsonResponse({"error": str(error)}, status=400)
+
+
+@require_POST
 def upload(request, campaign_id):
     if not request.user.is_authenticated:
         return JsonResponse({"error": "Authentication required."}, status=403)
+    stored = []
     try:
-        raw_settings = json.loads(request.POST.get("settings", "{}"))
-        row = services.create_from_upload(
-            campaign_id,
-            request.user.pk,
-            request.POST.get("name"),
-            raw_settings,
-            request.FILES.get("map"),
-            activate=request.POST.get("activate") == "true",
-        )
+        who = member(campaign_id, request.user.pk)
+        services.manage(who)
+        name = services.title(request.POST.get("name"))
+        try:
+            raw_settings = json.loads(request.POST.get("settings", "{}"))
+        except json.JSONDecodeError:
+            raise services.MapError("Invalid scene settings.") from None
+        options = services.settings(raw_settings)
+        visibility = raw_settings.get("visibility", "players")
+        if visibility not in ("players", "gm"):
+            raise services.MapError("Invalid visibility.")
+        target = services.folder(raw_settings.get("groupId"), who)
+        incoming = request.FILES.get("map")
+        if incoming is None or incoming.size > settings.MAP_UPLOAD_MAX_BYTES:
+            raise services.MapError("Choose a map image within the configured upload limit.")
+        tiles = []
+
+        def save_tile(lod, x, y, content):
+            path = default_storage.save(
+                "maps/tiles/" + uuid.uuid4().hex + ".webp", content
+            )
+            stored.append(path)
+            tiles.append(Tile(lod=lod, x=x, y=y, file=path, byte_size=content.size))
+
+        width, height, max_lod = tiling.generate_pyramid(incoming, save_tile)
+        with transaction.atomic():
+            Campaign.objects.select_for_update().get(pk=campaign_id)
+            who = member(campaign_id, request.user.pk)
+            services.manage(who)
+            target = services.folder(raw_settings.get("groupId"), who)
+            row = Scene.objects.create(
+                campaign_id=campaign_id,
+                name=name,
+                folder=target,
+                visibility=visibility,
+                width=width,
+                height=height,
+                max_lod=max_lod,
+                settings=options,
+            )
+            for tile in tiles:
+                tile.scene = row
+            Tile.objects.bulk_create(tiles)
+            if request.POST.get("activate") == "true":
+                from .audience import broadcast
+                broadcast(who, row)
+            SceneNavigation.objects.update_or_create(
+                membership=who,
+                defaults={"scene": None if request.POST.get("activate") == "true" else row},
+            )
+        stored.clear()
         notify(campaign_id)
         return JsonResponse(services.view(row), status=201)
-    except (services.MapError, JournalError, ValueError) as error:
+    except (services.MapError, JournalError) as error:
         return JsonResponse({"error": str(error)}, status=400)
+    finally:
+        for path in stored:
+            default_storage.delete(path)
 
 
 def authorized(request, map_id):
@@ -76,6 +142,56 @@ def state(request, campaign_id):
         return JsonResponse(services.state(campaign_id, request.user.pk))
     except services.MapError, JournalError:
         raise Http404 from None
+
+
+@require_GET
+def automation(request, map_id):
+    """Recent object blueprint runs for the scene's game masters only."""
+    from .blueprint_runtime import automation_doors, automation_memory, automation_paused, automation_runs, automation_variables
+    from .blueprint_delays import pending_delays
+
+    row = authorized(request, map_id)
+    try:
+        services.manage(member(row.campaign_id, request.user.pk))
+    except services.MapError, JournalError:
+        raise Http404 from None
+    response = JsonResponse({"sceneId": str(row.pk), "paused": automation_paused(row),
+                             "doors": automation_doors(row), "runs": automation_runs(row),
+                             "variables": automation_variables(row), "memory": automation_memory(row),
+                             "delays": pending_delays(row)})
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@require_GET
+def automation_network(request, map_id):
+    from . import blueprint_network
+    row = authorized(request, map_id)
+    try:
+        result = blueprint_network.state(row.campaign_id, request.user.pk, row.pk)
+    except (services.MapError, JournalError):
+        raise Http404 from None
+    response = JsonResponse(result)
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@require_POST
+def automation_network_element(request, map_id, element_id):
+    from . import blueprint_network
+    row = authorized(request, map_id)
+    try:
+        if len(request.body) > 1024 * 1024:
+            raise services.MapError("The scene network command is too large.")
+        result = blueprint_network.save(row.campaign_id, request.user.pk, row.pk, element_id, json.loads(request.body))
+        response = JsonResponse(result)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        response = JsonResponse({"error": "Invalid scene network command."}, status=400)
+    except (services.MapError, JournalError) as error:
+        code = getattr(error, "code", "invalid_input")
+        response = JsonResponse({"error": str(error), "code": code}, status={"conflict": 409, "forbidden": 403, "not_found": 404}.get(code, 400))
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 @require_GET

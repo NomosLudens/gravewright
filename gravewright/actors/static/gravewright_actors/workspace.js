@@ -1,3 +1,7 @@
+import { detachWindow, restoreWindow } from '/static/gravewright_table/window-controls.js';
+import { writeReference } from '/static/gravewright_table/references.js';
+import { openFormModal, modalText } from '/static/gravewright_table/form-modal.js';
+import { mountModal } from '/static/gravewright_table/modal.js';
 import {
   beginTreeDrag,
   cancelTreeDrag,
@@ -9,7 +13,10 @@ import {
   mergePatch,
 } from "/static/gravewright_web/vendor/datastar-1.0.3.js";
 import { directoryView } from "/static/gravewright_maps/directory.js";
-import { openSheet } from "/static/gravewright_pdf_system/sheet.js";
+import { openSheet } from "./sheet.js";
+import { openPermissions } from "/static/gravewright_table/permissions.js";
+import { initialContent, restoreContent } from '/static/gravewright_table/content-state.js';
+import { createTranslator } from '/static/gravewright_modules/i18n.js';
 export const clone = (id) =>
   document.getElementById(id).content.firstElementChild.cloneNode(true);
 export const icon = (name) =>
@@ -87,156 +94,104 @@ window.addEventListener("click", () => menu?.remove());
 const panel = document.getElementById("actors-panel"),
   workspace = document.getElementById("table-workspace"),
   campaign = workspace.dataset.tableId;
+const typeTranslator = createTranslator(workspace.dataset.systemId || 'gravewright');
 const labels = JSON.parse(
   document.getElementById("map-text")?.textContent || "{}",
 );
-const kallistisSkills = [
-  ["atletismo", "Atletismo"], ["combate", "Combate"], ["pontaria", "Pontaria"],
-  ["furtividade", "Furtividade"], ["percepcao", "Percepção"],
-  ["sobrevivencia", "Sobrevivência"], ["investigacao", "Investigação"],
-  ["conhecimento", "Conhecimento"], ["oficio", "Ofício"],
-  ["influencia", "Influência"], ["empatia", "Empatia"], ["cuidado", "Cuidado"],
-  ["magia", "Magia"], ["evocacao", "Evocação"], ["velarim", "Velarim"],
-];
 let state = {
     actors: [],
     actorTypes: [],
     folders: [],
     templates: [],
+    templateConfig: null,
     players: [],
     is_gm: false,
   },
   sheet,
   dialog,
-  runtimeDialog,
   deletedTemplate,
   popup,
   kallistisImportDialog,
   kallistisImportPayload;
 const command = (action, data) =>
   window.gravewrightRealtime.resourceCommand("actors", action, data);
-async function startKallistisImport(file) {
-  const raw = await file.text();
-  let payload;
-  try {
-    payload = JSON.parse(raw);
-  } catch {
-    throw Error("O arquivo não contém JSON válido.");
-  }
-  const data = new FormData();
-  data.set("campaign_id", campaign);
-  data.set("file", file);
-  const csrf = await csrfToken();
-  const response = await fetch("/api/kallistis/import/preview", {
-    method: "POST",
-    credentials: "same-origin",
-    body: data,
-    headers: { "X-CSRF-Token": csrf },
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok || !result.valid) throw Error(result.error || "Ficha KALLISTIS rejeitada.");
-  const optionsResponse = await fetch("/api/kallistis/import/options", {
-    credentials: "same-origin",
-    cache: "no-store",
-  });
-  const options = await optionsResponse.json().catch(() => ({}));
-  if (!optionsResponse.ok) throw Error(options.error || "Não foi possível listar campanhas.");
-  openKallistisImport(result.preview, payload, options.campaigns || []);
-}
-
 async function csrfToken() {
   const response = await fetch("/api/security/csrf", {
-    method: "GET",
-    credentials: "same-origin",
-    cache: "no-store",
+    method: "GET", credentials: "same-origin", cache: "no-store",
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok || !result.ready || !result.token)
-    throw new Error("O formulário seguro expirou. Tente novamente.");
+    throw new Error("A sessão segura expirou. Tente novamente.");
   return result.token;
 }
-
-function openKallistisImport(previewData, payload, campaigns) {
+async function startKallistisImport(file) {
+  let payload;
+  try { payload = JSON.parse(await file.text()); }
+  catch { throw new Error("O arquivo não contém JSON válido."); }
+  const formData = new FormData();
+  formData.set("campaign_id", campaign);
+  formData.set("file", file);
+  const token = await csrfToken();
+  const response = await fetch("/api/kallistis/import/preview", {
+    method: "POST", credentials: "same-origin", body: formData,
+    headers: { "X-CSRF-Token": token },
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.valid) throw new Error(result.error || "Ficha KALLISTIS rejeitada.");
+  const optionsResponse = await fetch("/api/kallistis/import/options", {
+    credentials: "same-origin", cache: "no-store",
+  });
+  const options = await optionsResponse.json().catch(() => ({}));
+  if (!optionsResponse.ok) throw new Error(options.error || "Não foi possível listar campanhas.");
+  openKallistisImport(result.preview, payload, options.campaigns || []);
+}
+function openKallistisImport(preview, payload, campaigns) {
   kallistisImportDialog?.remove();
   const el = clone("kallistis-import-dialog");
   kallistisImportDialog = el;
   kallistisImportPayload = payload;
-  const set = (name, value) => {
-    el.querySelector("[data-import-" + name + "]").textContent = value;
-  };
-  set("character", previewData.character_name);
-  set("state", previewData.source_state);
-  set("mode", previewData.export_mode);
-  set("canonical", previewData.canonical ? "sim" : "não");
-  set("mesa", previewData.mesa?.name || "Não atribuída");
-  set("email", previewData.player.email_present ? "presente" : "ausente");
-  set("id", previewData.kallistis_character_id);
+  for (const [key, value] of Object.entries({
+    character: preview.character_name, state: preview.source_state, mode: preview.export_mode,
+    canonical: preview.canonical ? "sim" : "não", mesa: preview.mesa?.name || "Não atribuída",
+    email: preview.player.email_present ? "presente" : "ausente", id: preview.kallistis_character_id,
+  })) el.querySelector(`[data-import-${key}]`).textContent = value ?? "";
   const groups = el.querySelector("[data-import-groups]");
-  groups.replaceChildren();
-  for (const [label, values] of [
-    ["Importados", previewData.mapping.imported],
-    ["Preservados como metadados de origem", previewData.mapping.preserved_as_source_metadata],
-    ["Não representados", previewData.mapping.unsupported],
-  ]) {
+  for (const [label, values] of [["Importados", preview.mapping.imported], ["Preservados", preview.mapping.preserved_as_source_metadata], ["Não representados", preview.mapping.unsupported]]) {
     const row = document.createElement("p");
-    row.textContent = label + ": " + (values.length ? values.join(", ") : "nenhum");
+    row.textContent = `${label}: ${values.length ? values.join(", ") : "nenhum"}`;
     groups.append(row);
   }
   const campaignSelect = el.elements.campaign;
-  const membershipSelect = el.elements.membership;
+  const memberSelect = el.elements.membership;
   for (const row of campaigns) campaignSelect.append(new Option(row.name, row.id));
-  if (campaigns.some((row) => row.id === campaign)) campaignSelect.value = campaign;
-  const renderMemberships = () => {
-    const selected = campaigns.find((row) => row.id === campaignSelect.value);
-    membershipSelect.replaceChildren();
-    for (const member of selected?.memberships || [])
-      membershipSelect.append(new Option(member.name, member.id));
-    membershipSelect.disabled = !(selected?.memberships?.length);
-    el.querySelector("[type=submit]").disabled = membershipSelect.disabled;
+  if (campaigns.some(row => row.id === campaign)) campaignSelect.value = campaign;
+  const renderMembers = () => {
+    const selected = campaigns.find(row => row.id === campaignSelect.value);
+    memberSelect.replaceChildren();
+    for (const member of selected?.memberships || []) memberSelect.append(new Option(member.name, member.id));
+    memberSelect.disabled = !selected?.memberships?.length;
+    el.querySelector("[type=submit]").disabled = memberSelect.disabled;
   };
-  campaignSelect.onchange = renderMemberships;
-  renderMemberships();
-  el.querySelector("header button").onclick = () => {
-    el.remove();
-    kallistisImportDialog = undefined;
-    kallistisImportPayload = undefined;
-  };
-  el.onsubmit = async (event) => {
+  campaignSelect.onchange = renderMembers;
+  renderMembers();
+  el.querySelector("header button").onclick = () => { el.remove(); kallistisImportDialog = undefined; };
+  el.onsubmit = async event => {
     event.preventDefault();
-    const submit = el.querySelector("[type=submit]");
-    const status = el.querySelector("[data-import-status]");
-    submit.disabled = true;
-    status.hidden = true;
+    const button = el.querySelector("[type=submit]"), status = el.querySelector("[data-import-status]");
+    button.disabled = true; status.hidden = true;
     try {
-      const csrf = await csrfToken();
+      const token = await csrfToken();
       const response = await fetch("/api/kallistis/import/confirm", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRF-Token": csrf,
-        },
-        body: JSON.stringify({
-          campaign_id: campaignSelect.value,
-          membership_id: membershipSelect.value,
-          payload: kallistisImportPayload,
-        }),
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
+        body: JSON.stringify({ campaign_id: campaignSelect.value, membership_id: memberSelect.value, payload: kallistisImportPayload }),
       });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result.valid) throw Error(result.error || "Importação rejeitada.");
-      el.remove();
-      kallistisImportDialog = undefined;
-      kallistisImportPayload = undefined;
-      window.gravewrightRealtime?.actorsSubscribe();
-    } catch (cause) {
-      status.textContent = cause.message;
-      status.hidden = false;
-      submit.disabled = false;
-    }
+      if (!response.ok || !result.valid) throw new Error(result.error || "Importação rejeitada.");
+      el.remove(); kallistisImportDialog = undefined; kallistisImportPayload = undefined;
+      window.gravewrightRealtime?.actorsSubscribe(true);
+    } catch (error) { status.textContent = error.message; status.hidden = false; button.disabled = false; }
   };
-  const r = panel.getBoundingClientRect();
-  el.style.left = Math.max(13, r.left - 258) + "px";
-  el.style.top = Math.max(13, r.top + 51) + "px";
   document.body.append(el);
 }
 function error(message) {
@@ -246,41 +201,75 @@ function error(message) {
   show(el, true);
 }
 function form(id, title, save) {
-  dialog?.remove();
+  dialog?.close();
   const el = clone(id);
   dialog = el;
   el.setAttribute("aria-label", title);
   el.querySelector("header strong").textContent = title;
-  const r = panel.getBoundingClientRect();
-  el.style.left = Math.max(13, r.left - 258) + "px";
-  el.style.top = Math.max(13, r.top + 51) + "px";
-  el.querySelector("header button").onclick = () => el.remove();
+  const fieldset = el.querySelector('fieldset');
+  const footer = document.createElement('footer');
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.textContent = modalText('Cancel', 'Cancelar');
+  footer.append(cancel, el.querySelector('[type=submit]'));
+  el.append(footer);
+  let saving = false;
+  const close = () => { if (!saving) el.close(); };
+  el.querySelector("header button").onclick = close;
+  cancel.onclick = close;
   el.onsubmit = async (e) => {
     e.preventDefault();
-    const button = el.querySelector("[type=submit]");
-    button.disabled = true;
+    if (saving) return;
+    saving = true;
+    fieldset.disabled = true;
+    for (const button of el.querySelectorAll('button')) button.disabled = true;
     try {
       await save(el);
-      el.remove();
+      saving = false;
+      el.close();
     } catch (cause) {
       const p = el.querySelector("[role=alert]");
       p.textContent = cause.message;
       show(p, true);
     } finally {
-      button.disabled = false;
+      saving = false;
+      fieldset.disabled = false;
+      for (const button of el.querySelectorAll('button')) button.disabled = false;
     }
   };
-  document.body.append(el);
+  el.addEventListener('close', () => { if (dialog === el) dialog = undefined; }, {once: true});
+  mountModal(el, {canClose: () => !saving});
   el.querySelector("input")?.focus();
   return el;
 }
+function renderActorTypeLabel(node, type) {
+  const descriptor = typeof type === 'string'
+    ? state.actorTypes.find(entry => entry.id === type) : type;
+  const label = descriptor?.label || descriptor?.id || type;
+  const translated = descriptor?.labelKey && typeTranslator.has(descriptor.labelKey);
+  node.textContent = translated ? typeTranslator.t(descriptor.labelKey) : label;
+  if (translated) node.setAttribute('translate', 'no');
+  else node.removeAttribute('translate');
+  return node;
+}
 function syncActorTypes() {
   const select = dialog?.querySelector('[name=actorType]');
-  if (!select || select.disabled) return;
+  if (!select || select.matches(':disabled')) return;
   const selected = select.value;
-  select.replaceChildren(...state.actorTypes.map((type) => new Option(type.label, type.id)));
+  select.replaceChildren(...state.actorTypes.map((type) =>
+    renderActorTypeLabel(new Option('', type.id), type)));
   if (state.actorTypes.some((type) => type.id === selected)) select.value = selected;
   dialog.querySelector('[type=submit]').disabled = !state.actorTypes.length;
+}
+function templateData(value) {
+  const path = state.templateConfig?.dataPath;
+  if (!Array.isArray(path) || !path.length || path.length > 16 ||
+      path.some(key => typeof key !== 'string' || !key || ['__proto__', 'constructor', 'prototype'].includes(key))) return {};
+  const data = {};
+  let cursor = data;
+  for (const key of path.slice(0, -1)) cursor = cursor[key] = {};
+  cursor[path.at(-1)] = value;
+  return data;
 }
 function edit(actor, folderId) {
   const el = form(
@@ -293,7 +282,7 @@ function edit(actor, folderId) {
         name: el.elements.name.value,
         actorType: actor?.actorType || el.elements.actorType.value,
         folderId: folderId ?? actor?.folderId,
-        data: { pdf: { asset: el.elements.template.value } },
+        data: templateData(el.elements.template.value),
       }),
   );
   el.elements.name.value = actor?.name || "";
@@ -302,11 +291,11 @@ function edit(actor, folderId) {
   show(el.querySelector("[data-actor-type]"), !actor);
   show(
     el.querySelector("[data-actor-template]"),
-    !actor && state.systemId === 'gravewright-pdf-system' && !!state.templates.length,
+    !actor && !!state.templateConfig && !!state.templates.length,
   );
   show(
     el.querySelector("[data-no-templates]"),
-    !actor && state.systemId === 'gravewright-pdf-system' && !state.templates.length,
+    !actor && !!state.templateConfig && !state.templates.length,
   );
   el.querySelector("[type=submit] span").textContent = actor
     ? "Save"
@@ -335,142 +324,20 @@ function folder(existing, parentId) {
     (el.elements.color.value = e.target.value);
 }
 function permissions(actor) {
-  const el = form("actor-permissions", "Permissions — " + actor.name, (el) =>
-    command("actor.permissions", {
-      id: actor.id,
-      permissions: Object.fromEntries(
-        state.players.map((p) => [
-          p.id,
-          el.querySelector(`input[name="p-${p.id}"]:checked`).value,
-        ]),
-      ),
-    }),
-  );
-  for (const p of state.players) {
-    const row = clone("actor-permission-row");
-    row.querySelector("legend").textContent = p.name;
-    for (const input of row.querySelectorAll("input")) {
-      input.name = "p-" + p.id;
-      input.checked = input.value === (actor.permissions?.[p.id] || "none");
-    }
-    el.querySelector("[data-permission-rows]").append(row);
-  }
-  if (!state.players.length) {
-    el.querySelector("[data-permission-rows]").textContent =
-      "No players in this table.";
-    show(el.querySelector("[type=submit]"), false);
-  }
+  return openPermissions('actors', actor.id);
 }
-function open(actor, token) {
-  sheet?.close();
-  sheet = openSheet(campaign, actor.id, token, state.is_gm, () => {
+async function open(actor, token) {
+  if (actor.canOpen === false) return;
+  if (sheet && !await sheet.close()) return;
+  sheet = openSheet(campaign, actor, token, document.getElementById('table-workspace').dataset.role === 'gm', () => {
     sheet = undefined;
-  }, actor.kallistisCharacterId);
-}
-function runtime(actor) {
-  runtimeDialog?.remove();
-  const el = clone("actor-runtime");
-  runtimeDialog = el;
-  el.dataset.runtimeActorId = actor.id;
-  el.querySelector("header strong").textContent = "Runtime — " + actor.name;
-  const r = panel.getBoundingClientRect();
-  el.style.left = Math.max(13, r.left - 258) + "px";
-  el.style.top = Math.max(13, r.top + 51) + "px";
-  el.querySelector("header button").onclick = () => { el.remove(); runtimeDialog = undefined; };
-  const editable = actor.canEdit;
-  const showError = message => {
-    const p = el.querySelector("[role=alert]");
-    p.textContent = message;
-    show(p, true);
-  };
-  const run = (action, data = {}) => command(action, { id: actor.id, ...data }).then(result => {
-    if (result?.runtime) render({ runtime: result.runtime });
-    return result;
-  }).catch(cause => showError(cause.message));
-  const render = current => {
-    const state = current.runtime || {};
-    const resources = state.resources || {};
-    const labels = { vitality: "Vitality", lucidity: "Lucidity", flow: "Flow", breath: "Breath", determination: "Determination" };
-    const box = el.querySelector("[data-runtime-resources]");
-    box.replaceChildren();
-    for (const name of Object.keys(labels)) {
-      const value = resources[name] || { current: 0, max: 0 };
-      const row = document.createElement("div");
-      row.className = "actor-runtime-dialog__resource";
-      const label = document.createElement("strong");
-      label.textContent = `${labels[name]}: ${value.current}/${value.max}`;
-      const spend = document.createElement("button");
-      spend.type = "button"; spend.textContent = "−"; spend.disabled = !editable;
-      spend.title = `Spend 1 ${labels[name]}`;
-      spend.onclick = () => run("runtime.resource", { resource: name, operation: "spend", amount: 1 });
-      const gain = document.createElement("button");
-      gain.type = "button"; gain.textContent = "+"; gain.disabled = !editable;
-      gain.title = `Recover 1 ${labels[name]}`;
-      gain.onclick = () => run("runtime.resource", { resource: name, operation: "recover", amount: 1 });
-      row.append(label, spend, gain); box.append(row);
-    }
-    const rulesBox = el.querySelector("[data-runtime-rules]");
-    const canonical = state.rules || {};
-    const economy = canonical.action_economy || {};
-    const coro = canonical.coro || {};
-    rulesBox.textContent = `Fulgor ${canonical.fulgor ?? 0}/5 · Sombra ${canonical.sombra ?? 0}/6 · Coro ${coro.pulses ?? 0}/${(coro.maximum_bars ?? 1) * 4} · Ação ${economy.action ?? 0} · Movimento ${economy.movement ?? 0} · Reação ${economy.reaction ?? 0}`;
-    for (const input of el.querySelectorAll("fieldset input")) input.value = state.attributes?.[input.name] ?? 0;
-    const skillsBox = el.querySelector("[data-runtime-skills]");
-    skillsBox.replaceChildren();
-    for (const [name, labelText] of kallistisSkills) {
-      const label = document.createElement("label");
-      label.textContent = labelText;
-      const input = document.createElement("input");
-      input.name = name; input.type = "number"; input.min = "0"; input.max = "5";
-      input.dataset.runtimeSkill = name; input.value = state.skills?.[name] ?? 0;
-      label.append(input); skillsBox.append(label);
-    }
-    for (const button of el.querySelectorAll("button[data-runtime-action]")) button.disabled = !editable;
-    const conditions = el.querySelector("[data-runtime-conditions]");
-    conditions.replaceChildren();
-    for (const item of state.conditions || []) {
-      const row = document.createElement("div");
-      row.textContent = item.type;
-      const remove = document.createElement("button");
-      remove.type = "button"; remove.textContent = "Remove"; remove.disabled = !editable;
-      remove.onclick = () => run("runtime.condition.remove", { conditionId: item.id });
-      row.append(" ", remove); conditions.append(row);
-    }
-  };
-  el.querySelector('[name="condition_type"]').replaceChildren(...["ABALADO", "EXPOSTO", "IMOBILIZADO", "LENTO", "SANGRANDO", "SILENCIADO", "DISSONANTE", "FRATURADO", "CORROMPIDO", "CAIDO"].map(type => new Option(type, type)));
-  el.querySelector('[data-runtime-action="safe_pause"]').onclick = () => run("runtime.safe_pause");
-  el.querySelector('[data-runtime-action="full_rest"]').onclick = () => run("runtime.full_rest");
-  el.querySelectorAll('[data-runtime-rule]').forEach(button => {
-    button.onclick = () => {
-      const operation = button.dataset.runtimeRule;
-      const data = operation === "fulgor" ? { amount: 1 } : operation === "coro.add" ? { eligible: true } : {};
-      run("runtime.rules", { operation, ...data });
-    };
   });
-  el.querySelector('[data-runtime-action="condition.apply"]').onclick = () => run("runtime.condition.apply", { conditionType: el.elements.condition_type.value });
-  el.querySelector('[data-runtime-action="initialize"]').onclick = () => run("runtime.initialize", {
-    attributes: Object.fromEntries([...el.querySelectorAll("[data-runtime-attribute]"), el.elements.marco].map(input => [input.name, Number(input.value)])),
-    skills: Object.fromEntries([...el.querySelectorAll("[data-runtime-skill]")].map(input => [input.dataset.runtimeSkill, Number(input.value)])),
-  });
-  el.querySelector("[type=submit]")?.removeAttribute("type");
-  render(actor);
-  el._runtimeRender = render;
-  document.body.append(el);
 }
 function remove(actor) {
-  const el = clone("journal-confirm");
-  el.querySelector("p").textContent = "Remove " + actor.name + "?";
-  const b = el.querySelectorAll("button");
-  b[0].onclick = async () => {
-    try {
-      await command("actor.delete", { id: actor.id });
-      el.remove();
-    } catch (e) {
-      error(e.message);
-    }
-  };
-  b[1].onclick = () => el.remove();
-  document.body.append(el);
+  const el = openFormModal(modalText('Remove character','Remover personagem'), [], () => command('actor.delete', {id:actor.id}), {key:'actor-delete:'+actor.id,submitLabel:modalText('Delete','Excluir')});
+  const text = document.createElement('p');
+  text.textContent = modalText('Remove ','Remover ') + actor.name + '?';
+  el.querySelector('[data-fields]').append(text);
 }
 function paint() {
   if (!panel) return;
@@ -537,6 +404,7 @@ function paint() {
       toggle.oncontextmenu = (e) =>
         context(e, [
           { icon: "PencilSimple", label: "Edit folder", run: () => folder(f) },
+          { icon: "UsersThree", label: "Permissions", run: () => openPermissions('actor-folders', f.id) },
           {
             icon: "FolderPlus",
             label: "Create folder",
@@ -565,8 +433,7 @@ function paint() {
     )) {
       const el = clone("actor-entry");
       el.querySelector("strong").textContent = a.name;
-      el.querySelector("small").textContent =
-        state.actorTypes.find((type) => type.id === a.actorType)?.label || a.actorType;
+      renderActorTypeLabel(el.querySelector("small"), a.actorType);
       if (a.portraitUrl) {
         const image = document.createElement("img");
         image.src = a.portraitUrl;
@@ -574,6 +441,7 @@ function paint() {
         el.querySelector("svg").replaceWith(image);
       }
       el.onclick = () => open(a);
+      el.setAttribute('aria-disabled', String(a.canOpen === false));
       el.draggable = false;
       el.onpointerdown = (e) => {
         if (state.is_gm)
@@ -596,15 +464,15 @@ function paint() {
           );
       };
       el.ondragstart = (e) => {
+        writeReference(e.dataTransfer, {type: 'actor', id: a.id, title: a.name});
         e.dataTransfer.setData(
           "application/x-gravewright-actor",
           JSON.stringify({ actorId: a.id }),
         );
       };
       el.oncontextmenu = (e) => {
-        context(e, [
-            { icon: "Heart", label: "Runtime resources", run: () => runtime(a) },
-            ...(state.is_gm ? [
+        if (state.is_gm)
+          context(e, [
             { icon: "NotePencil", label: "Open sheet", run: () => open(a) },
             {
               icon: "PencilSimple",
@@ -622,7 +490,6 @@ function paint() {
               danger: true,
               run: () => remove(a),
             },
-            ] : []),
           ]);
       };
       list.append(el);
@@ -634,8 +501,12 @@ function paint() {
     panel.querySelector(".actor-directory__empty"),
     !view.visibleEntries.size,
   );
+  const uploadButton = panel.querySelector('[data-actor-panel="upload"]');
+  if (uploadButton) show(uploadButton, !!state.templateConfig);
   const templates = panel.querySelector("[data-templates]");
+  show(templates, !!state.templateConfig);
   templates.replaceChildren();
+  if (!state.templateConfig) return;
   const folder = clone("journal-folder");
   folder.querySelector(".gw-folder__label").textContent = "Templates";
   folder.querySelector(".gw-folder__count").textContent =
@@ -669,9 +540,9 @@ function paint() {
       strong = document.createElement("strong"),
       small = document.createElement("small");
     strong.textContent = a.name;
-    small.textContent = "PDF";
+    small.textContent = state.templateConfig.label || '';
     text.append(strong, small);
-    row.append(icon("FilePdf"), text);
+    row.append(icon(state.templateConfig.icon || 'FileText'), text);
     if (state.is_gm) {
       const b = document.createElement("button");
       b.className = "actor-directory__template-remove";
@@ -702,42 +573,49 @@ function paint() {
   templates.append(folder);
 }
 window.gravewrightActors = {
+  showDirectory() {
+    if (popup && !popup.closed) { popup.focus(); return; }
+    restoreWindow(panel);
+    mergePatch({ _actorsOpen: true });
+    requestAnimationFrame(() => panel.dispatchEvent(new Event('focusin', { bubbles: true })));
+  },
   toggle() {
+    if (popup && !popup.closed) { popup.focus(); return; }
+    if (panel.classList.contains('game-panel--minimized')) { restoreWindow(panel); mergePatch({_actorsOpen:true}); return; }
     mergePatch({ _actorsOpen: !getPath("_actorsOpen") });
   },
-  open: (actorId, token) => open({ id: actorId }, token),
+  open: (actorId, token) => open(state.actors.find(actor => actor.id === actorId) || initialContent('actors')?.actors.find(actor => actor.id === actorId) || { id: actorId, ...token }, token),
 };
 if (panel) {
+  const stopTypeLabels = typeTranslator.onChange(() => {
+    syncActorTypes();
+    paint();
+  });
+  window.addEventListener('pagehide', stopTypeLabels, { once: true });
   panel.querySelector(".game-directory").dataset.treeScroll = "";
   panel.onclick = (e) => {
     const a = e.target.closest("[data-actor-panel]")?.dataset.actorPanel;
     if (a === "close") mergePatch({ _actorsOpen: false });
     if (a === "minimize") panel.classList.toggle("game-panel--minimized");
-    if (a === "import-kallistis") {
-      panel.querySelector("[data-kallistis-import]")?.click();
-      return;
-    }
     if (a === "detach") {
       if (popup && !popup.closed) {
         popup.focus();
         return;
       }
-      popup = window.open("", "actors-directory", "popup,width=377,height=754");
-      if (!popup) return;
-      for (const css of document.querySelectorAll("link[rel=stylesheet]"))
-        popup.document.head.append(css.cloneNode(true));
-      const marker = document.createComment("actors-directory");
-      panel.replaceWith(marker);
-      popup.document.body.append(panel);
-      panel.classList.add("game-panel--detached");
-      popup.onpagehide = () => {
-        marker.replaceWith(panel);
-        panel.classList.remove("game-panel--detached");
-      };
+      popup = detachWindow(panel, 'actors-directory', 'Characters', {width:377});
     }
     if (a === "create") edit();
     if (a === "folder") folder();
     if (a === "upload") panel.querySelector("[data-template-upload]").click();
+    if (a === "import-kallistis") panel.querySelector("[data-kallistis-import]")?.click();
+  };
+  const importInput = panel.querySelector("[data-kallistis-import]");
+  if (importInput) importInput.onchange = async () => {
+    const file = importInput.files[0];
+    importInput.value = "";
+    if (!file) return;
+    try { await startKallistisImport(file); }
+    catch (cause) { error(cause.message); }
   };
   panel.querySelector("[type=search]").oninput = paint;
   const input = panel.querySelector("[data-template-upload]");
@@ -762,18 +640,6 @@ if (panel) {
         if (!r.ok) throw Error((await r.json()).message);
       } catch (e) {
         error(e.message);
-      }
-    };
-  const importInput = panel.querySelector("[data-kallistis-import]");
-  if (importInput)
-    importInput.onchange = async () => {
-      const file = importInput.files[0];
-      importInput.value = "";
-      if (!file) return;
-      try {
-        await startKallistisImport(file);
-      } catch (cause) {
-        error(cause.message);
       }
     };
   panel.ondragover = (e) => {
@@ -807,34 +673,33 @@ if (panel) {
       error(cause.message);
     }
   };
-  window.addEventListener("gravewright:actors.state", (e) => {
-    state = e.detail;
+  const receiveState = (next) => restoreContent('actors', () => {
+    state = next;
+    mergePatch({ _hasActors: state.actors.length > 0 });
     syncActorTypes();
     paint();
     if (sheet && sheet.element.dataset.actorId) {
       const a = state.actors.find(
         (a) => a.id === sheet.element.dataset.actorId,
       );
-      if (!a || (sheet.element.dataset.canEdit === "true" && !a.canEdit))
-        sheet.close();
-    }
-    if (runtimeDialog) {
-      const current = state.actors.find(a => a.id === runtimeDialog.dataset.runtimeActorId);
-      if (current) runtimeDialog._runtimeRender?.(current);
+      if (!a || a.canOpen === false || (sheet.element.dataset.canEdit === "true" && !a.canEdit))
+        sheet.close(true);
     }
   });
+  window.addEventListener("gravewright:actors.state", e => receiveState(e.detail));
+  const initial = initialContent('actors');
+  if(initial)receiveState(initial);
   window.addEventListener("gravewright:actor-error", (e) => error(e.detail));
   window.addEventListener("gravewright:connected", () =>
     window.gravewrightRealtime.actorsSubscribe(),
   );
   window.addEventListener("gravewright:modules.updated", () =>
-    window.gravewrightRealtime.actorsSubscribe(),
+    window.gravewrightRealtime.actorsSubscribe(true),
   );
   window.gravewrightRealtime?.actorsSubscribe();
   window.addEventListener("gravewright:access-revoked", () => {
     sheet?.close();
-    dialog?.remove();
-    runtimeDialog?.remove();
+    dialog?.close(true);
     menu?.remove();
     state = { ...state, actors: [], templates: [], folders: [] };
     paint();
@@ -845,8 +710,7 @@ window.addEventListener("pagehide", () => {
   cancelTreeDrag("actor");
   popup?.close();
   sheet?.close();
-  dialog?.remove();
-  runtimeDialog?.remove();
+  dialog?.close(true);
   menu?.remove();
 });
 
