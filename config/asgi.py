@@ -17,9 +17,10 @@ from channels.routing import ProtocolTypeRouter, URLRouter
 from gravewright.realtime.routing import websocket_urlpatterns
 from gravewright.realtime.security import SameOriginWebSocketMiddleware
 from config.proxy import TrustedProxySchemeMiddleware
+from gravewright.maps.delay_worker import DelayWorkerMiddleware
 
-application = TrustedProxySchemeMiddleware(ProtocolTypeRouter({
+application = DelayWorkerMiddleware(TrustedProxySchemeMiddleware(ProtocolTypeRouter({
     'http': django_application,
     'websocket': SameOriginWebSocketMiddleware(AuthMiddlewareStack(URLRouter(websocket_urlpatterns))),
-}))
+})))
 application = ASGIStaticFilesHandler(application)

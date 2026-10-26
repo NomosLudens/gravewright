@@ -12,18 +12,35 @@ import subprocess
 import sys
 import time
 import tomllib
+import traceback
 import uuid
 from urllib.request import Request, urlopen, build_opener, ProxyHandler
 import zipfile
 from scripts.process_control import environment_python, instance_lock, spawn, stop
+from scripts.project_files import source_files, copy_files, replace_files, remove_work_tree, storage_path
 
 
 def write(path, data):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + '.tmp-' + uuid.uuid4().hex)
-    temporary.write_text(json.dumps(data), encoding='utf-8')
-    temporary.replace(path)
+    try:
+        temporary.write_text(json.dumps(data), encoding='utf-8')
+        deadline = time.monotonic() + 2
+        while True:
+            try:
+                temporary.replace(path)
+                break
+            except OSError as error:
+                # Windows readers can briefly deny atomic replacement. Keep
+                # the previous complete state until the reader releases it.
+                remaining = deadline - time.monotonic()
+                if (os.name != 'nt' or getattr(error, 'winerror', None) not in (5, 32)
+                        or remaining <= 0):
+                    raise
+                time.sleep(min(.025, remaining))
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def read(path, default=None):
@@ -33,10 +50,32 @@ def read(path, default=None):
         return default
 
 
+def retained_backup_parent(origin, state, path, *, allow_legacy=False):
+    """Validate a local retained copy, or an explicitly selected legacy sibling."""
+    origin, state = Path(origin).resolve(), Path(state).resolve()
+    requested = Path(path)
+    if requested.is_symlink() or requested.is_junction():
+        raise ValueError('Invalid retained backup path')
+    old = requested.resolve()
+    retained = (state / 'retained').resolve()
+    if old == origin or origin.is_relative_to(old) or not old.name.endswith('.old'):
+        raise ValueError('Invalid retained backup path')
+    if retained != state and retained.is_relative_to(state) and old.parent == retained:
+        return retained
+    if allow_legacy and old.parent == origin.parent:
+        return origin.parent
+    raise ValueError('Invalid retained backup path')
+
+
 def extract(archive, destination):
     """Only ordinary source files, one project root, bounded expanded size."""
     destination = Path(destination)
     with zipfile.ZipFile(archive) as z:
+        roots = [Path(item.filename).parent for item in z.infolist()
+                 if Path(item.filename).name == 'pyproject.toml' and len(Path(item.filename).parts) <= 2]
+        if len(roots) != 1:
+            raise ValueError('Expected one project root')
+        prefix = roots[0].parts
         total = 0
         seen = set()
         for item in z.infolist():
@@ -44,7 +83,9 @@ def extract(archive, destination):
             mode = item.external_attr >> 16
             if (path.is_absolute() or '..' in path.parts or '\\' in item.filename
                     or ':' in item.filename or any(p in {'.git', '.venv', '.env'} for p in path.parts)
-                    or ('data' in path.parts and path.name != '.gitkeep' and not item.is_dir())
+                    or (path.parts[:len(prefix)] == prefix
+                        and path.parts[len(prefix):len(prefix) + 1] == ('data',)
+                        and path.name != '.gitkeep' and not item.is_dir())
                     or (stat.S_IFMT(mode) and not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)))):
                 raise ValueError('Unsafe archive member')
             normalized = str(path).casefold()
@@ -55,6 +96,13 @@ def extract(archive, destination):
             if total > 2 * 1024**3 or len(seen) > 100000:
                 raise ValueError('Expanded release exceeds limit')
         z.extractall(destination)
+        if os.name != 'nt':
+            # ZipFile does not restore executable bits. Only native launchers
+            # need them; never propagate archive setuid/setgid permission bits.
+            for item in z.infolist():
+                path = destination / item.filename
+                if not item.is_dir() and path.suffix in {'.sh', '.command'}:
+                    path.chmod(0o755)
     projects = list(destination.glob('pyproject.toml')) + list(destination.glob('*/pyproject.toml'))
     if len(projects) != 1:
         raise ValueError('Expected one project root')
@@ -63,6 +111,22 @@ def extract(archive, destination):
         if not (project / name).is_file():
             raise ValueError('Release does not support managed updates')
     return project
+
+
+def runner_layout():
+    """Installer inputs and machine-specific outputs for the current OS."""
+    if sys.platform == 'win32':
+        return ('scripts/windows/create_runner.py',
+                ('Install Windows.bat', 'scripts/windows/create_runner.py',
+                 'scripts/windows/runner.bat', 'scripts/windows/launch_runner.py'),
+                ('Gravewright Runner.bat',))
+    mac = sys.platform == 'darwin'
+    return ('scripts/posix/create_runner.py',
+            ('Install macOS.command' if mac else 'Install Linux.sh',
+             'scripts/posix/install.sh', 'scripts/posix/create_runner.py',
+             'scripts/posix/runner.sh', 'scripts/windows/launch_runner.py'),
+            ('Gravewright Runner.command',) if mac else
+            ('Gravewright Runner.sh', 'Gravewright Runner.desktop'))
 
 
 def download(artifact, target, notify):
@@ -92,6 +156,11 @@ class Supervisor:
         self.extra_paths = {} if content.resolve().is_relative_to(self.media) else {'compendiums': content.resolve()}
         if runner_data:
             self.extra_paths['staticfiles'] = Path(runner_data).resolve() / 'staticfiles'
+        modules = Path(os.environ.get('GRAVEWRIGHT_MODULES_ROOT') or self.media / 'modules')
+        modules = (modules if modules.is_absolute() else self.origin / modules).resolve()
+        self.modules = modules
+        if not modules.is_relative_to(self.media):
+            self.extra_paths['modules'] = modules
         for path in [self.media, *self.extra_paths.values()]:
             if self.state.is_relative_to(path) or path == self.origin or self.origin.is_relative_to(path):
                 raise ValueError('Persistent storage must not contain the application or updater')
@@ -101,11 +170,24 @@ class Supervisor:
         self.profile = os.environ.get('DJANGO_SETTINGS_MODULE', 'config.settings')
         self.token = uuid.uuid4().hex
         self.env = {**os.environ, 'PYTHONUTF8': '1', 'GRAVEWRIGHT_MANAGED_STATE': str(self.state),
+                    'GRAVEWRIGHT_MANAGED_PROTOCOL': '2',
                     'GRAVEWRIGHT_MANAGED_TOKEN': self.token,
                     'GRAVEWRIGHT_DATABASE': str(self.database), 'GRAVEWRIGHT_MEDIA_ROOT': str(self.media),
+                    'GRAVEWRIGHT_MODULES_ROOT': str(self.modules),
                     'GRAVEWRIGHT_HOST': host, 'GRAVEWRIGHT_PORT': str(port),
                     'GRAVEWRIGHT_CONTENT_ROOT': str(content.resolve())}
-        self.active = self.resolve_active(read(self.state / 'active.json', {'path': str(self.origin)})['path'])
+        self.active, self.runtime_python = self.load_active()
+        self.protected = [self.state, self.database, self.media, *self.extra_paths.values()]
+        self.protected += [Path(str(self.database) + suffix) for suffix in ('-wal', '-shm', '-journal')]
+        if runner_data:
+            self.protected.append(Path(runner_data).resolve())
+        for key, default in (('GRAVEWRIGHT_MODULES_ROOT', 'data/media/modules'),
+                             ('GRAVEWRIGHT_API_MODULES_ROOT', 'extensions/api'),
+                             ('GRAVEWRIGHT_DJANGO_MODULES_ROOT', 'extensions/django')):
+            value = os.environ.get(key, default)
+            if value:
+                path = Path(value)
+                self.protected.append((path if path.is_absolute() else self.origin / path).resolve())
 
     def resolve_active(self, path):
         path = Path(path).resolve()
@@ -113,19 +195,57 @@ class Supervisor:
             raise ValueError('Invalid active release path')
         return path
 
+    def load_active(self):
+        active_file = self.state / 'active.json'
+
+        def load():
+            try:
+                content = active_file.read_bytes()
+            except FileNotFoundError:
+                return {'path': str(self.origin)}, None
+            value = json.loads(content)
+            if not isinstance(value, dict) or not isinstance(value.get('path'), str) or not value['path'].strip():
+                raise ValueError('Invalid active release state')
+            return value, content
+
+        value, _ = load()
+        try:
+            active = self.resolve_active(value['path'])
+        except ValueError:
+            # Per-user Runner state can outlive a moved checkout or belong to
+            # another installation. Only idle metadata may be rebound; never
+            # reinterpret a pending update or trust its saved interpreter.
+            with instance_lock(self.state / 'supervisor.lock'):
+                value, content = load()
+                try:
+                    active = self.resolve_active(value['path'])
+                except ValueError as error:
+                    pending = [name for name in ('transaction.json', 'job.json', 'job.lock', 'maintenance')
+                               if (self.state / name).exists() or (self.state / name).is_symlink()]
+                    if pending:
+                        raise ValueError('Invalid active release path with pending updater state: '
+                                         + ', '.join(pending)) from error
+                    backup = active_file.with_name('active.json.backup-' + uuid.uuid4().hex)
+                    with backup.open('xb') as handle:
+                        handle.write(content)
+                    value = {'path': str(self.origin), 'python': sys.executable}
+                    write(active_file, value)
+                    active = self.origin
+        return active, value.get('python', sys.executable)
+
     def notify(self, stage, **values):
         write(self.state / 'progress.json', {'stage': stage, 'at': time.time(), **values})
 
     def python(self, project):
-        return str(environment_python(project)) if project != self.origin else sys.executable
+        return str(environment_python(project)) if project != self.origin else self.runtime_python
 
     def environment(self, project):
         return {**self.env, 'PYTHONPATH': str(project), 'DJANGO_SETTINGS_MODULE': self.profile,
                 'UV_PROJECT_ENVIRONMENT': str(project / '.venv')}
 
-    def command(self, project, *args, timeout=600):
+    def command(self, project, *args, timeout=600, environment=None):
         with open(self.state / 'update.log', 'ab') as log:
-            process = spawn(args, cwd=project, env=self.environment(project), stdout=log, stderr=log)
+            process = spawn(args, cwd=project, env={**self.environment(project), **(environment or {})}, stdout=log, stderr=log)
             try:
                 code = process.wait(timeout=timeout)
                 if code:
@@ -165,12 +285,12 @@ class Supervisor:
         with closing(sqlite3.connect(self.database)) as source, closing(sqlite3.connect(folder / 'database.sqlite3')) as target:
             source.backup(target)
         if self.media.exists():
-            shutil.copytree(self.media, folder / 'media')
+            shutil.copytree(storage_path(self.media), storage_path(folder / 'media'))
         extras = {}
         for name, path in self.extra_paths.items():
             extras[name] = path.exists()
             if path.exists():
-                shutil.copytree(path, folder / name)
+                shutil.copytree(storage_path(path), storage_path(folder / name))
         write(folder / 'complete.json', {'media_existed': self.media.exists(), 'extras': extras})
 
     def restore(self, folder):
@@ -181,37 +301,73 @@ class Supervisor:
             Path(str(self.database) + suffix).unlink(missing_ok=True)
         shutil.copy2(folder / 'database.sqlite3', self.database)
         if self.media.exists():
-            shutil.rmtree(self.media)
+            shutil.rmtree(storage_path(self.media))
         if complete['media_existed']:
-            shutil.copytree(folder / 'media', self.media)
+            shutil.copytree(storage_path(folder / 'media'), storage_path(self.media))
         for name, existed in complete.get('extras', {}).items():
             path = self.extra_paths[name]
             if path.exists():
-                shutil.rmtree(path)
+                shutil.rmtree(storage_path(path))
             if existed:
-                shutil.copytree(folder / name, path)
+                shutil.copytree(storage_path(folder / name), storage_path(path))
 
     def recover(self):
         journal = read(self.state / 'transaction.json')
         if journal:
+            old = Path(journal['old_copy']) if journal.get('old_copy') else None
+            old_parent = retained_backup_parent(
+                self.origin, self.state, old, allow_legacy=True,
+            ) if old is not None else None
             self.notify('rollback')
             self.active = self.resolve_active(journal['previous'])
             folder = self.state / 'backups' / journal['backup']
             if journal['restore']:
                 self.restore(folder)
-            write(self.state / 'active.json', {'path': str(self.active)})
+            if journal.get('project_files') is not None:
+                replace_files(folder / 'project', self.origin, journal['project_files'], journal['incoming_files'])
+                self.runtime_python = journal['previous_python']
+            elif journal.get('previous_python'):
+                self.runtime_python = journal['previous_python']
+            if old is not None:
+                remove_work_tree(old, old_parent)
+            write(self.state / 'active.json', {'path': str(self.active), 'python': self.runtime_python})
             (self.state / 'transaction.json').unlink()
             (self.state / 'job.json').unlink(missing_ok=True)
             shutil.rmtree(self.state / 'job.lock', ignore_errors=True)
             self.notify('rolled_back')
 
+    def create_retained_copy(self, ident):
+        """Reserve a new rollback folder inside updater storage without overwriting."""
+        if not isinstance(ident, str) or len(ident) != 32 or any(char not in '0123456789abcdef' for char in ident):
+            raise ValueError('Invalid retained backup identifier')
+        retained = (self.state / 'retained').resolve()
+        if retained == self.state or not retained.is_relative_to(self.state):
+            raise ValueError('Invalid retained backup path')
+        retained.mkdir(parents=True, exist_ok=True, mode=0o700)
+        name = self.origin.name + '.old'
+        while True:
+            old = retained / name
+            try:
+                old.mkdir(mode=0o700)
+            except FileExistsError:
+                name = self.origin.name + '.' + ident + '.old'
+                ident = uuid.uuid4().hex
+                continue
+            retained_backup_parent(self.origin, self.state, old)
+            return old
+
     def apply(self, job):
+        if job.get('kind') == 'django':
+            return self.apply_django(job)
         previous = self.active
+        previous_python = self.python(previous)
         ident = uuid.uuid4().hex
         staging = self.state / 'releases' / ident
         backup = self.state / 'backups' / ident
         staging.mkdir(parents=True)
         transaction_started = False
+        old_copy = None
+        created_old = False
         try:
             self.notify('download', received=0, total=job['artifact']['size'])
             download(job['artifact'], staging / 'release.zip', self.notify)
@@ -221,30 +377,83 @@ class Supervisor:
             version = tomllib.loads((candidate / 'pyproject.toml').read_text(encoding='utf-8'))['project']['version']
             if normalize_version(version) != job['version']:
                 raise ValueError('Release version mismatch')
+            incoming = source_files(candidate)
+            existing = source_files(self.origin, self.protected)
+            # A release may not replace a locally configured storage directory.
+            allowed = set(source_files(candidate, [candidate / p.relative_to(self.origin)
+                          for p in self.protected if p.is_relative_to(self.origin)]))
+            incoming = sorted(allowed)
+            if self.profile == 'config.runner':
+                generator, required, generated = runner_layout()
+                for name in required:
+                    if name not in incoming:
+                        raise ValueError('Release is missing the native installer or runner generator')
+                # Generated launchers and shortcuts are local outputs, not release inputs.
+                incoming.extend(name for name in generated if name not in incoming)
             self.notify('dependencies')
             uv = os.environ.get('GW_UV') or shutil.which('uv')
             if not uv:
                 raise RuntimeError('uv is required')
-            self.command(candidate, uv, 'sync', '--locked', '--project', str(candidate), '--python', sys.executable)
+            self.env['GW_UV'] = uv
+            self.command(candidate, uv, 'sync', '--locked', '--no-dev', '--project', str(candidate), '--python', previous_python)
+            self.install_django_dependencies(candidate, self.python(candidate), read(self.modules / 'server-apps.json', {}), uv)
+            if self.profile == 'config.runner':
+                self.command(candidate, self.python(candidate), generator,
+                             '--data-dir', self.env['GRAVEWRIGHT_RUNNER_DATA'], '--runtime-project', str(self.origin))
             self.command(candidate, self.python(candidate), 'manage.py', 'check')
             (self.state / 'maintenance').touch()
             self.stop()
             self.notify('backup')
             self.backup(backup)
-            write(self.state / 'transaction.json', {'previous': str(previous), 'backup': ident, 'restore': True})
+            copy_files(self.origin, backup / 'project', existing)
+            journal = {'previous': str(previous), 'previous_python': previous_python,
+                       'backup': ident, 'restore': True, 'project_files': existing, 'incoming_files': incoming}
+            write(backup / 'project.json', journal)
+            write(self.state / 'transaction.json', journal)
             transaction_started = True
             self.notify('migrate')
             self.command(candidate, self.python(candidate), 'manage.py', 'migrate', '--noinput')
             self.command(candidate, self.python(candidate), 'manage.py', 'collectstatic', '--noinput')
+            self.notify('replace')
+            replace_files(candidate, self.origin, incoming, existing)
+            self.runtime_python = self.python(candidate)
             self.notify('restart')
-            self.start(candidate)
+            self.start(self.origin)
             self.ready()
-            write(self.state / 'active.json', {'path': str(candidate)})
-            self.active = candidate
+            if job.get('keep_old', True):
+                # Do not replace an earlier user-selected rollback copy.
+                old_copy = self.create_retained_copy(ident)
+                created_old = True
+                journal['old_copy'] = str(old_copy)
+                write(self.state / 'transaction.json', journal)
+                copy_files(backup / 'project', old_copy, existing)
+                shutil.copytree(storage_path(backup), storage_path(old_copy / '.gravewright-rollback'),
+                                ignore=shutil.ignore_patterns('project'))
+                write(old_copy / '.gravewright-rollback' / 'installation.json', {
+                    'origin': str(self.origin), 'state': str(self.state), 'database': str(self.database),
+                    'media': str(self.media), 'extra_paths': {k: str(v) for k, v in self.extra_paths.items()},
+                    'protected': [str(path) for path in self.protected],
+                })
+            write(self.state / 'active.json', {'path': str(self.origin), 'python': self.runtime_python})
+            self.active = self.origin
+            (self.state / 'job.json').unlink(missing_ok=True)
             (self.state / 'transaction.json').unlink()
             transaction_started = False
-            self.notify('complete', version=job['version'], backup=str(backup))
+            self.notify('complete', version=job['version'], backup=str(old_copy) if old_copy else None)
+            try:
+                remove_work_tree(backup, self.state / 'backups')
+            except OSError:
+                # A retained temporary copy must not undo a committed update.
+                pass
         except Exception as error:
+            # Recovery can fail too. Preserve the initiating failure before a
+            # second exception or an interrupted restart hides its context.
+            try:
+                with open(self.state / 'update.log', 'a', encoding='utf-8') as log:
+                    log.write(f'Update failed: {type(error).__name__}: {error}\n')
+                    traceback.print_exc(file=log)
+            except OSError:
+                pass  # Unavailable diagnostic storage must not prevent recovery.
             if (self.state / 'maintenance').exists():
                 self.stop()
                 if transaction_started:
@@ -252,11 +461,89 @@ class Supervisor:
                 self.active = previous
                 self.start(previous)
                 self.ready()
+            if created_old:
+                remove_work_tree(old_copy, retained_backup_parent(self.origin, self.state, old_copy))
             self.notify('rolled_back' if transaction_started else 'failed', error=type(error).__name__)
-            with open(self.state / 'update.log', 'a') as log:
-                log.write(f'Update failed: {type(error).__name__}: {error}\n')
         finally:
             # Keep maintenance if recovery itself failed; the journal is retried at next start.
+            if not (self.state / 'transaction.json').exists():
+                (self.state / 'maintenance').unlink(missing_ok=True)
+                (self.state / 'job.json').unlink(missing_ok=True)
+                shutil.rmtree(self.state / 'job.lock', ignore_errors=True)
+
+    def install_django_dependencies(self, project, python, registry, uv):
+        requirements = sorted({value for row in registry.values() for value in row['django'].get('requirements', [])})
+        if not requirements:
+            return
+        constraints = self.state / 'django-core-constraints.txt'
+        self.command(project, uv, 'export', '--locked', '--no-dev', '--no-hashes', '--no-emit-project',
+                     '--format', 'requirements.txt', '--output-file', str(constraints))
+        self.command(project, uv, 'pip', 'install', '--python', python, '--constraint', str(constraints), *requirements)
+
+    def apply_django(self, job):
+        """Prepare a new interpreter and restart atomically with data rollback."""
+        previous, previous_python = self.active, self.runtime_python
+        ident = uuid.uuid4().hex
+        staging = self.state / 'releases' / ident
+        staging.mkdir(parents=True)
+        plan = staging / 'server-apps.json'
+        backup = self.state / 'backups' / ident
+        journal_started = False
+        try:
+            self.notify('verify', kind='django')
+            self.command(previous, previous_python, 'manage.py', 'prepare_django_packages',
+                         job['id'], job['version'], str(job['enabled']).lower(), str(plan))
+            registry = read(plan)
+            uv = self.env.get('GW_UV') or shutil.which('uv')
+            if not uv:
+                raise RuntimeError('uv is required to activate Django packages')
+            self.notify('dependencies', kind='django')
+            self.command(previous, uv, 'sync', '--locked', '--no-dev', '--project', str(previous), '--python', previous_python,
+                         environment={'UV_PROJECT_ENVIRONMENT': str(staging / '.venv')})
+            python = str(environment_python(staging))
+            self.install_django_dependencies(previous, python, registry, uv)
+            proposed = {'GRAVEWRIGHT_DJANGO_REGISTRY': str(plan)}
+            self.command(previous, python, 'manage.py', 'check', environment=proposed)
+            (self.state / 'maintenance').touch()
+            self.stop()
+            self.notify('backup', kind='django')
+            self.backup(backup)
+            write(self.state / 'transaction.json', {'previous': str(previous), 'previous_python': previous_python,
+                                                   'backup': ident, 'restore': True})
+            journal_started = True
+            self.notify('migrate', kind='django')
+            self.command(previous, python, 'manage.py', 'migrate', '--noinput', environment=proposed)
+            self.command(previous, python, 'manage.py', 'collectstatic', '--noinput', environment=proposed)
+            write(self.modules / 'server-apps.json', registry)
+            self.runtime_python = python
+            self.notify('restart', kind='django')
+            self.start(previous)
+            self.ready()
+            write(self.state / 'active.json', {'path': str(previous), 'python': python})
+            (self.state / 'job.json').unlink(missing_ok=True)
+            (self.state / 'transaction.json').unlink()
+            journal_started = False
+            self.notify('complete', kind='django')
+            try:
+                remove_work_tree(backup, self.state / 'backups')
+            except OSError:
+                pass
+        except Exception as error:
+            try:
+                with open(self.state / 'update.log', 'a', encoding='utf-8') as log:
+                    log.write(f'Django activation failed: {type(error).__name__}: {error}\n')
+                    traceback.print_exc(file=log)
+            except OSError:
+                pass
+            if (self.state / 'maintenance').exists():
+                self.stop()
+                if journal_started:
+                    self.recover()
+                self.runtime_python = previous_python
+                self.start(previous)
+                self.ready()
+            self.notify('rolled_back' if journal_started else 'failed', kind='django', error=type(error).__name__)
+        finally:
             if not (self.state / 'transaction.json').exists():
                 (self.state / 'maintenance').unlink(missing_ok=True)
                 (self.state / 'job.json').unlink(missing_ok=True)

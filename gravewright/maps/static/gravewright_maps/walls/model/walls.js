@@ -23,11 +23,17 @@ function text(source, ...values) {
 }
 if (typeof window !== "undefined") {
   const apply = (detail) => registerTextResolver((source) => {
-    const translated = detail.messages?.text?.[source];
-    return typeof translated === "string" ? translated : source;
+    const messages = detail.messages?.text ?? detail.messages ?? {};
+    if (typeof messages[source] === "string") return messages[source];
+    const translated = messages[source.trim()];
+    return typeof translated === "string" ? source.replace(source.trim(), () => translated) : source;
   }, () => detail.id || "en");
   window.addEventListener("gravewright:locale", (event) => apply(event.detail));
   if (window.gravewrightLocale) apply(window.gravewrightLocale);
+  else {
+    const config = document.getElementById("gravewright-language");
+    if (config) apply(JSON.parse(config.textContent));
+  }
 }
 
 // gravewright/maps/frontend/features/walls/model/walls.js
@@ -68,7 +74,7 @@ function wallPreset(w) {
   return wallPresets.find((p) => p.id === (w.vertical_bottom != null || w.vertical_top != null ? "elevation" : w.presentation ?? "normal")) ?? wallPresets[0];
 }
 function wallPayload(w) {
-  return { kind: w.kind, x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2, presentation: w.presentation ?? "normal", behavior: { movement: w.movement_behavior ?? "block", vision: w.vision_behavior ?? "block", light: w.light_behavior ?? "block", sound: w.sound_behavior ?? "block" }, vertical: { bottom: w.vertical_bottom ?? null, top: w.vertical_top ?? null } };
+  return { kind: w.kind, x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2, presentation: w.presentation ?? "normal", behavior: { movement: w.movement_behavior ?? "block", vision: w.vision_behavior ?? "block", light: w.light_behavior ?? "block", sound: w.sound_behavior ?? "block" }, vertical: { bottom: w.vertical_bottom ?? null, top: w.vertical_top ?? null }, ...w.kind === "door" && Object.hasOwn(w, "rotationAnchor") ? { rotationAnchor: w.rotationAnchor } : {}, ...w.asset_id ? { asset_id: w.asset_id, thickness: w.thickness } : {}, ...w.blueprint ? { blueprint: structuredClone(w.blueprint), ...w.thickness !== void 0 ? { thickness: w.thickness } : {} } : {} };
 }
 function project(p, w) {
   const dx = w.x2 - w.x1, dy = w.y2 - w.y1, t = Math.max(0, Math.min(1, ((p.x - w.x1) * dx + (p.y - w.y1) * dy) / (dx * dx + dy * dy || 1)));

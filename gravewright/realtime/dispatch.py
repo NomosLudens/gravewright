@@ -34,15 +34,34 @@ def changed(campaign_id, user_id, resource, action, request_id, result=None):
     result = deepcopy(result or {})
     events = []
     if resource in ('actors', 'tokens'):
-        events = [{'type': name} for name in ('room.actors','room.tokens','room.map_layers')]
+        # Presence handlers may change artwork and lights in the same operation.
+        # The following token refresh also delivers the final spatial audio.
+        events = [{'type': 'room.map_layers', 'refresh_audio': False}]
+        if resource != 'tokens' or action not in ('move', 'teleport'):
+            events.append({'type': 'room.actors'})
+        events.append({'type': 'room.tokens'})
+        if resource == 'tokens' and action in ('move', 'teleport'):
+            events[-1]['refresh_combat'] = False
+        if resource == 'tokens' and result.get('teleports'):
+            events[-1].update(mapId=result['mapId'], teleports=result['teleports'])
+        if resource == 'actors' or action in ('condition-add', 'condition-remove', 'remove', 'hidden', 'configure'):
+            events.append({'type': 'room.resources', 'module': 'combat'})
     elif resource == 'maps':
         events = [{'type':'room.map_layers' if action == 'objects' else 'room.maps'}]
+        if action == 'update':
+            events.append({'type': 'room.map_layers'})
     elif resource == 'journals':
         if result.get('presentation'):
             events.append({'type':'room.handout','payload':result['presentation'],'request_id':str(request_id)})
         if result.get('message_id'):
             message(campaign_id, result['message_id'])
         events.append({'type':'room.journals'})
+        # Journal/page grants, titles and board membership also change map locations.
+        from gravewright.maps.models import SceneObject
+        if result.get('map_locations_changed') or SceneObject.objects.filter(scene__campaign_id=campaign_id, kind='journalPins').exists():
+            events.append({'type': 'room.map_layers'})
+    elif resource in ('clocks', 'clues', 'mindmaps'):
+        events = [{'type': 'room.resources', 'module': resource}]
     elif resource in ('items','combat','cards','audio','compendiums'):
         events = [{'type':'room.resources','module':name} for name in ('items','combat','cards','audio','compendiums')]
         if resource == 'compendiums' and result.get('kind') == 'scene':

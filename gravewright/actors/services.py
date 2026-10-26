@@ -1,4 +1,4 @@
-"""Actor directory, resource ownership and revision-checked PDF sheets."""
+"""Actor directory, resource ownership and revision-checked system sheets."""
 
 from copy import deepcopy
 
@@ -9,7 +9,10 @@ from gravewright.campaigns.models import Campaign, Membership
 from gravewright.journals.services import identifier, member
 from gravewright.maps.models import Receipt
 from gravewright.maps.services import MapError, color, manage, title
-from gravewright.pdf_system.schema import normalize
+from gravewright.campaigns.systems import (
+    actor_templates, asset_provider, asset_provider_for, normalize_actor, remove_asset_references,
+    resolve_system_id,
+)
 
 from .models import Actor, Asset, Folder
 
@@ -29,8 +32,8 @@ def actor_type(system_id, value=None, *, campaign_id=None):
 
 
 def access(actor, who, edit=False):
-    level = actor.permissions.get(str(who.user_id), "none")
-    return who.role == "gm" or level == "owner" or (not edit and level == "read")
+    from gravewright.table.ownership import allows
+    return allows(actor.permissions, who, edit=edit)
 
 
 def get(value, who, edit=False):
@@ -56,8 +59,8 @@ def image_url(row, kind):
     return f"/game/actors/asset/{asset.pk}" if asset else None
 
 
-def project(row, who):
-    """Serialize actor metadata and the shared runtime projection."""
+def project(row, who, *, include_runtime=False):
+    """Serialize actor metadata for one member; this does not include sheet data."""
     from .runtime import read as runtime_state
 
     return dict(
@@ -69,27 +72,35 @@ def project(row, who):
         containerId=str(row.campaign_id),
         name=row.name,
         actorType=row.type,
-        systemId=who.campaign.system or "gravewright-pdf-system",
+        systemId=resolve_system_id(who.campaign.system),
         folderId=str(row.folder_id) if row.folder_id else None,
         canEdit=access(row, who, True),
+        canOpen=access(row, who),
         version=row.version,
         sheetVersion=row.sheet_version,
-        portraitUrl=image_url(row, "portrait"),
-        tokenUrl=image_url(row, "token"),
-        runtime=runtime_state(row.data),
+        portraitUrl=image_url(row, "portrait") if access(row, who) else None,
+        tokenUrl=image_url(row, "token") if access(row, who) else None,
+        **({
+            "runtime": runtime_state(
+                {"runtime": getattr(row, "_runtime_payload", None)}
+                if hasattr(row, "_runtime_payload") else row.data
+            )
+        } if include_runtime and access(row, who) else {}),
         **({"permissions": row.permissions} if who.role == "gm" else {}),
     )
 
 
 def state(campaign, user):
     who = member(campaign, user)
+    provider = asset_provider(who.campaign.system)
+    from gravewright.table.ownership import allows
+    actors_query = Actor.objects.filter(campaign_id=campaign).defer("data").select_related("kallistis_link")
     visible = [
         a
-        for a in Actor.objects.filter(campaign_id=campaign)
-        .select_related("kallistis_link")
+        for a in actors_query
         .prefetch_related("assets")
         .order_by("name")
-        if access(a, who)
+        if allows(a.permissions, who, listing=True)
     ]
     all_folders = {f.pk: f for f in Folder.objects.filter(campaign_id=campaign)}
     allowed = set(all_folders) if who.role == "gm" else set()
@@ -112,12 +123,10 @@ def state(campaign, user):
             for f in all_folders.values()
             if f.pk in allowed
         ],
-        "templates": [
-            {"id": str(a.pk), "name": a.name}
-            for a in Asset.objects.filter(campaign_id=campaign, kind="pdf")
-        ],
+        "templates": actor_templates(who.campaign.system, campaign),
+        "templateConfig": deepcopy(provider.get('template')) if provider else None,
         "is_gm": who.role == "gm",
-        "systemId": who.campaign.system or "gravewright-pdf-system",
+        "systemId": resolve_system_id(who.campaign.system),
         "players": [
             {"id": str(m.user_id), "name": m.user.name}
             for m in Membership.objects.select_related("user").filter(
@@ -152,11 +161,11 @@ def sheet(campaign, user, actor_id, token_id=None):
             raise MapError("Sheet not available.", "forbidden")
         row = t.actor
         data = row.data if t.linked else t.snapshot
-        view = project(row, who)
+        view = project(row, who, include_runtime=True)
         view.update(
             canEdit=control(t, who),
             sheetVersion=row.sheet_version if t.linked else t.sheet_version,
-            name=data.get("token", {}).get("name", row.name)
+            name=(data.get("token") if isinstance(data.get("token"), dict) else {}).get("name", row.name)
             if not t.linked
             else row.name,
             tokenId=str(t.pk) if not t.linked else None,
@@ -164,13 +173,13 @@ def sheet(campaign, user, actor_id, token_id=None):
     else:
         row = get(actor_id, who)
         data = row.data
-        view = project(row, who)
+        view = project(row, who, include_runtime=True)
     view["data"] = deepcopy(data)
     return view
 
 
 def save_sheet(who, data):
-    """Validate revisions and PDF references before updating actor or token sheet data."""
+    """Validate revisions and system data before updating actor or token sheet data."""
     token = None
     if data.get("tokenId"):
         from gravewright.tokens.services import control
@@ -187,15 +196,10 @@ def save_sheet(who, data):
     target = token or row
     revision(target, data.get("sheetVersion"), "sheet_version")
     old = token.snapshot if token else row.data
-    clean = normalize(data.get("data"), old, who.role == "gm")
-    asset = clean["pdf"]["asset"]
-    if (
-        asset
-        and not Asset.objects.filter(
-            pk=identifier(asset), campaign_id=who.campaign_id, kind="pdf"
-        ).exists()
-    ):
-        raise MapError("PDF not found.")
+    clean = normalize_actor(
+        who.campaign.system, data.get("data"), old, who.role == "gm",
+        campaign_id=who.campaign_id,
+    )
     if token:
         token.snapshot = clean
         token.sheet_version += 1
@@ -211,6 +215,16 @@ def save_sheet(who, data):
         from django.db.models import F
 
         row.tokens.filter(linked=True).update(version=F("version") + 1)
+    old_hints = old.get("token") if isinstance(old.get("token"), dict) else {}
+    new_hints = clean.get("token") if isinstance(clean.get("token"), dict) else {}
+    if old_hints.get("size", 1) != new_hints.get("size", 1):
+        from gravewright.maps.regions import rebaseline
+        if token:
+            scenes = {token.scene_id: token.scene}
+        else:
+            scenes = {entry.scene_id: entry.scene for entry in row.tokens.filter(linked=True).select_related("scene")}
+        for scene in scenes.values():
+            rebaseline(scene)
     return {"sheetVersion": target.sheet_version, "version": row.version}
 
 
@@ -237,20 +251,10 @@ def command(campaign, user, action, data, request_id):
         result = save_sheet(who, data)
     else:
         manage(who)
-        if action == "actor.qa_fixture.create":
-            from .qa_fixtures import create as create_qa_fixture
-
-            result = create_qa_fixture(who, data.get("fixtureKey"), data.get("playerId"))
-        elif action == "actor.create":
-            clean = normalize(data.get("data", {}))
-            aid = clean["pdf"]["asset"]
-            if (
-                aid
-                and not Asset.objects.filter(
-                    pk=identifier(aid), campaign_id=campaign, kind="pdf"
-                ).exists()
-            ):
-                raise MapError("PDF not found.")
+        if action == "actor.create":
+            clean = normalize_actor(
+                who.campaign.system, data.get("data", {}), campaign_id=campaign,
+            )
             row = Actor.objects.create(
                 campaign_id=campaign,
                 name=title(data.get("name")),
@@ -266,21 +270,16 @@ def command(campaign, user, action, data, request_id):
         elif action in {"actor.update", "actor.delete", "actor.permissions"}:
             row = get(data.get("id"), who, True)
             if action == "actor.delete":
+                from gravewright.maps.regions import remove_actor_tokens
+                from gravewright.maps.blueprint_delays import automation_request
+                with automation_request(request_id):
+                    remove_actor_tokens(Actor.objects.filter(pk=row.pk), who)
                 row.delete()
             elif action == "actor.permissions":
-                levels = data.get("permissions")
-                members = {
-                    str(m)
-                    for m in Membership.objects.filter(
-                        campaign_id=campaign, user__is_active=True
-                    ).values_list("user_id", flat=True)
-                }
-                if (
-                    not isinstance(levels, dict)
-                    or not set(levels) <= members
-                    or any(v not in ("none", "read", "owner") for v in levels.values())
-                ):
-                    raise MapError("Invalid resource permissions.")
+                from gravewright.table.ownership import validate
+                levels = validate(data.get("permissions"), who, error_class=MapError)
+                if 'version' in data:
+                    revision(row, data['version'])
                 row.permissions = levels
                 row.version += 1
                 row.save()
@@ -303,13 +302,17 @@ def command(campaign, user, action, data, request_id):
             if action == "folder.delete":
 
                 def remove(f):
-                    for child in Folder.objects.filter(parent=f):
+                    for child in Folder.objects.filter(parent=f).order_by("id"):
                         remove(child)
                     if data.get("recursive"):
+                        from gravewright.maps.regions import remove_actor_tokens
+                        remove_actor_tokens(Actor.objects.filter(folder=f), who)
                         Actor.objects.filter(folder=f).delete()
                     f.delete()
 
-                remove(row)
+                from gravewright.maps.blueprint_delays import automation_request
+                with automation_request(request_id):
+                    remove(row)
             else:
                 if "parentId" in data:
                     parent = folder(data["parentId"], who)
@@ -328,22 +331,11 @@ def command(campaign, user, action, data, request_id):
                 row.save()
         elif action == "asset.delete":
             asset = Asset.objects.filter(
-                pk=identifier(data.get("id")), campaign_id=campaign, kind="pdf"
+                pk=identifier(data.get("id")), campaign_id=campaign, actor__isnull=True,
             ).first()
-            if not asset:
-                raise MapError("PDF not found.")
-            from gravewright.tokens.models import Token
-
-            for a in Actor.objects.filter(campaign_id=campaign):
-                if a.data.get("pdf", {}).get("asset") == str(asset.pk):
-                    a.data["pdf"].update(asset="", template="generic")
-                    a.sheet_version += 1
-                    a.save()
-            for t in Token.objects.filter(scene__campaign_id=campaign, linked=False):
-                if t.snapshot.get("pdf", {}).get("asset") == str(asset.pk):
-                    t.snapshot["pdf"].update(asset="", template="generic")
-                    t.sheet_version += 1
-                    t.save()
+            if not asset or not asset_provider_for(kind=asset.kind):
+                raise MapError("Asset not found.", "not_found")
+            remove_asset_references(who.campaign.system, campaign, asset)
             asset.delete()
         else:
             raise MapError("Unknown actor command.")

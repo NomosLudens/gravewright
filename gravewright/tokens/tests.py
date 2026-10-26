@@ -58,6 +58,62 @@ class TokenTests(TransactionTestCase):
         self.cmd("place", {"actorId": str(self.actor.pk), "gridX": 1, "gridY": 1})
         return Token.objects.latest("created_at")
 
+    def test_appearance_visibility_is_filtered_for_each_recipient(self):
+        from gravewright.campaigns.models import Membership
+        Membership.objects.create(campaign=self.campaign, user=self.outsider)
+        self.actor.data['bars'] = {'bar_1': {'value': 7, 'max': 10}, 'bar_2': {'value': 3, 'max': 5}}
+        self.actor.save()
+        token = self.place()
+        result = self.cmd('configure', {'tokenIds': [str(token.pk)], 'expectedVersion': token.version,
+            'values': {'appearance': {'nameDisplay': 'always', 'showTurnIndicator': False,
+                'bars': {'bar_1': {'visibility': 'owner', 'color': '#123456'},
+                         'bar_2': {'visibility': 'gm', 'color': '#abcdef'}}}}})
+        self.assertEqual(set(result['tokens'][0]['bars']), {'bar_1', 'bar_2'})
+        owner = services.state(self.campaign.pk, self.player.pk, self.map.pk)['tokens'][0]
+        other = services.state(self.campaign.pk, self.outsider.pk, self.map.pk)['tokens'][0]
+        self.assertEqual(set(owner['bars']), {'bar_1'})
+        self.assertEqual(owner['bars']['bar_1']['color'], '#123456')
+        self.assertEqual(other['bars'], {})
+        self.assertNotIn('appearance', owner)
+        self.assertEqual(other['nameDisplay'], 'always')
+        self.assertFalse(other['showTurnIndicator'])
+        token.refresh_from_db()
+        self.cmd('configure', {'tokenIds': [str(token.pk)], 'expectedVersion': token.version,
+            'values': {'appearance': {'bars': {'bar_1': {'visibility': 'everyone'}}}}})
+        other = services.state(self.campaign.pk, self.outsider.pk, self.map.pk)['tokens'][0]
+        self.assertEqual(set(other['bars']), {'bar_1'})
+        self.assertEqual(other['bars']['bar_1']['color'], '#123456')
+
+    def test_appearance_rejects_invalid_values_unauthorized_writes_and_conflicts(self):
+        token = self.place()
+        for value in ({'nameDisplay': 'unknown'}, {'showTurnIndicator': 1}, {'bars': []},
+                      {'bars': {'bar_3': {}}}, {'bars': {'bar_1': {'visibility': 'all'}}},
+                      {'bars': {'bar_1': {'color': 'red'}}}, {'extra': True}):
+            with self.subTest(value=value), self.assertRaises(MapError):
+                self.cmd('configure', {'tokenIds': [str(token.pk)], 'expectedVersion': token.version,
+                    'values': {'appearance': value}})
+            token.refresh_from_db()
+            self.assertEqual(token.appearance, {})
+        payload = {'tokenIds': [str(token.pk)], 'expectedVersion': token.version,
+                   'values': {'appearance': {'nameDisplay': 'hover'}}}
+        with self.assertRaises((MapError, JournalError)):
+            self.cmd('configure', payload, self.player)
+        self.cmd('configure', payload)
+        with self.assertRaises(MapError):
+            self.cmd('configure', payload)
+
+    def test_appearance_survives_duplication_and_legacy_bar_visibility(self):
+        self.actor.data['token']['display']['bar_1'] = False
+        self.actor.save()
+        token = self.place()
+        row = self.cmd('configure', {'tokenIds': [str(token.pk)], 'expectedVersion': token.version,
+            'values': {'appearance': {'nameDisplay': 'selected'}}})['tokens'][0]
+        self.assertEqual(row['appearance']['bars']['bar_1']['visibility'], 'owner')
+        copy = self.cmd('duplicate', {'tokenIds': [str(token.pk)]})['createdIds'][0]
+        duplicate = Token.objects.get(pk=copy)
+        self.assertEqual(duplicate.appearance['nameDisplay'], 'selected')
+        self.assertEqual(duplicate.appearance['bars']['bar_1']['visibility'], 'owner')
+
     def test_link_promotion_snapshot_and_sheet_revisions(self):
         one = self.place()
         self.assertTrue(one.linked)
@@ -171,6 +227,8 @@ class TokenTests(TransactionTestCase):
         self.assertEqual(services.project(t, who)["conditions"], [])
         self.assertEqual(len(services.vision(self.map, who)), 1)
         self.cmd("hidden", {"tokenIds": [str(t.pk)], "hidden": True})
+        gm_tokens = services.state(self.campaign.pk, self.gm.pk, self.map.pk)["tokens"]
+        self.assertEqual(next(row for row in gm_tokens if row['id'] == str(t.pk))['layer'], 'gm')
         self.assertEqual(
             services.state(self.campaign.pk, self.player.pk, self.map.pk)["tokens"], []
         )
@@ -181,6 +239,34 @@ class TokenTests(TransactionTestCase):
         self.map.save()
         with self.assertRaises(MapError):
             services.state(self.campaign.pk, self.player.pk, self.map.pk)
+
+    def test_condition_controls_require_ownership_and_preserve_gm_conditions(self):
+        token = self.place()
+        payload = {'tokenIds': [str(token.pk)], 'label': 'Poisoned',
+                   'description': 'Disadvantage on checks.', 'kind': 'negative', 'visibility': 'everyone'}
+        self.cmd('condition-add', payload, user=self.player)
+        token.refresh_from_db()
+        self.assertEqual(token.conditions[0]['description'], payload['description'])
+        condition = token.conditions[0]['condition_id']
+        self.cmd('condition-remove', {'tokenIds': [str(token.pk)], 'conditionId': condition}, user=self.player)
+        token.refresh_from_db()
+        self.assertEqual(token.conditions, [])
+        for description in (None, 'x' * 4001):
+            with self.assertRaises(MapError):
+                self.cmd('condition-add', {**payload, 'description': description}, user=self.player)
+        with self.assertRaises(MapError):
+            self.cmd('condition-add', {**payload, 'visibility': 'gm'}, user=self.player)
+        self.cmd('condition-add', {**payload, 'visibility': 'gm'})
+        token.refresh_from_db()
+        secret = token.conditions[0]['condition_id']
+        with self.assertRaises(MapError):
+            self.cmd('condition-remove', {'tokenIds': [str(token.pk)], 'conditionId': secret}, user=self.player)
+        self.actor.permissions = {'default': 'read'}
+        self.actor.save()
+        with self.assertRaises(MapError):
+            self.cmd('condition-add', payload, user=self.player)
+        token.refresh_from_db()
+        self.assertEqual([c['condition_id'] for c in token.conditions], [secret])
 
     def test_idempotent_move_duplicate_and_remove_preserve_actor(self):
         t = self.place()

@@ -1,38 +1,29 @@
 import { pdfController } from "./controller.js";
+import { createManualEditor } from './manual-editor.js';
+import { createFieldActionsEditor } from './field-actions-editor.js';
+import { createMappingLibrary } from './mapping-library.js';
+import { createPdfDiagnostics } from './diagnostics.js';
+import { createTranslator } from '/static/gravewright_modules/i18n.js';
+import { registerEscapeClose } from '/static/gravewright_web/escape.js';
 import {
   Editor,
   StarterKit,
   Link,
 } from "/static/gravewright_journals/vendor/editor.js";
 const show = (el, on) => el.toggleAttribute("hidden", !on);
-export function openSheet(campaign, actorId, token, gm, onClose = () => {}, kallistisCharacterId = null) {
-  const el = document
-    .getElementById("pdf-sheet-window")
-    .content.firstElementChild.cloneNode(true);
-  const snapshot = token?.linkMode === "snapshot";
-  if (token) {
-    el.classList.remove("actor-directory__sheet");
-    el.classList.add("token-sheet");
-    el.querySelector("header").className = "gw-window__header";
-    el.querySelector(".gw-window__grip").remove();
-    const heading = document.createElement("strong"),
-      small = document.createElement("small");
-    small.textContent = snapshot ? "Independent copy" : "Linked to actor";
-    heading.append(document.createTextNode(""), small);
-    el.querySelector(".actor-directory__sheet-heading").replaceWith(heading);
-  }
-  if(token){el.dataset.tokenId=token.id;el.dataset.sceneId=token.mapId;}
-  document.body.append(el);
+export function mountSheet({ root: el, window: hostWindow, campaign, actorId, token, gm, setTitle, lifecycle: extensionLifecycle }) {
+  const translator = createTranslator(), text = (key, params) => translator.t(key, params);
+  el.append(document.getElementById('system-sheet-body').content.cloneNode(true));
+  const snapshot = token?.linkMode === 'snapshot';
   let closed = false,
     queued = false,
-    controller,
+    controller, manualEditor, fieldActionsEditor, mappingLibrary, diagnostics, unregisterEscape,
     notes = [],
     tab = "ficha",
     fieldsKey = "",
     sourcesKey = "",
-    barsKey = "",
-    kallistisProjection = null,
-    kallistisProjectionError = "";
+    barsKey = "", rollsKey = "";
+  const interactions = new AbortController();
   const render = () => {
     if (closed || queued) return;
     queued = true;
@@ -111,7 +102,12 @@ export function openSheet(campaign, actorId, token, gm, onClose = () => {}, kall
         { cache: "no-store" },
       );
       if (!r.ok) throw Error("Character sheet unavailable.");
-      return r.json();
+      const value = await r.json();
+      // Switching systems does not convert existing document data. A PDF
+      // provider cannot interpret a foreign sheet as its own schema.
+      if (['pdf', 'fields', 'token', 'bars'].some(key => !value.data?.[key] || typeof value.data[key] !== 'object' || Array.isArray(value.data[key])))
+        throw Error("Character sheet unavailable.");
+      return value;
     },
     save: (value) =>
       window.gravewrightRealtime.resourceCommand("actors", "sheet.save", {
@@ -121,55 +117,22 @@ export function openSheet(campaign, actorId, token, gm, onClose = () => {}, kall
         data: value.data,
         version: value.version,
         sheetVersion: value.sheetVersion,
+      }),
+    roll: (payload, { requestId }) => window.gravewrightRealtime.roll(payload, {
+      requestId, mapId: token?.mapId || window.gravewrightMaps?.current?.id,
     }),
   });
-  if (kallistisCharacterId && !token) {
-    fetch(`/api/kallistis/characters/${encodeURIComponent(kallistisCharacterId)}`, {
-      cache: "no-store",
-      headers: { Accept: "application/json" },
-    }).then(async response => {
-      const value = await response.json().catch(() => null);
-      if (!response.ok || value?.character?.id !== kallistisCharacterId || !value.character.kallistis)
-        throw new Error("A leitura canônica do personagem no KALLISTIS não está disponível para esta conta.");
-      kallistisProjection = value.character;
-    }).catch(error => {
-      kallistisProjectionError = error.message;
-    }).finally(render);
-  }
-  async function extensionLifecycle(name) {
-    const tasks = [];
-    el.dispatchEvent(new CustomEvent(name, { detail: { waitUntil: task => tasks.push(task) } }));
-    await Promise.all(tasks);
-  }
-  async function close(force = false) {
-    if (!force) {
-      try { await extensionLifecycle('gravewright:sheet-flush'); await controller.call('flush'); }
-      catch (error) { const alert=el.querySelector('.pdf-sheet__error');show(alert,true);alert.querySelector('span').textContent=error.message;return; }
-    }
-    if (closed) return;
+  function destroy() {
     closed = true;
+    unregisterEscape?.();
+    interactions.abort();
+    fieldActionsEditor.destroy();
+    mappingLibrary.destroy(); diagnostics.destroy();
+    manualEditor.destroy();
     controller.destroy();
-    notes.forEach((e) => e.destroy());
-    el.remove();
-    window.removeEventListener("gravewright:access-revoked", revoke);
-    onClose();
+    notes.forEach(editor => editor.destroy());
   }
-  const revoke = () => close(true);
-  window.addEventListener("gravewright:access-revoked", revoke);
   el.onclick = async (e) => {
-    const w = e.target.closest("[data-window]")?.dataset.window;
-    if (w === "close") return close();
-    if (w === "maximize")
-      el.classList.toggle(
-        token ? "token-sheet--maximized" : "actor-directory__sheet--maximized",
-      );
-    if (w === "minimize") {
-      el.classList.toggle("gw-window--minimized");
-      show(
-        el.querySelector(".gw-window__body"),
-        !el.classList.contains("gw-window--minimized"),
-      );
-    }
     const t = e.target.closest(".pdf-sheet__tabs > [data-tab]")?.dataset.tab;
     if (t) {
       try {
@@ -188,6 +151,66 @@ export function openSheet(campaign, actorId, token, gm, onClose = () => {}, kall
         ...(name === "in" ? [1.2] : name === "out" ? [1 / 1.2] : []),
       );
   };
+  manualEditor = createManualEditor({ root: el, controller, t: text,
+    onConfigure: id => {
+      const name = Object.keys(controller.view.fields).find(name => controller.view.fields[name].manualId === id);
+      if (name && controller.view.canConfigureFieldActions) void configure(name);
+    },
+  });
+  fieldActionsEditor = createFieldActionsEditor({ root: el, hostWindow, controller, t: text });
+  mappingLibrary = createMappingLibrary({ root: el, controller, campaign, t: text });
+  diagnostics = createPdfDiagnostics({ root: el, controller, t: text, onSelect: async name => {
+    await controller.call('showField', name);
+    el.querySelectorAll('[data-pdf-field]').forEach(input => {
+      if (input.dataset.pdfField === name) { input.scrollIntoView({ block: 'center' }); input.focus(); }
+    });
+  } });
+  el.querySelector('[data-pdf-library-open]').addEventListener('click', () => void mappingLibrary.open());
+  el.querySelector('[data-pdf-diagnostics-open]').addEventListener('click', () => diagnostics.open());
+  async function rollField(name) {
+    const alert = el.querySelector('.pdf-sheet__error');
+    try { await controller.call('rollField', name); }
+    catch (failure) {
+      if (closed) return;
+      show(alert, true);
+      alert.querySelector('span').textContent = text(failure.message || 'Could not roll this field. Try again.');
+    }
+  }
+  function fieldNameFrom(target) {
+    const input = target.closest('[data-pdf-field]');
+    if (input) return input.dataset.pdfField;
+    const box = target.closest('[data-pdf-map-field]');
+    return box && Object.keys(controller.view.fields).find(name => controller.view.fields[name].manualId === box.dataset.pdfMapField);
+  }
+  async function configure(name) {
+    try { await fieldActionsEditor.open(name); }
+    catch (failure) {
+      if (closed) return;
+      const alert = el.querySelector('.pdf-sheet__error');
+      show(alert, true); alert.querySelector('span').textContent = text(failure.message);
+    }
+  }
+  el.addEventListener('dblclick', event => {
+    const name = fieldNameFrom(event.target);
+    if (!name) return;
+    if (controller.view.canConfigureFieldActions) {
+      event.preventDefault(); event.stopPropagation(); void configure(name);
+    } else if (controller.view.canEdit && controller.view.fieldActions[name]) {
+      event.preventDefault(); event.stopPropagation(); void rollField(name);
+    }
+  }, { signal: interactions.signal });
+  el.addEventListener('keydown', event => {
+    const name = fieldNameFrom(event.target);
+    if (!name) return;
+    if (event.key === 'F2' && controller.view.canConfigureFieldActions) {
+      event.preventDefault(); event.stopPropagation(); void configure(name);
+    } else if (event.key === 'Enter' && event.altKey && controller.view.fieldActions[name] && controller.view.canEdit) {
+      event.preventDefault(); event.stopPropagation(); void rollField(name);
+    }
+  }, { signal: interactions.signal });
+  unregisterEscape = registerEscapeClose(hostWindow, () => {
+    if (!manualEditor.cancelGesture()) hostWindow.querySelector('[data-window="close"]')?.click();
+  });
   for (const input of el.querySelectorAll("[data-upload]"))
     input.onchange = (e) =>
       controller.call(
@@ -208,6 +231,7 @@ export function openSheet(campaign, actorId, token, gm, onClose = () => {}, kall
   function paint() {
     const v = controller.view,
       a = v.actor;
+    manualEditor.paint(v);
     const loading = el.querySelector(".pdf-sheet__loading");
     show(loading, v.loading || !a);
     loading.textContent = v.loading
@@ -217,19 +241,24 @@ export function openSheet(campaign, actorId, token, gm, onClose = () => {}, kall
     for (const p of el.querySelectorAll(".pdf-sheet > [data-panel]"))
       show(p, !!a && p.dataset.panel === tab);
     if (!a) return;
-    el.dataset.actorId = actorId;
-    el.dataset.canEdit = String(a.canEdit);
-    el.setAttribute("aria-label", token ? "Ficha: " + a.name : a.name);
-    if (token)
-      el.querySelector("header strong").firstChild.textContent = a.name + " ";
-    else el.querySelector("header strong").textContent = a.name;
+    const mappingLabel = el.querySelector('[data-pdf-map-toggle-label]');
+    mappingLabel.textContent = text(v.mappingEditing ? 'Finish mapping' : 'Map fields');
+    show(el.querySelector('[data-pdf-unmapped]'), gm && v.canMap && !v.mappingEditing && !v.nativeFieldCount && !v.manualFields.length);
+    show(el.querySelector('[data-pdf-actions-hint]'), v.canConfigureFieldActions && !!v.openFieldNames.length);
+    show(el.querySelector('[data-pdf-library-open]'), v.canConfigureFieldActions);
+    show(el.querySelector('[data-pdf-diagnostics-open]'), v.canConfigureFieldActions);
+    const filledButton = el.querySelector('[data-pdf=downloadFilled]');
+    filledButton.disabled = !v.pages || v.exporting;
+    hostWindow.dataset.canEdit = String(a.canEdit);
+    setTitle(a.name);
     el.querySelector(".pdf-sheet").style.setProperty(
       "--pdf-field-text",
       a.data.pdf.textColor,
     );
     const alert = el.querySelector(".pdf-sheet__error");
-    show(alert, !!v.saveError);
-    alert.querySelector("span").textContent = v.saveError;
+    show(alert, !!(v.saveError || v.actionError));
+    alert.querySelector("span").textContent = v.saveError || v.actionError;
+    show(alert.querySelector('button'), !!v.saveError);
     for (const b of el.querySelectorAll(".pdf-sheet__tabs > [data-tab]")) {
       b.classList.toggle("pdf-sheet__tab--active", b.dataset.tab === tab);
       b.setAttribute("aria-selected", String(b.dataset.tab === tab));
@@ -284,22 +313,33 @@ export function openSheet(campaign, actorId, token, gm, onClose = () => {}, kall
       for (const [name, spec] of Object.entries(v.fields)) {
         const pos = v.positions[name];
         if (pos?.hidden) continue;
-        const input = document.createElement("input");
+        const input = document.createElement(spec.multiline ? 'textarea' : 'input');
         input.className =
           "pdf-sheet__field" +
           (spec.type === "boolean" ? " pdf-sheet__field--checkbox" : "");
-        input.type =
+        if (!spec.multiline) input.type =
           spec.type === "boolean"
             ? "checkbox"
             : spec.type === "number"
               ? "number"
               : "text";
-        input.title = name;
-        input.setAttribute("aria-label", name);
-        const readonly = !a.canEdit || v.fieldIndex.get(name)?.readOnly;
+        input.title = spec.label || name;
+        input.setAttribute("aria-label", spec.label || name);
+        input.dataset.pdfField = name;
+        if (spec.manualId) {
+          input.dataset.manualField = spec.manualId;
+          input.setAttribute('translate', 'no');
+          if (spec.type !== 'boolean' && spec.type !== 'number') input.maxLength = 20000;
+        }
+        if (spec.type === 'number') {
+          input.step = 'any';
+          if (spec.manualId) { input.min = '-1000000'; input.max = '1000000'; }
+        }
+        const readonly = !a.canEdit || spec.calculated || v.fieldIndex.get(name)?.readOnly;
         input.readOnly = readonly;
+        if (spec.calculated) input.dataset.pdfCalculated = '';
         input.disabled = input.type === "checkbox" && readonly;
-        if (v.viewerMissing) input.placeholder = name;
+        if (v.viewerMissing) input.placeholder = spec.label || name;
         else
           for (const k of ["left", "top", "width", "height"])
             input.style[k] = (pos?.[k] || 0) + "px";
@@ -310,9 +350,36 @@ export function openSheet(campaign, actorId, token, gm, onClose = () => {}, kall
         host.append(input);
       }
     }
+    for (const input of el.querySelectorAll('.pdf-sheet__fields [data-pdf-field]')) {
+      if (input.ownerDocument.activeElement === input || input.getAttribute('aria-invalid') === 'true') continue;
+      const value = controller.value(input.dataset.pdfField);
+      if (input.type === 'checkbox') input.checked = !!value;
+      else input.value = value;
+    }
+    const rollNames = Object.keys(v.fieldActions).filter(name => v.fields[name] && !v.positions[name]?.hidden);
+    const rollKey = JSON.stringify(rollNames.map(name => [name, v.fieldActions[name], v.fields[name]?.label]));
+    const rolls = el.querySelector('[data-pdf-rolls]');
+    show(rolls, a.canEdit && !!rollNames.length);
+    if (rollKey !== rollsKey) {
+      rollsKey = rollKey;
+      rolls.replaceChildren();
+      for (const name of rollNames) {
+        const label = v.fieldActions[name].label || v.fields[name].label || name;
+        const button = el.ownerDocument.createElement('button');
+        button.type = 'button';
+        button.dataset.pdfRollField = name;
+        button.setAttribute('translate', 'no');
+        button.textContent = label;
+        button.title = translator.t('Roll {0}', [label]);
+        button.setAttribute('aria-label', translator.t('Roll {0}', [label]));
+        button.onclick = () => void rollField(name);
+        rolls.append(button);
+      }
+    }
+    for (const button of rolls.querySelectorAll('button')) button.disabled = v.rolling || !a.canEdit;
     for (const input of el.querySelectorAll("[data-field]")) {
       input.disabled = !a.canEdit;
-      if (document.activeElement !== input)
+      if (input.ownerDocument.activeElement !== input)
         input.value =
           input.dataset.field === "name"
             ? a.name
@@ -331,43 +398,16 @@ export function openSheet(campaign, actorId, token, gm, onClose = () => {}, kall
       input.disabled = !a.canEdit || snapshot;
     for (const action of el.querySelectorAll("[data-image-action]"))
       show(action, a.canEdit && !snapshot);
-    const manifestationHost = el.querySelector("[data-kallistis-manifestations]");
-    const kallistis = kallistisProjection?.kallistis || null;
-    manifestationHost.replaceChildren();
-    const personalHost = el.querySelector("[data-kallistis-manifestation]");
-    personalHost.textContent = kallistis?.manifestacao_pessoal || "—";
-    const fulgor = Number.isInteger(kallistis?.fulgor_current)
-      ? kallistis.fulgor_current
-      : null;
-    el.querySelector("[data-kallistis-fulgor]").textContent =
-      fulgor === null ? "—" : fulgor === 5 ? "5 / 5 · FULGOR PLENO" : fulgor + " / 5";
-    const descriptions = kallistis?.capability_manifestation_descriptions;
-    for (const [capability, description] of Object.entries(descriptions || {})) {
-      const row = document.createElement("div");
-      const name = document.createElement("strong");
-      const text = document.createElement("p");
-      name.textContent = capability;
-      text.textContent = description;
-      row.append(name, text);
-      manifestationHost.append(row);
-    }
-    const projectionStatus = el.querySelector("[data-kallistis-status]");
-    projectionStatus.textContent = kallistisProjectionError || (kallistisCharacterId && !kallistisProjection
-      ? "Consultando KALLISTIS…"
-      : kallistis ? "Leitura canônica atual do KALLISTIS." : "");
-    show(projectionStatus, !!kallistisCharacterId);
-    show(
-      el.querySelector("[data-kallistis-manifestations-group]"),
-      !!kallistisCharacterId,
-    );
     show(el.querySelector("[data-no-fields]"), !v.openFieldNames.length);
     show(el.querySelector("[data-bar-choices]"), !!v.openFieldNames.length);
-    const bkey = JSON.stringify(v.openFieldNames);
+    const barNames = v.openFieldNames.filter(name => !v.fields[name]?.manualId
+      || !v.fields[name].multiline && v.fields[name].type !== 'boolean');
+    const bkey = JSON.stringify(barNames.map(name => [name, v.fields[name]?.label]));
     for (const select of el.querySelectorAll("[data-bar]")) {
       if (bkey !== barsKey) {
         select.replaceChildren(
-          new Option("— none —", ""),
-          ...v.openFieldNames.map((n) => new Option(n, n)),
+          new Option(text("— none —"), ""),
+          ...barNames.map((n) => new Option(v.fields[n]?.label || n, n)),
         );
         select.onchange = (e) =>
           controller.call("onBarChoice", select.dataset.bar, e);
@@ -427,8 +467,8 @@ export function openSheet(campaign, actorId, token, gm, onClose = () => {}, kall
       }
   }
   return {
-    close,
-    element: el,
+    destroy,
+    flush: () => controller.call("flush"),
     get dirty() {
       return (
         controller.view.pending ||

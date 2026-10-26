@@ -1,15 +1,22 @@
 from django.urls import path
 
-from . import views, frontend
+from . import views, frontend, domain_files
 
 urlpatterns = [
     path("api/tables/<uuid:table_id>/api", frontend.call),
     path("api/tables/<uuid:table_id>/modules/<str:module_id>/api", frontend.call),
+    path("api/tables/<uuid:table_id>/files", domain_files.call),
+    path("api/tables/<uuid:table_id>/modules/<str:module_id>/files", domain_files.call),
     path("api/marketplace/status", views.marketplace_status),
+    path("api/marketplace/default", views.default_marketplace),
     path("api/marketplace", views.marketplace),
     path("api/marketplace/install", views.install),
+    path("api/module-packages/install-local", views.local_install),
     path("api/module-packages", views.installed),
     path("api/module-packages/activation", views.global_activation),
+    path("api/module-packages/update", views.update_package),
+    path("api/module-packages/remove", views.remove_package),
+    path("api/module-packages/removal-preview", views.removal_preview),
     path(
         "api/module-packages/<str:module_id>/<str:version>/<str:digest>/<path:asset>",
         views.asset,

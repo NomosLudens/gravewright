@@ -2,12 +2,14 @@ import base64
 import hashlib
 import io
 import json
+import os
 import tempfile
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 
 from gravewright.accounts.models import User
@@ -28,11 +30,17 @@ class MarketplaceTests(TestCase):
         }))
         override = override_settings(
             MEDIA_ROOT=temporary.name,
+            GRAVEWRIGHT_MODULES_ROOT=None,
             GRAVEWRIGHT_MARKETPLACE_URL="https://publisher.example/catalog.json",
             GRAVEWRIGHT_MARKETPLACE_KEYS_FILE=str(self.keyfile),
         )
         override.enable()
         self.addCleanup(override.disable)
+        environment = patch.dict(os.environ, {
+            'GRAVEWRIGHT_DJANGO_REGISTRY': str(self.directory / 'modules' / 'server-apps.json'),
+        })
+        environment.start()
+        self.addCleanup(environment.stop)
         self.user = User.objects.create_user(
             email="owner@marketplace.test", name="Owner", role="owner"
         )
@@ -192,6 +200,81 @@ class MarketplaceTests(TestCase):
         self.assertEqual(response.json(), [active])
         self.assertTrue(self.client.get("/api/module-packages").json()[0]["revoked"])
 
+    def test_latest_catalog_selects_numeric_versions_for_each_package(self):
+        older, _ = self.release(version="1.9.0")
+        system_older, _ = self.release(id="publisher.system", version="0.9.0", type="system")
+        server_older, _ = self.release(id="publisher.server", version="2.0.0", type="django")
+        newest, _ = self.release(version="1.10.0")
+        oldest, _ = self.release(version="1.2.0")
+        server_newest, _ = self.release(id="publisher.server", version="2.1.0", type="django")
+        system_newest, _ = self.release(id="publisher.system", version="0.10.0", type="system")
+        records = [older, system_older, server_older, newest, oldest, server_newest, system_newest]
+        with patch("gravewright.modules.views.download", return_value=json.dumps(records).encode()):
+            response = self.client.get("/api/marketplace?latest=1")
+            self.assertEqual(response.status_code, 200, response.content)
+            self.assertEqual(response.json(), [newest, system_newest, server_newest])
+            # The existing SDK catalog retains every eligible exact release.
+            self.assertEqual(self.client.get("/api/marketplace").json(), records)
+            self.assertEqual(self.client.get("/api/marketplace?latest=0").json(), records)
+
+    def test_latest_catalog_falls_back_from_revoked_and_incompatible_releases(self):
+        older, _ = self.release(version="1.9.0")
+        newest, _ = self.release(version="1.10.0")
+        revoked, _ = self.release(version="3.0.0", status="revoked")
+        incompatible, _ = self.release(version="4.0.0", sdk=">=2.0.0")
+        records = [revoked, older, incompatible, newest]
+        with patch("gravewright.modules.views.download", return_value=json.dumps(records).encode()):
+            response = self.client.get("/api/marketplace?latest=1")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json(), [newest])
+
+    def test_latest_catalog_applies_revocations_of_hidden_installed_releases(self):
+        record, raw = self.release()
+        host().install(record, raw)
+        revoked, _ = self.release(status="revoked")
+        newest, _ = self.release(version="1.1.0")
+        with patch("gravewright.modules.views.download", return_value=json.dumps([newest, revoked]).encode()):
+            response = self.client.get("/api/marketplace?latest=1")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json(), [newest])
+        self.assertTrue(Package.objects.get().revoked)
+        installed = self.client.get("/api/module-packages").json()
+        self.assertEqual([(row["version"], row["revoked"]) for row in installed], [("1.0.0", True)])
+
+    def test_latest_catalog_verifies_hidden_releases_before_any_revocation(self):
+        record, raw = self.release()
+        host().install(record, raw)
+        revoked, _ = self.release(status="revoked")
+        invalid, _ = self.release(id="publisher.other", version="1.0.0")
+        invalid["signature"] = base64.b64encode(b"x" * 64).decode()
+        newest, _ = self.release(id="publisher.other", version="1.1.0")
+        with patch("gravewright.modules.views.download", return_value=json.dumps([revoked, newest, invalid]).encode()):
+            response = self.client.get("/api/marketplace?latest=1")
+        self.assertEqual(response.status_code, 403, response.content)
+        self.assertEqual(response.json(), {"error": "permission_denied"})
+        self.assertFalse(Package.objects.get().revoked)
+
+    def test_latest_catalog_rejects_versions_outside_the_package_contract(self):
+        for version in ["1.0", "01.0.0", "1.0.0-alpha.1", "v1.0.0", "not-a-version", "1" * 5000 + ".0.0"]:
+            record, _ = self.release(version=version)
+            with self.subTest(version=version), patch(
+                "gravewright.modules.views.download", return_value=json.dumps([record]).encode()
+            ):
+                response = self.client.get("/api/marketplace?latest=1")
+            self.assertEqual(response.status_code, 400, response.content)
+            self.assertEqual(response.json(), {"error": "invalid_data"})
+
+    def test_exact_install_can_still_select_an_older_catalog_release(self):
+        older, raw = self.release()
+        newest, _ = self.release(version="1.1.0")
+        with patch("gravewright.modules.views.download", side_effect=[json.dumps([newest, older]).encode(), raw]):
+            response = self.client.post(
+                "/api/marketplace/install", {"id": older["id"], "version": older["version"]},
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(Package.objects.get().version, "1.0.0")
+
     def test_signed_record_with_malformed_download_url_is_rejected(self):
         for url in [
             "https://[invalid/module.zip",
@@ -238,6 +321,94 @@ class MarketplaceTests(TestCase):
         ]:
             self.assertEqual(response.status_code, 403)
         self.assertEqual(self.client.get("/api/module-packages").status_code, 200)
+
+    def test_owner_installs_local_zip_into_configured_folder_without_marketplace(self):
+        _, raw = self.release()
+        destination = self.directory / "operator-modules"
+        self.keyfile.write_text("broken")
+        with override_settings(
+            GRAVEWRIGHT_MODULES_ROOT=destination,
+            GRAVEWRIGHT_MARKETPLACE_URL="",
+        ), patch("gravewright.modules.views.download") as download:
+            configuration = self.client.get("/api/module-packages/install-local")
+            response = self.client.post("/api/module-packages/install-local", {
+                "kind": "module",
+                "file": SimpleUploadedFile("package.zip", raw, content_type="application/zip"),
+            })
+            installed = self.client.get("/api/module-packages").json()
+            host().verify_installed(Package.objects.get())
+        self.assertEqual(configuration.json()["directory"], str(destination))
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["manifest"]["id"], "publisher.test")
+        self.assertNotIn("record", installed[0])
+        self.assertEqual(Package.objects.get().record["source"], "local")
+        self.assertTrue((destination / "archives" / (Package.objects.get().digest + ".zip")).is_file())
+        download.assert_not_called()
+
+    def test_local_zip_must_match_library_and_remains_owner_only(self):
+        _, raw = self.release()
+        response = self.client.post("/api/module-packages/install-local", {
+            "kind": "system",
+            "file": SimpleUploadedFile("package.zip", raw, content_type="application/zip"),
+        })
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertFalse(Package.objects.exists())
+        player = User.objects.create_user(email="local-player@example.test", name="Player")
+        self.client.force_login(player)
+        self.assertEqual(self.client.get("/api/module-packages/install-local").status_code, 403)
+
+    def test_owner_installs_default_marketplace_from_settings_screen(self):
+        from django.conf import settings
+        from dotenv import dotenv_values
+        from scripts import gravewright_runner as runner
+
+        raw = b'{\n  "gravewright-2026": "PXbpURq9J1jLkPnnwBVN/5B+zrb0p5MaWQAe/ltJ8LY="\n}\n'
+        data = self.directory / "runner-data"
+        data.mkdir()
+        project = self.directory / "project"
+        project.mkdir()
+        (project / ".env").write_text("DJANGO_SECRET_KEY=" + "x" * 64 + "\n")
+        (data / ".env").write_text("# Legacy configuration must stay untouched\n")
+        with override_settings(
+            RUNNER_DATA=data,
+            GRAVEWRIGHT_MARKETPLACE_URL="",
+            GRAVEWRIGHT_MARKETPLACE_KEYS_FILE="",
+        ), patch.dict(os.environ, {
+            "GRAVEWRIGHT_MARKETPLACE_URL": "",
+            "GRAVEWRIGHT_MARKETPLACE_KEYS_FILE": "",
+        }), patch(
+            "scripts.gravewright_runner._download_default_keys", return_value=raw,
+        ), patch(
+            "scripts.gravewright_runner.ROOT", project,
+        ):
+            self.assertFalse(self.client.get("/api/marketplace/default").json()["configured"])
+            response = self.client.post("/api/marketplace/default")
+            self.assertEqual(response.status_code, 200, response.content)
+            self.assertTrue(response.json()["configured"])
+            self.assertTrue(response.json()["default"])
+            self.assertNotContains(self.client.get("/inside?section=settings"), "data-default-marketplace")
+            key_path = runner.marketplace_directory(data) / 'trusted-keys.json'
+            self.assertEqual(key_path.parent.parent, data / 'marketplace')
+            self.assertEqual(key_path.read_bytes(), raw)
+            self.assertEqual(os.environ['GRAVEWRIGHT_MARKETPLACE_KEYS_FILE'], key_path.as_posix())
+            self.assertEqual(settings.GRAVEWRIGHT_MARKETPLACE_KEYS_FILE, key_path.as_posix())
+            saved = dotenv_values(project / '.env', interpolate=False)
+            self.assertEqual(saved['GRAVEWRIGHT_MARKETPLACE_KEYS_FILE'], key_path.as_posix())
+            self.assertEqual(saved['GRAVEWRIGHT_MARKETPLACE_URL'], response.json()['catalogUrl'])
+            marker = key_path.parent / runner.DEFAULT_MARKETPLACE_CHOICE
+            self.assertEqual(marker.read_text(encoding='utf-8'), 'installed\n')
+            self.assertFalse((data / runner.DEFAULT_MARKETPLACE_CHOICE).exists())
+            with patch.object(runner, 'ROOT', self.directory / 'another-project'):
+                self.assertNotEqual(runner.marketplace_directory(data), key_path.parent)
+            configured = (project / ".env").read_text(encoding="utf-8")
+            self.assertEqual((data / '.env').read_text(encoding='utf-8'), '# Legacy configuration must stay untouched\n')
+            self.assertIn("GRAVEWRIGHT_MARKETPLACE_URL", configured)
+            self.assertIn("GRAVEWRIGHT_MARKETPLACE_KEYS_FILE", configured)
+
+        player = User.objects.create_user(email="settings-player@example.test", name="Player")
+        self.client.force_login(player)
+        self.assertEqual(self.client.get("/api/marketplace/default").status_code, 403)
+        self.assertNotContains(self.client.get("/inside?section=settings"), "data-default-marketplace")
 
     def test_signed_package_type_must_be_supported_and_match_manifest(self):
         record, raw = self.release(type='module')

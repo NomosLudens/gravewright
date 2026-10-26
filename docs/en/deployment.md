@@ -2,7 +2,7 @@
 
 [Documentation](../README.md) · [Português](../pt-BR/deployment.md)
 
-This guide covers server deployments. For a Windows installation used only on its own computer, use the separate [Gravewright Runner](windows-runner.md), which manages personal storage and a single-process local profile.
+This guide covers server deployments. For local play, use the separate Gravewright Runner for [Windows](windows-runner.md), [Linux](linux-runner.md) or [macOS](macos-runner.md), which manages installation-local storage and a single-process local profile. Before upgrading to **0.3.2**, follow the [upgrade and recovery guide](upgrading.md).
 
 ## HTTPS and WebSockets
 
@@ -16,7 +16,7 @@ The public origin is an allowlist, not a TLS listener or permission grant. Table
 
 Run from a versioned source checkout as an account that can write the configured database and private storage. Use a persistent, private `DJANGO_SECRET_KEY`, `DJANGO_DEBUG=false`, an explicit allowed-host list, the intended public origin and a Redis URL. A public origin must be an HTTP(S) origin with no path or trailing slash. HTTPS enables secure session/CSRF cookies and HSTS in settings.
 
-Generate a secret locally and put it in protected configuration, preserving it across restarts:
+Before invoking uv, configure [installation-local tool storage](upgrading.md#local-tool-storage) in the same shell. Generate a secret locally and put it in protected configuration, preserving it across restarts:
 
 ```bash
 uv run --locked python -c 'import secrets; print(secrets.token_urlsafe(64))'
@@ -32,7 +32,7 @@ uv run --locked --no-dev python manage.py check --deploy
 uv run --locked --no-dev daphne -b 127.0.0.1 -p 3000 config.asgi:application
 ```
 
-These commands assume production values have already been set and storage directories exist. `check --deploy` can report settings requiring an operator decision; verify the public endpoint as described below as well. The last command binds plain HTTP to loopback behind the TLS proxy. `main.py` invokes Django's development `runserver`; `config.wsgi` cannot serve WebSockets.
+These commands assume production values have already been set and storage directories exist. `check --deploy` can report settings requiring an operator decision; verify the public endpoint as described below as well. The last command binds plain HTTP to loopback behind the TLS proxy. Normal `main.py` execution starts the managed supervisor and Daphne; `main.py --dev` invokes Django's development `runserver`. Direct Daphne execution above leaves process supervision and upgrades to the operator. `config.wsgi` cannot serve WebSockets.
 
 ## Nginx reverse proxy
 
@@ -103,9 +103,46 @@ Nginx handles the HTTP-to-HTTPS redirect; this checkout does not enable Django's
 
 Serve `/static/` from the `staticfiles/` directory produced by `collectstatic`. Runtime app assets, including frontend modules served by custom views, still need their corresponding application routes. With debug disabled, Django does not automatically serve collected files through the development static handler.
 
-Keep `MEDIA_ROOT` private: uploaded maps, PDFs, journal files, audio, cards and installed module packages are served by guarded routes. A public `/media/` alias would bypass these checks. Back up private storage together with the database. Optional disk compendium collections in `data/vtt/compendiums/` need backup too.
+Keep `MEDIA_ROOT` private: uploaded maps, PDFs, journal files, audio, cards and installed module packages are served by guarded routes. A public `/media/` alias would bypass these checks. Back up private storage together with the database, including attachments retained by deleted journal history. Optional disk compendium collections in the configured `GRAVEWRIGHT_CONTENT_ROOT` need backup too: standard settings default to `data/vtt/compendiums/`, while the Runner uses `data/compendiums/`.
 
 Configure upstream upload limits and timeouts explicitly for your deployment. The default map byte limit is 50 GiB, while decoded-pixel, dimension and tile limits apply separately; a high accepted byte limit does not imply that the server can process such a file within available memory.
+
+### Large map uploads
+
+Map generation remains synchronous within the upload request. It runs outside the event loop, but a large map or time spent waiting for another map can exceed a reverse proxy's response timeout. Size `proxy_read_timeout` for observed upload processing times; the example's `300s` is not a guarantee for every image. A proxy timeout can disconnect the uploader while the server continues processing, so check the scene list before retrying.
+
+For larger maps, install the optional libvips dependencies into the environment that runs the server and raise `GRAVEWRIGHT_MAP_MAX_PIXELS` only as needed. In the source deployment commands above, use `uv sync --locked --no-dev --extra vips`; retain the extra on later syncs. The native installers and managed update preparation select default dependencies without this extra. `GRAVEWRIGHT_MAP_TILER=vips` makes missing native support a startup error; `auto` falls back to Pillow, whose separate `GRAVEWRIGHT_MAP_PILLOW_MAX_PIXELS` ceiling defaults to 64 million pixels. See [configuration](configuration.md#map-tiling-and-large-images) before increasing either ceiling.
+
+Generation is serialized per process; multiple ASGI workers can still add their memory and disk use. Libvips streams ordinary maps, while rotations and some codecs require additional resources. Reserve writable installation-local `data/runner/tmp/` space for the encoded source, the complete staged tile set and native spill files, in addition to final media storage. Explicit Runner-root or Django upload-temp overrides retain their documented precedence. Measure representative formats, transparency and orientations on the intended server before raising limits; this change does not add background jobs or a global memory quota.
+
+## Persistent Blueprint waits
+
+The ASGI application starts a database-backed Delay worker automatically when
+Daphne's reactor starts. This includes the normal Runner launch; no separate
+worker command or browser connection is needed. Other ASGI hosts must enable
+lifespan startup/shutdown. WSGI does not supply this lifecycle. Standard Django
+management commands do not start the worker. The existing managed updater
+maintenance flag holds the queue during server health verification until the
+update is committed or rolled back.
+
+Apply migrations before startup. Pending continuations live in the same private
+database as the scene, survive process restarts and become eligible when their
+deadline passes. A scene's paused automation keeps them pending until resumed.
+The worker checks at 250 ms intervals in batches of 20; timing is subject to load
+and availability. Shutdown waits for the current transaction to finish. If a
+process ends during a transaction, its uncommitted continuation remains pending
+for a later claim. Check server logs for database failures and the GM's
+**Automation → Waiting** view for pending work.
+
+Every ASGI process may run its own worker; database transactions serialize
+claims and effects, preventing duplicate application across competing workers.
+`GRAVEWRIGHT_AUTOMATION_WORKER_ENABLED=false` disables that process's worker
+without deleting waits. Campaign exports, snapshots and clones omit pending
+continuations; a full database backup includes them. A restored database can
+therefore resume overdue work on startup. Use the disabled-worker setting while
+inspecting a recovery copy before intentionally enabling its automation. See
+[configuration](configuration.md#blueprint-delay-worker) and
+[Persistent Delay](map-builder.md#persistent-delay).
 
 ## Multiple processes
 
@@ -117,7 +154,9 @@ Use a service manager to supervise ASGI and Redis, retain logs, and shut down gr
 
 ## Backups and restoration
 
-Campaign exports are portable content packages; snapshots are campaign recovery points. Neither is a full instance backup. Exports omit or sanitize some memberships, ownership and private session history, and module installation state is outside their content graph. See [archives.py](../../gravewright/administration/archives.py).
+Campaign exports are portable content packages; snapshots are campaign recovery points. In **0.3.2**, complete exports, clones and snapshots include clocks, clues, session preparation, timeline events, dashboard metadata and journal history/trash with retained attachments. Portable imports remap references and do not create campaign members or restore source-user permissions. Snapshots restore dashboards only for current GMs. Older archives without preparation metadata preserve the target's existing preparation/history data. See [campaign management](campaign-management.md) for selection and dashboard rules and [archives.py](../../gravewright/administration/archives.py) for the content graph.
+
+Neither format is a full instance backup: user accounts, host settings, installed module state, command receipts and pending Blueprint waits are outside portable content packages. A full database/media backup includes them. Trashed attachments still consume private storage until released by history cleanup; do not prune those files manually.
 
 For a consistent full backup:
 
@@ -130,7 +169,7 @@ Do not copy only `db.sqlite3` in the source root or restore older code over a ne
 
 ## Updates and optional services
 
-Core update discovery is opt-in through `GRAVEWRIGHT_RELEASES_REPOSITORY=owner/repo`. It expects compatible Django release artifacts with SHA-256 metadata. The current updater reports status and artifact information; it does not replace the running installation. Verify downloaded bytes, back up, review migrations and perform source upgrades manually.
+Core update discovery uses `GRAVEWRIGHT_RELEASES_REPOSITORY`, defaulting to `Gravewright/gravewright`; an empty value disables it. Compatible Django release artifacts require SHA-256 metadata. Managed installations started with the Runner or `main.py` can install updates from Administration, including file replacement, migrations, restart and recovery. Direct ASGI deployments require operator-managed upgrades.
 
 Marketplace configuration uses an HTTPS catalog and a local file of trusted Ed25519 public keys. An empty URL leaves online discovery unconfigured. Review module authors and code before installation because modules execute on the application's origin. See [modules](modules.md).
 
@@ -143,11 +182,15 @@ default. Windows users keep starting `Gravewright Runner.bat`; Linux/macOS
 source installations use `uv run --locked python main.py`. Only developers
 need `--dev` for autoreload. No special update mode is required.
 
-Use Administration → Updates → **Back up and install update** on all three
+Use Administration → Updates → **Install update** on all three
 platforms. The interface controls download, SHA-256 validation, isolated
-locked dependencies, backup, migrations, restart and failure recovery. Alpha
-releases use Development. Active table connections briefly disconnect during
-the swap; the administration page polls for the restarted server.
+locked dependencies, backup, migrations, restart and failure recovery.
+The progress modal shows the confirmed stage and elapsed time. Download
+percentages use received bytes; other stages use an activity indicator.
+Keep the Runner open during installation. Active table connections briefly
+disconnect during the swap; connection checks become less frequent while
+the server is unavailable, and pause when the page is hidden or offline.
+The page reloads after the server confirms that the target version is running.
 
 Releases require a higher version, the supervisor files, and a
 `Gravewright-VERSION-django.zip` asset with a GitHub SHA-256 digest. The default
@@ -156,18 +199,29 @@ discovery. The legacy initial `0.1.0-alpha.0` release predates the supervisor;
 that old installation must first receive the updated launcher to support
 in-app installation.
 
-New code lives separately from the original checkout. SQLite, media,
-compendiums and the Runner's shared static files are backed up and restored
-on migration/startup failure. Interrupted transactions recover at next launch.
-Dirty Git checkouts are protected. Never run another server against the same
-database during a swap.
+The published 0.1.1 package also uses the earlier supervisor. After updating it
+to 0.1.2 from Administration, stop the old launcher, extract the new ZIP over the
+original source folder and run its installer with the same personal data directory.
+This one-time launcher replacement enables Django activation and the new file
+replacement workflow. Preserve the personal data and `updates` directory.
 
-Runner updates live under its user-data `updates` directory. `main.py` uses
-`%LOCALAPPDATA%/Gravewright/updates` on Windows,
-`~/Library/Application Support/Gravewright/updates` on macOS, or
-`$XDG_STATE_HOME/gravewright/updates` (default `~/.local/state/gravewright/updates`)
-on Linux. Preserve these directories and reserve disk space: backups are not
-automatically removed.
+Updates replace application files in the original project folder, including the installer, scripts and assets, remove obsolete code, and regenerate the platform Runner. Local `.env`, Python environments, caches and persistent data/extension directories are preserved. New dependencies are prepared in isolation before the replacement.
+
+**Keep a .old copy for rollback** is checked by default. After success, the updater's `retained/` directory holds the previous code and matching data snapshots under `.gravewright-rollback`. The folder is named after the installation directory, for example `data/updates/retained/gravewright.old` for a Runner installation extracted as `gravewright`; collisions add a unique identifier. Normal `main.py` uses `data/updates/<installation-hash>/retained/` instead. Use the actual path recorded by your installation, rather than constructing it from the target release version. Unchecking removes the temporary recovery copy after success. Temporary recovery is always retained during installation: migration, file replacement or startup failures restore code, launchers and data. Interrupted transactions recover at next launch.
+
+To restore a retained copy, stop the runner and use the installation's Python (shown in the generated BAT):
+
+```bat
+"PATH_TO_PYTHON\python.exe" -X utf8 scripts\rollback_update.py "data\updates\retained\gravewright.old"
+```
+
+Restoration also returns the database and media to the backup's point in time, discarding later changes. Keep updater state and environments together with the `.old` copy: it references the previous Python. Dirty Git checkouts remain protected. Never run another server against the same database during an update or restoration.
+
+Runner updates live in the extracted project's `data/updates/` directory.
+`main.py` also keeps its managed state under the project's `data/updates/` on
+Windows, Linux and macOS. No default updater state is shared through AppData,
+HOME or XDG directories. Preserve `data/` and reserve disk space for environments
+and retained backups.
 
 The `Automatic updates` workflow runs native Windows/Linux/macOS tests. Run
 `uv run python tests/e2e/automatic_updates.py` and the same command with

@@ -11,8 +11,9 @@ from gravewright.actors import services as actors
 from gravewright.actors.models import Actor, Asset
 from gravewright.actors.views import publish
 from gravewright.campaigns.models import Campaign
+from gravewright.campaigns.systems import asset_content_type, asset_provider, asset_provider_for, resolve_system_id
 from gravewright.journals.services import JournalError, member
-from gravewright.maps.services import MapError, title
+from gravewright.maps.services import MapError, manage, title
 from gravewright.tokens import services as tokens
 
 from .packages import ModuleFailure
@@ -37,7 +38,7 @@ def invoke(request, table_id, scene_id, name, payload, upload=None):
             "tableId": str(table_id),
             "name": row.name,
             "type": row.type,
-            "systemId": who.campaign.system or "gravewright-pdf-system",
+            "systemId": resolve_system_id(who.campaign.system),
             "revision": revision("actor", row.pk, row.version),
             "canEdit": actors.access(row, who, True),
             "data": row.data,
@@ -125,7 +126,7 @@ def invoke(request, table_id, scene_id, name, payload, upload=None):
             if token.scene_id != scene_id:
                 raise ModuleFailure("not_found")
             cell, ox, oy, _, _ = tokens.geometry(token.scene)
-            size = tokens.data(token)["token"]["size"]
+            size = tokens.presentation(token)["token"]["size"]
             if name == "token.move":
                 expected(revision("token", token.pk, token.version))
                 tokens.command(
@@ -160,17 +161,17 @@ def invoke(request, table_id, scene_id, name, payload, upload=None):
                     {
                         "id": str(a.pk),
                         "name": a.name,
-                        "contentType": "application/pdf",
+                        "contentType": asset_content_type(a.kind),
                         "createdAt": a.created_at.isoformat(),
                     }
                     for a in Asset.objects.filter(
-                        campaign_id=table_id, kind="pdf"
+                        campaign_id=table_id, actor__isnull=True,
                     ).order_by("created_at")
                 ]
             }
         if name == "asset.download":
             row = Asset.objects.filter(
-                pk=payload["id"], campaign_id=table_id, kind="pdf"
+                pk=payload["id"], campaign_id=table_id, actor__isnull=True,
             ).first()
             if not row:
                 raise ModuleFailure("not_found")
@@ -178,8 +179,23 @@ def invoke(request, table_id, scene_id, name, payload, upload=None):
                 row.file.open("rb"),
                 as_attachment=True,
                 filename=row.name,
-                content_type="application/pdf",
+                content_type=asset_content_type(row.kind),
             )
+        if name == "card.asset.upload":
+            manage(who)
+            if upload is None:
+                raise ModuleFailure("invalid_data")
+            # The native card upload owns image validation, conversion and cleanup.
+            from gravewright.table.media import upload as upload_card_asset
+
+            request.POST = request.POST.copy()
+            request.POST["purpose"] = payload["purpose"]
+            response = upload_card_asset(request, table_id, "card-asset")
+            if response.status_code != 200:
+                raise ModuleFailure(
+                    "permission_denied" if response.status_code == 403 else "invalid_data"
+                )
+            return {"assetId": json.loads(response.content)["asset_id"]}
         if name in ("asset.upload", "actor.image.upload"):
             if upload is None:
                 raise ModuleFailure("invalid_data")
@@ -187,7 +203,14 @@ def invoke(request, table_id, scene_id, name, payload, upload=None):
             from gravewright.actors.views import upload as upload_asset
 
             request.POST = request.POST.copy()
-            request.POST["kind"] = "pdf" if name == "asset.upload" else payload["kind"]
+            if name == 'asset.upload':
+                provider = (asset_provider_for(content_type=upload.content_type)
+                            or asset_provider(who.campaign.system))
+                if not provider:
+                    raise ModuleFailure('invalid_data')
+                request.POST['kind'] = provider['kind']
+            else:
+                request.POST['kind'] = payload['kind']
             if name == "actor.image.upload":
                 request.POST["actorId"] = payload["id"]
                 row = actors.get(payload["id"], who, True)
@@ -203,7 +226,7 @@ def invoke(request, table_id, scene_id, name, payload, upload=None):
             return {
                 "id": str(asset.pk),
                 "name": asset.name,
-                "contentType": "application/pdf",
+                "contentType": asset_content_type(asset.kind),
                 "createdAt": asset.created_at.isoformat(),
             }
         raise ModuleFailure("unavailable")

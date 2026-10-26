@@ -1,7 +1,7 @@
 [project]
 name = "gravewright-vtt"
-# Public release: 0.1.1 (release tag: v0.1.1).
-version = "0.1.1"
+# Public release: 0.3.3, Alpha development stage (release tag: v0.3.3).
+version = "0.3.3"
 classifiers = ["Development Status :: 3 - Alpha"]
 requires-python = ">=3.14"
 readme = "README.md"
@@ -15,6 +15,7 @@ license-files = [
     "gravewright/web/icons/LICENSE",
     "gravewright/web/static/gravewright_web/ORIGINAL-*",
     "gravewright/web/static/gravewright_web/vendor/*LICENSE*",
+    "gravewright/web/static/gravewright_web/vendor/rpg-icons/*.txt",
     "gravewright/maps/static/gravewright_maps/vendor/licenses/*",
     "gravewright/journals/static/gravewright_journals/vendor/*LICENSE*",
     "gravewright/journals/static/gravewright_journals/vendor/licenses/*",
@@ -29,9 +30,14 @@ dependencies = [
     "jinja2>=3.1.6,<4",
     "jsonschema>=4.26.0",
     "mutagen>=1.47,<2",
-    "pillow>=12.3.0",
+    "pillow>=13.0.0",
     "python-dotenv>=1.1,<2",
     "redis>=5,<6",
+]
+
+[project.optional-dependencies]
+vips = [
+    "pyvips[binary]>=3.2,<4",
 ]
 
 [dependency-groups]

@@ -2,9 +2,29 @@
 
 [Índice da documentação](../README.pt-BR.md) · [English](../en/modules.md) · [Referência da API](api.md)
 
-O Gravewright instala pacotes ZIP assinados com JavaScript para o navegador, arquivos auxiliares e um manifesto JSON. O proprietário do servidor instala versões; o mestre da campanha escolhe versões exatas e substituições da interface para uma mesa. A instalação não importa Python do pacote nem inicia seus executáveis.
+O Gravewright instala pacotes ZIP assinados com JavaScript para o navegador ou apps Django confiáveis, arquivos auxiliares e um manifesto JSON. O proprietário instala versões; o mestre escolhe módulos de navegador e substituições da interface para uma mesa. Apps Django são ativados separadamente para o servidor inteiro.
 
 A licença de módulos de terceiros está descrita na [política de licenciamento](../../LICENSING.pt-BR.md). O manifesto registra a licença escolhida pelo autor; a instalação não a altera.
+
+## Compatibilidade com o VTT
+
+O VTT **0.2.1** é a primeira release pública com o contrato de provedores
+`system.combat`, `content.compendiums` instaláveis, `api.ui.openModal` nativo e
+o ciclo de salvamento assíncrono ao fechar fichas documentados abaixo. São
+recursos adicionais do host; o contrato do SDK continua na versão **1.0.0**.
+A faixa de versão do SDK sozinha não distingue o VTT 0.2.0 do 0.2.1: pacotes
+que usam esses recursos devem documentar o VTT 0.2.1 como mínimo e verificar
+APIs opcionais do navegador antes de chamá-las. O VTT 0.2.0 já introduziu
+catálogos privados em `context.i18n`; o 0.2.1 também resolve os nomes traduzidos
+dos tipos de documento nos diretórios nativos.
+
+Regras, escolhas, layouts, automações e traduções de jogos ficam juntos em um
+único pacote de sistema instalável. Não exija um complemento Server Rules
+instalado separadamente em Módulos. O núcleo valida descritores, autorização e
+armazenamento sem interpretar regras de jogos. As versões acima identificam
+hosts mínimos históricos; veja os detalhes atuais de atualização nas
+[notas da 0.3.2](../releases/0.3.2.md) e os marcadores atuais de Python e navegador
+na [referência da API](api.md).
 
 ## Confiança e limites da instalação
 
@@ -51,7 +71,9 @@ example.actor-counter/
 }
 ```
 
-Escolha sua licença real e inclua seu texto em `LICENSE.txt`. A licença da extensão não precisa corresponder ao valor ilustrativo acima; consulte a política de licenciamento. O schema rejeita campos desconhecidos e exige todos os campos mostrados. IDs precisam de pelo menos um ponto ou hífen, começar com letra minúscula e usar letras minúsculas/dígitos em seus componentes. Versões possuem três números, sem sufixos de pré-lançamento/build. Intervalos do SDK aceitam comparações separadas por espaços, como `>=1.0.0 <2.0.0`; não aceitam `^`, `~`, curingas ou `||`. O carregador verifica o SDK **1.0.0**; a API de domínio separada informa **1.1.0**.
+Escolha sua licença real e inclua seu texto em `LICENSE.txt`. A licença da extensão não precisa corresponder ao valor ilustrativo acima; consulte a política de licenciamento. O schema rejeita campos desconhecidos e exige todos os campos mostrados. IDs precisam de pelo menos um ponto ou hífen, começar com letra minúscula e usar letras minúsculas/dígitos em seus componentes. Versões possuem três números, sem sufixos de pré-lançamento/build. Intervalos do SDK aceitam comparações separadas por espaços, como `>=1.0.0 <2.0.0`; não aceitam `^`, `~`, curingas ou `||`. O carregador verifica o SDK **1.0.0**; a API de domínio separada informa **1.2.0**.
+
+O contrato de domínio oferece `api.capabilities()` para descrever métodos explícitos sem conceder permissões. Pacotes de sistema confiáveis registram suas próprias operações com `api.systems.register_api(system_id, operations)` em `AppConfig.ready()`; módulos de navegador descobrem o provedor da campanha atual por `api.system.state()` e o chamam por `api.system.call(operation, data, options)`. Uploads binários recebem `File`/`Blob`; downloads retornam `{blob, name, contentType, size}`. Esses métodos preservam CSRF, autorização nativa, leases de ativação e o ciclo de vida do contexto; o descarte cancela operações pendentes. Veja a [referência da API](api.md) para payloads, revisões e opções de tempo limite.
 
 `main.js`:
 
@@ -114,11 +136,80 @@ Um pacote também pode fornecer um sistema de campanha adicionando `system` ao m
 }
 ```
 
-O ID e o título do sistema vêm de `id` e `name` do pacote. Cada pacote declara um sistema e não pode substituir `gravewright-pdf-system`. Declare pelo menos um tipo de ator; tipos de itens são opcionais. Os IDs dos tipos devem ser únicos em cada lista, começar com letra minúscula e conter apenas letras minúsculas, dígitos, sublinhados ou hífens (máximo de 80 caracteres). Cada lista aceita até 64 entradas, com rótulos de 1–120 caracteres.
+Opcionalmente, declare a iniciativa usada pelo gerenciador de combate nativo:
+
+```json
+"combat": { "formula": "1d20 + @combat.initiative", "manualInput": "number" }
+```
+
+Esse objeto pertence a `system`. A fórmula tem até 120 caracteres e usa a
+gramática nativa de dados. Referências `@caminho.do.campo` consultam números
+finitos na ficha do ator ou no snapshot independente do token; campos ausentes
+valem zero, enquanto valores não numéricos são rejeitados. A ficha do sistema
+deve persistir os modificadores calculados. O gerenciador consulta a versão
+instalada selecionada para a mesa. `showRoll: false` oculta os controles nativos
+de rolar iniciativa. `manualInput` aceita `number` ou `text` e é
+usado se a configuração de uma cena desativar a fórmula. Não há execução de
+JavaScript ou Python fornecido pelo manifesto.
+Para regras dinâmicas do sistema, veja [provedores de combate](#provedores-de-combate-do-sistema).
+
+O ID e o título do sistema vêm de `id` e `name` do pacote. Cada pacote declara um sistema e não pode substituir uma identidade registrada por um provedor embutido. Declare pelo menos um tipo de ator; tipos de itens são opcionais. Os IDs dos tipos devem ser únicos em cada lista, começar com letra minúscula e conter apenas letras minúsculas, dígitos, sublinhados ou hífens (máximo de 80 caracteres). Cada lista aceita até 64 entradas, com rótulos de 1–120 caracteres.
+
+Os descritores de tipo aceitam `labelKey` (chave de tradução de até 120 caracteres)
+e `icon` (nome de ícone de até 80 caracteres). Os diretórios de atores e itens consultam
+`labelKey` no catálogo registrado pelo próprio pacote com `context.i18n.register`;
+na ausência da tradução, usam `label`. Os ícones disponíveis para itens incluem `Backpack`,
+`Sword`, `ShieldCheck`, `Scroll`, `Sparkle` e `User`; um nome indisponível usa o
+ícone padrão. Por exemplo, `{"id":"component","label":"Component",
+"labelKey":"types.component","icon":"Backpack"}`. O core não mantém tabelas
+de nomes ou ícones por tipo de jogo. Consumidores de `i18n.onChange` também são
+atualizados quando o catálogo de seu namespace é registrado ou removido.
 
 Após a instalação assinada, o sistema aparece em Systems, `/api/rulesets` e no formulário de campanha. O catálogo usa a versão instalada compatível e não revogada mais recente de cada pacote, comparando os números da versão. Módulos comuns sem `system` continuam disponíveis em Installed modules. Campanhas existentes podem manter um sistema indisponível ao editar seus detalhes, mas ele não pode ser escolhido para uma nova campanha.
 
 Salvar uma mesa com um sistema instalado seleciona seus tipos e ativa seu pacote de interface. A versão exata já ativa é preservada; trocar o sistema remove o pacote anterior e mantém os demais módulos e preferências de interface. A mesa usa os tipos da versão exata ativada, ou da versão instalada mais recente quando nenhuma está ativada. Os dados dos atores mantêm a estrutura nativa existente; dados específicos do módulo usam as APIs de documentos e armazenamento de módulos. Instalar outra versão não muda automaticamente a versão ativada na mesa.
+
+## Provedores de combate do sistema
+
+O core não seleciona perfis de regras de jogos. Uma extensão de servidor
+confiável registra callbacks para o ID do próprio sistema em `AppConfig.ready()`:
+
+```python
+from api.combat import register_provider
+
+register_provider('publisher.starship',
+                  prepare_initiative=prepare_initiative,
+                  advance_effects=advance_effects)
+```
+
+`prepare_initiative(formula, data, *, conditions=())` recebe cópias isoladas e
+retorna `(formula, data)`. O parser nativo de dados avalia a fórmula retornada
+e valida o resultado numérico; ele não conhece os modificadores do sistema.
+`advance_effects(data, event)` altera uma cópia limitada da ficha e retorna
+`True` quando precisa persistir. Nomes de campos, ativação de equipamentos,
+recursos, condições e relógios de efeitos pertencem ao sistema. Sem provedor,
+os efeitos da ficha permanecem intocados. Registrar outro sistema não afeta o
+selecionado; registros conflitantes para um mesmo ID impedem a inicialização.
+
+O evento contém `phase` (`start`/`end`), `roundBoundary`, `isCurrent`, `periodic`,
+`actorType`, `tokenId`/`actorId`/`conditions` da origem do evento e
+`ownerTokenId`/`ownerActorId` do documento recebido. Tokens vinculados compartilham
+um documento de ator; tokens independentes recebem seu próprio snapshot.
+`documentKey` é uma tupla opaca de identidade; `clockKeys` é um conjunto
+compartilhado pelas fases de um comando para o sistema evitar contagem repetida.
+Turnos pulados recebem `periodic=False`; voltar no combate não executa esses
+callbacks.
+
+O host conserva permissões, limites do encontro, transações, limites de JSON,
+revisões, recibos contra repetição e publicação. Falhas no callback desfazem o
+comando. Callbacks devem evitar efeitos externos, pois a transação não consegue
+desfazê-los. São extensões Python confiáveis, ativadas pelo proprietário através
+do mecanismo existente de pacotes Django, sem imports solicitados pelo manifesto
+do navegador. Um sistema pode distribuir sua interface e suas regras de servidor
+em pacotes separados. Declare `"requiresProvider": true` em `system.combat`
+quando precisar desse backend: ações de combate falham claramente se ele estiver
+ausente, em vez de usar regras incompletas. O VTT não contém regras substitutas
+específicas de jogos.
 
 ## Catálogo assinado e ativação
 
@@ -168,9 +259,11 @@ record["signature"] = base64.b64encode(private_key.sign(canonical(record))).deco
 
 Publique o arquivo e o catálogo por HTTPS, configure a chave pública e instale a versão na tela Marketplace do proprietário. Um mestre ativa o módulo em Settings → Extensions da mesa. A rota HTTP de instalação recebe somente `id` e `version`, consulta o catálogo configurado e verifica o ZIP selecionado. Ela não aceita uma URL arbitrária de arquivo enviada na requisição.
 
+Como alternativa inteiramente local, o proprietário pode usar **Instalar de ZIP** na mesma modal. Esse fluxo não consulta o marketplace nem exige catálogo ou chaves de publicador: o envio local é a decisão explícita de confiança do proprietário. O ZIP ainda passa pelas mesmas validações de manifesto, compatibilidade, caminhos, tipos de arquivo, cotas e conteúdo executável. Na seção Sistemas ele deve declarar `system`; na seção Módulos ele não pode declará-lo. Como JavaScript de módulos roda na origem da aplicação, instale somente arquivos confiáveis.
+
 A instalação verifica digest, identidade e intervalo SDK do manifesto, arquivo de entrada, nomes, tipos de entrada e bytes extraídos. Os limites são 64 MiB compactados, 256 MiB expandidos, 4.096 entradas e 64 módulos ativos por mesa. Caminhos não podem atravessar diretórios nem conter barras invertidas, escapes percentuais, pontuação de URL ou NUL. Links simbólicos, entradas criptografadas, nomes duplicados sem distinção de maiúsculas, extensões não permitidas e cabeçalhos reconhecidos de executáveis nativos são rejeitados. As extensões permitidas estão em `ModulePackages.install`; textos de licença precisam de `.txt` ou `.md`, pois arquivos sem extensão são rejeitados.
 
-Os arquivos ZIP ficam em `MEDIA_ROOT/modules/archives/`; os pacotes extraídos, em `MEDIA_ROOT/modules/packages/<id>/<version>/<digest>/`. O banco guarda manifestos e registros assinados. Não é possível substituir uma versão com outros bytes. Ativação e acesso autenticado a arquivos verificam novamente o conteúdo; publique uma nova versão em vez de editar arquivos extraídos.
+Por padrão, os arquivos ZIP ficam em `MEDIA_ROOT/modules/archives/` e os pacotes extraídos em `MEDIA_ROOT/modules/packages/<id>/<version>/<digest>/`. Defina, por exemplo, `GRAVEWRIGHT_MODULES_ROOT=/srv/gravewright/modulos` no `.env` para apontar outra pasta; caminhos relativos partem da raiz do projeto e a mudança exige reiniciar o host. O banco guarda manifestos e a origem confiada de cada instalação. Não é possível substituir uma versão com outros bytes. Ativação e acesso autenticado a arquivos verificam novamente o conteúdo; publique uma nova versão em vez de editar arquivos extraídos.
 
 A ativação recebe `{modules, replacements, expectedRevision}`. `modules` relaciona IDs a versões exatas, `replacements` relaciona superfícies a IDs, e `expectedRevision` deve corresponder ao último `moduleSetRevision` lido (`"0"` inicialmente). Uma revisão antiga resulta em `conflict`. Alterações geram nova revisão e notificam a mesa. Clientes também consultam periodicamente e reconciliam ao reconectar.
 
@@ -255,15 +348,17 @@ Os testes de navegador precisam das dependências de desenvolvimento e do navega
 
 ### Pacotes de idioma para a instalação
 
-O manifesto pode declarar `locales`, associando cada idioma a `{ "name": "Português (Brasil)", "path": "locales/pt-BR.json" }`. Cada catálogo é um objeto JSON de textos originais e traduções, preservando marcadores como `{name}`. O inglês pertence ao host e não pode ser sobrescrito. Um pacote não pode combinar `system` e `locales`, nem executar Python baixado pelo marketplace.
+O manifesto pode declarar `locales`, associando cada idioma a `{ "name": "Português (Brasil)", "path": "locales/pt-BR.json" }`. Cada catálogo é um objeto JSON de textos originais e traduções, preservando marcadores como `{name}`. O inglês pertence ao host e não pode ser sobrescrito. Um pacote não pode combinar `system` e `locales`. Pacotes de idiomas não podem conter Python.
 
-O proprietário ativa os idiomas em Módulos instalados. A rota `POST /api/module-packages/activation` recebe `{ "id": "gravewright.translator", "version": "0.1.0", "enabled": true }` e verifica o arquivo assinado. Somente um pacote de idiomas fica ativo por instalação. A configuração de módulos por campanha rejeita esses pacotes e a lista de extensões da mesa os omite.
+O proprietário ativa os idiomas em Módulos instalados. A rota `POST /api/module-packages/activation` recebe `{ "id": "gravewright.translator", "version": "<installed-version>", "enabled": true }` e verifica o arquivo assinado. Substitua o marcador pela versão exata do pacote instalado, independente da versão do VTT. Somente um pacote de idiomas fica ativo por instalação. A configuração de módulos por campanha rejeita esses pacotes e a lista de extensões da mesa os omite.
 
 Com o pacote ativo, cada usuário escolhe seu idioma nas configurações internas da conta, armazenado em `UserPreference.locale`. Um cookie assinado permite manter o idioma na tela de entrada; outra conta autenticada não herda a preferência desse cookie. Desativar ou revogar o pacote remove o seletor e restaura o inglês no próximo carregamento. Páginas já abertas precisam ser recarregadas.
 
 A tradução abrange dicionários da aplicação, textos literais dos templates e controles criados no navegador. Rótulos reativos são traduzidos antes do processamento pelo Datastar para evitar disputa entre observadores. Nomes, mensagens, conteúdo editável, PDFs e interfaces arbitrárias de terceiros não são traduzidos.
 
-O app Django do [Translator](https://github.com/Gravewright/translator) extrai e mantém os catálogos e gera o ZIP portátil. Ele não precisa estar instalado no Django após a instalação pelo marketplace. O relatório `VALIDATION.md` registra os testes offline e online. A pré-release v0.1.0 exige as alterações do host presentes neste checkout de desenvolvimento.
+O app Django do [Translator](https://github.com/Gravewright/translator) extrai e mantém os catálogos e gera o ZIP portátil. Ele não precisa estar instalado no Django após a instalação pelo marketplace. Consulte a documentação desse pacote para seu fluxo de build e validação. O host controla o contrato de ativação de idiomas e os pontos de tradução em execução descritos aqui; versões do pacote e do VTT têm históricos separados.
+
+Após alterar rótulos nativos, execute `python scripts/audit_translations.py --catalogs data/translator-source/gravewright_translator/catalogs` contra um checkout explícito dos fontes do Translator. O auditor verifica paridade dos catálogos, marcadores e chamadas literais `t(...)`, `.t(...)` do adaptador, `gwText`, `modalText`, `text` e `label`. Ele não inventaria toda expressão dinâmica ou template; confira também a interface renderizada. O painel de visibilidade traduz título com ícone, dicas dos modos, estado, rótulos de acessibilidade e título da janela destacada pelo mesmo adaptador do host, inclusive ao trocar o idioma com o painel aberto. As correções revisadas do host também fornecem os novos rótulos aos pacotes Translator já instalados, sem alterar seus arquivos assinados.
 
 ### Biblioteca de pacotes e instalação
 
@@ -272,6 +367,15 @@ A área interna possui bibliotecas separadas de **Sistemas** e **Módulos**, com
 Novos registros assinados devem incluir `"type": "system"` ou `"type": "module"`. O campo participa da assinatura e deve corresponder ao manifesto do ZIP: sistemas declaram `system`. Valores inválidos e divergências são rejeitados. Registros antigos sem tipo continuam válidos e são tratados como módulos antes da instalação; depois, o manifesto instalado determina a categoria. Publicadores de sistemas devem incluir o tipo assinado para que o pacote apareça corretamente antes de ser instalado.
 
 Registros do catálogo aceitam `tags`: até 24 textos Unicode únicos, sem espaços nas extremidades, não vazios e com até 64 caracteres. As tags integram a assinatura e geram categorias na modal de instalação, separadas pelo tipo de pacote. Pacotes sem tags continuam aparecendo em Todos os pacotes.
+
+Os rótulos das tags acompanham o idioma da interface selecionado pelo Translator.
+O host traduz sua apresentação e reconhece aliases para as tags em português
+já existentes no catálogo oficial, como `Tradução` e `Dados`. IDs de pacotes, valores
+originais das tags, registros assinados e filtros de categoria mantêm suas
+identidades originais. A busca aceita tags originais e traduzidas.
+Tags desconhecidas sem tradução permanecem como fornecidas
+pelo publicador. Essa integração do host funciona com o Translator 0.1.2 e não
+exige alteração em seu pacote assinado nem no catálogo do Marketplace.
 
 A modal recebe progresso real via NDJSON de `POST /api/marketplace/install`, solicitando `Accept: application/x-ndjson`. As etapas são `catalog`, `download` (bytes recebidos e total quando conhecido), `verify`, `complete` e `error`. A conclusão só é enviada após verificar e instalar o arquivo. Downloads sem tamanho informado exibem progresso indeterminado e contagem de bytes. O retorno JSON tradicional permanece disponível. Desconectar o navegador não desfaz uma instalação em andamento; atualize a biblioteca para conferir o resultado.
 
@@ -286,6 +390,42 @@ em `onDispose`. O host fornece apenas o botão; o módulo mantém sua interface,
 assets e validação. Módulos sem esse callback continuam funcionando normalmente.
 
 ### Apps Django instalados explicitamente
+
+O marketplace também aceita registros assinados com `"type": "django"`. Eles
+aparecem em **Módulos**, identificados como **Django · Server**. Também é possível
+usar **Instalar de ZIP**. A instalação valida e extrai o pacote; o botão de
+ativação executa o código confiável e reinicia o servidor. Esse fluxo exige o
+Runner ou `main.py`, além do `uv`, sem editar o `.env` manualmente.
+
+Mantenha os campos habituais de identidade, SDK, descrição, autor e licença,
+omita `entry`, `system` e `locales`, e acrescente:
+
+```json
+"django": {
+  "apps": ["my_extension.apps.MyExtensionConfig"],
+  "requirements": ["some-library==1.2.3"]
+}
+```
+
+O ZIP deve conter `my_extension/__init__.py`, fontes Python, migrações, templates
+e arquivos estáticos. `requirements` é opcional e aceita apenas `nome==versão`,
+sem URLs, caminhos locais, extras ou opções do instalador. As dependências vêm
+do índice Python configurado e não podem substituir versões fixadas pelo core.
+Use nomes de importação e labels Django exclusivos. Um AppConfig pode declarar
+`gravewright_urlconf`; o app deve verificar autenticação, CSRF e permissões.
+
+A ativação prepara outro ambiente Python, valida o Django, salva banco e arquivos,
+aplica migrações, coleta arquivos estáticos e reinicia. Em caso de falha, restaura
+o ambiente, a seleção de módulos e os dados anteriores. Uma única operação de
+servidor pode executar por vez. A seleção fica em
+`MEDIA_ROOT/modules/server-apps.json` (ou na pasta de módulos configurada),
+continua após atualizações do core e tem suas dependências reinstaladas nelas.
+Desativar reinicia sem carregar o app; não desfaz migrações nem apaga seus dados.
+Versões revogadas não podem ser ativadas; apps já em execução devem ser
+desativados pelo proprietário. Fontes Python não são servidos pela rota de
+arquivos de navegador nem oferecidos como módulos por mesa.
+
+A configuração abaixo continua disponível para fontes gerenciados pelo operador:
 
 O operador pode instalar um app Python confiável no ambiente do servidor e definir
 `GRAVEWRIGHT_SERVER_APPS` com seu caminho de importação (separado por vírgulas para
@@ -306,4 +446,191 @@ explicitamente confiáveis continuam disponíveis após sincronizar o ambiente;
 as dependências dos apps ainda precisam ser instaladas. Os pacotes permanecem
 fora do repositório do VTT.
 
+O checkout já traz uma pasta padrão para esses apps: `extensions/django`,
+definida por `GRAVEWRIGHT_DJANGO_MODULES_ROOT`. Ela é acrescentada ao `sys.path`
+quando existe, de modo que um pacote colocado diretamente nela só precisa do seu
+caminho de importação em `GRAVEWRIGHT_SERVER_APPS`; entradas explícitas de
+`GRAVEWRIGHT_SERVER_APP_PATHS` têm precedência sobre ela. Os fontes de módulos de
+navegador têm a pasta padrão correspondente `extensions/api`
+(`GRAVEWRIGHT_API_MODULES_ROOT`), que serve apenas para autoria e documentação —
+os pacotes assinados instalados continuam em `MEDIA_ROOT/modules`. Uma pasta
+configurada que não existe impede a inicialização; apagar as pastas padrão sem
+configurá-las é suportado. O git ignora o conteúdo das duas pastas, para que as
+extensões fiquem fora deste repositório.
+
 [Porte ético de módulos](ethical-module-porting.md)
+
+As substituições de `actor.sheet` e `token.sheet` controlam o **corpo inteiro da
+janela**. A base fornece a barra de título, mover, destacar, minimizar, fechar,
+permissões e identidade do documento. As abas de PDF, Token e Notas pertencem
+apenas ao módulo integrado PDF System. Sistemas terceiros não carregam seu
+controlador, seus modelos nem seus estilos. O módulo integrado registra sua
+definição, implementação de ficha e validação de dados pelo AppConfig. Mesas PDF
+existentes mantêm o identificador e os dados, sem conversão.
+
+Pacotes de sistema assinados podem fornecer fichas por tipo de ator:
+
+```js
+register("actor.sheet", {
+  mode: "replace",
+  types: ["hero"],
+  mount({ root, context, api, signal }) {
+    // Desenhe a ficha inteira, incluindo as abas próprias do sistema.
+    // context contém actorId, actorType, systemId e canEdit.
+    // Leia com api.actors.sheet(...) e salve com api.actors.saveSheet(...).
+  }
+});
+```
+
+Sem `types`, a ficha atende todos os tipos. Listas de tipos sem sobreposição
+permitem várias fichas na mesma superfície. Uma substituição escolhida na mesa
+tem prioridade; depois, a ficha do sistema da campanha prevalece sobre outros
+módulos. Tokens reutilizam a ficha de ator do sistema, com `tokenId` e `sceneId`
+no contexto, salvo quando o pacote registra uma substituição `token.sheet`
+compatível com o tipo.
+
+Dados de atores e cópias independentes de tokens de sistemas terceiros mantêm
+seu formato JSON próprio. A base verifica tamanho, segurança do JSON, acesso e
+revisões sem inserir campos de PDF. As propriedades opcionais `token` e `bars`
+continuam fornecendo informações visuais para a cena; sem elas, a cena usa
+valores neutros sem modificar os dados armazenados.
+
+Antes de fechar, a janela emite `gravewright:sheet-flush`. O módulo pode chamar
+`event.detail.waitUntil(promise)` durante o evento para aguardar gravações. Uma
+rejeição mantém a janela aberta e mostra o erro. Registre o evento em
+`root.closest('.gw-window')`, usando o `signal` da montagem. Cada ficha controla
+as gravações ao trocar suas próprias abas. O módulo PDF continua emitindo
+`gravewright:sheet-flush` e `gravewright:sheet-refresh` nas trocas de suas abas.
+
+Fichas de item também preservam a barra de título e emitem
+`gravewright:sheet-flush` antes de fechar. Registre o evento em
+`root.closest('.item-sheet')`; `event.detail.waitUntil(promise)` aguarda
+gravações, inclusive ao pressionar ESC. Uma rejeição mantém o item aberto.
+A perda de acesso fecha a janela imediatamente, sem aguardar novas escritas.
+
+## Compêndios fornecidos por um pacote de sistema
+
+Um sistema de navegador pode declarar até 16 coleções JSON no manifesto:
+
+```json
+"content": {"compendiums": ["compendiums/entities.json", "compendiums/gear.json"]}
+```
+
+Os caminhos devem ser relativos ao pacote e terminar em `.json`. Caminhos
+absolutos, travessia de diretórios, URLs e links simbólicos para fora do pacote
+aprovado são rejeitados. Cada coleção admite até 8 MiB, 64 compêndios e 20.000
+entradas no total. Cada entrada admite 256 KiB; o JSON admite até 24 níveis de
+aninhamento. O conteúdo é JSON declarativo, e o campo `data` pertence ao
+provedor. O núcleo não executa expressões nem busca recursos externos a partir
+desses campos:
+
+```json
+{
+  "name": "Equipamentos de exemplo",
+  "packs": [{
+    "id": "equipamentos", "label": "Equipamentos", "type": "item_pack",
+    "entries": [{
+      "id": "kit-exploracao", "name": "Kit de exploração", "type": "gear",
+      "systemId": "autor.sistema-exemplo",
+      "data": {"revision": "original", "description": "Texto simples"}
+    }]
+  }]
+}
+```
+
+Os tipos de compêndio aceitos são `actor_pack`, `item_pack` e `spell_pack`.
+Toda entrada deve usar o `systemId` do próprio fornecedor e um tipo registrado
+em `system.actorTypes` ou `system.itemTypes`. IDs de compêndio são únicos na
+coleção; IDs de entrada são únicos no compêndio. IDs aceitam letras ASCII,
+números, ponto, sublinhado, dois-pontos e hífen, até 120 caracteres, começando
+com letra ou número. Nomes e rótulos admitem até 120 caracteres. Mantenha os IDs
+e caminhos relativos estáveis nas atualizações para preservar permissões e
+referências.
+
+A instalação valida as declarações e os arquivos. A interface nativa mostra
+essas coleções apenas nas mesas que usam a versão exata, ativa, fixada,
+aprovada e não revogada desse sistema. Cada leitura confere os arquivos
+instalados com o ZIP aprovado; editar um arquivo não autoriza novo conteúdo.
+A coleção não declara IDs de mesas: a base vincula o acesso internamente.
+Por padrão, os compêndios são privados do mestre. As concessões de leitura e
+os padrões de papel existentes controlam a visibilidade para jogadores;
+importar documentos continua sendo uma ação do mestre. A base trata `data`
+como JSON opaco e conserva os campos do fornecedor, sem interpretar revisões
+ou regras de jogo. Atualize a base para uma versão com suporte a
+`content.compendiums` antes de instalar um pacote com essa declaração opcional.
+
+Os JSON declarados como coleções não são servidos pelas URLs genéricas de
+arquivos do pacote. Leia e importe suas entradas pela API de compêndios da
+mesa, que verifica o sistema ativo e as permissões de leitura atuais.
+
+Use `api.compendiums.state()` para obter os IDs de compêndios e entradas
+visíveis. `api.compendiums.read({packId, id})` continua retornando uma entrada;
+`api.compendiums.read({packId, ids: [id1, id2]})` retorna `{entries: [...]}` com
+os mesmos documentos, na ordem pedida. O lote aceita de 1 a 100 IDs únicos;
+não combine `id` com `ids`. IDs inválidos ou duplicados geram `invalid_data`;
+uma entrada ausente falha o lote inteiro com `not_found`, sem resposta parcial.
+Compêndios nativos conservam seus documentos completos; compêndios criados
+na mesa conservam o envelope individual com `kind`, `data` e `version`.
+
+Cada leitura revalida a associação à mesa, as permissões e, para coleções
+instaladas, a versão ativa e sua integridade. Leitura não cria recibos de
+mutação nem publica `compendiums.changed`; reutilizar um ID de requisição não
+conserva acesso após revogação. Um papel somente de leitura pode ler quando
+possui uma concessão válida, mas continua sem permissão para importar.
+
+O índice inicial contém apenas metadados dos compêndios e os campos `id`,
+`name`, `kind`, `type` e `version` de cada entrada. Ele não inclui o corpo dos
+documentos nem arquivos de transferência. `type` é o tipo registrado pelo
+fornecedor, sem categoria de regras definida pela base; `spell_pack` é um tipo
+de compêndio mantido por compatibilidade que encaminha documentos de item,
+sem acrescentar regras de magia. Documentos completos são carregados por
+leituras individuais ou em lote autorizadas. Coleções instaladas usam o mesmo
+cache limitado e verificado para qualquer fornecedor ou tipo de documento.
+Permissões, seleção de pacote e revogação são verificadas a cada requisição e
+nunca ficam no cache do conteúdo. Importações legadas de atores sem tipo usam
+o padrão declarado pelo sistema, como a criação de atores, sem um tipo fixo
+definido pela base.
+
+## Modais de módulos
+
+Use `api.ui.openModal(element, {nested = true, canClose = () => true})` para
+janelas de módulos. O método monta o componente de modal compartilhado do
+Gravewright de forma síncrona e retorna o mesmo elemento, com os métodos
+`close()`, `suspend()` e `resume()`. Passe um `section`, `div` ou `form` criado
+no documento do host. Elementos HTML nativos `dialog` e elementos de outro
+documento são rejeitados. A base adiciona `table-modal-window`, mantém o foco
+na modal, desativa o fundo, restaura o foco ao fechar e trata Escape. O módulo
+fornece conteúdo, nome acessível, traduções e botão de fechar; a modal não ganha
+uma barra de título móvel automaticamente.
+
+```js
+mount({root, api, signal}) {
+  const doc = root.ownerDocument;
+  const panel = doc.createElement('section');
+  panel.setAttribute('aria-label', 'Detalhes'); // Use sua tradução.
+  const close = doc.createElement('button');
+  close.type = 'button';
+  close.textContent = 'Fechar'; // Use sua tradução.
+  panel.append(close);
+  const modal = api.ui.openModal(panel);
+  close.addEventListener('click', () => modal.close(), {signal});
+}
+```
+
+`nested: true` preserva a modal anterior abaixo da nova; fechar a filha restaura
+a anterior. Use `nested: false` para solicitar o fechamento da modal anterior.
+`canClose` é uma verificação síncrona para Escape; chamadas explícitas a
+`close()` continuam sob controle do módulo. `close()` emite
+`gravewright:sheet-flush`: registre o evento no elemento retornado e chame
+`event.detail.waitUntil(promise)` durante o evento para aguardar gravações
+pendentes. Uma rejeição mantém a modal aberta. `suspend()` oculta a modal
+temporariamente para interações como escolher um ponto no mapa; `resume()`
+restaura sua exibição.
+
+A API pertence ao ciclo de vida da ativação ou superfície. O descarte força
+o fechamento da modal, mesmo com uma gravação pendente, e libera o foco e o
+estado do fundo. O fechamento normal libera a limpeza do ciclo de vida
+imediatamente. Abrir após o descarte gera `stale_context`; abrir um elemento
+já montado gera `conflict`. O helper está disponível em `start`, `customize`,
+registro e callbacks de superfícies. `api.ui.register` conserva seu
+comportamento restrito à fase de registro.

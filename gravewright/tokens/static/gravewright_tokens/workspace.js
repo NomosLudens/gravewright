@@ -1,10 +1,14 @@
 import { onForeignDrop } from "/static/gravewright_actors/tree-drag.js";
-import { tokenController } from "./controller.js";
+import { tokenController, createTokenTeleports, createTokenSnapshots } from "./controller.js?v=token-saving-1";
 import { getPath } from "/static/gravewright_web/vendor/datastar-1.0.3.js";
 import { node, patchSVG } from "/static/gravewright_maps/layers.js";
-import { clone, icon, context } from "/static/gravewright_actors/workspace-gate03c.js?v=20261019-gate-fix";
-import { openSheet } from "/static/gravewright_pdf_system/sheet.js";
+import { clone, icon, context } from "/static/gravewright_actors/workspace.js";
+import { openSheet } from "/static/gravewright_actors/sheet.js";
+import { openPermissions } from '/static/gravewright_table/permissions.js';
+import { quickControls, conditionLayout, conditionTooltip, conditionDurationFields } from './quick-controls.js';
 export function createTokens(surface, board, map, gm, initial) {
+  const teleports = createTokenTeleports();
+  const snapshots = createTokenSnapshots();
   const campaign = document.getElementById("table-workspace").dataset.tableId,
     svg = node("svg", {
       class: "token-workspace",
@@ -12,9 +16,30 @@ export function createTokens(surface, board, map, gm, initial) {
     }),
     status = document.createElement("p");
   status.className = "token-workspace__status";
-  surface.append(svg, status);
+  status.hidden = true;
+  const conditionTip = document.createElement('div');
+  conditionTip.className = 'token-condition-tooltip';
+  conditionTip.id = 'token-condition-tooltip';
+  conditionTip.setAttribute('role', 'tooltip');
+  conditionTip.hidden = true;
+  surface.append(svg, status, conditionTip);
+  let activeBadge;
+  const hideConditionTip = () => { conditionTip.hidden = true; activeBadge = undefined; };
+  const showConditionTip = event => {
+    const badge = event.target.closest?.('[data-condition-label]');
+    if (!badge) return;
+    activeBadge = badge;
+    conditionTip.textContent = badge.dataset.conditionLabel;
+    conditionTip.hidden = false;
+    const rect = badge.getBoundingClientRect();
+    conditionTip.style.left = Math.max(8, Math.min(window.innerWidth - conditionTip.offsetWidth - 8, rect.left)) + 'px';
+    conditionTip.style.top = Math.max(42, rect.top - conditionTip.offsetHeight - 8) + 'px';
+  };
+  svg.addEventListener('pointerover', showConditionTip);
+  svg.addEventListener('focusin', showConditionTip);
+  svg.addEventListener('pointerout', hideConditionTip);
+  svg.addEventListener('focusout', hideConditionTip);
   let state = initial,
-    combatState = window.gravewrightCombatState || { active: false, combatants: [] },
     rows = [],
     readRevision = 0,
     controller,
@@ -29,8 +54,19 @@ export function createTokens(surface, board, map, gm, initial) {
     sheetId,
     menu,
     lastRender = "",
+    lastViewport,
     frame = 0,
-    selectionPreview;
+    selectionPreview,
+    lastStatus;
+  function setStatus(message, error = false) {
+    const hidden = !message, role = error ? 'alert' : 'status';
+    if (status.hidden !== hidden) status.hidden = hidden;
+    if (status.getAttribute('role') !== role) status.setAttribute('role', role);
+    if (lastStatus !== message) {
+      lastStatus = message;
+      status.textContent = message;
+    }
+  }
   const repaint = () => {
     if (closed || queued) return;
     queued = true;
@@ -64,10 +100,10 @@ export function createTokens(surface, board, map, gm, initial) {
       containerId: campaign,
       blockId: map.blockId,
       mapId: map.id,
-      systemId: "gravewright-pdf-system",
+      systemId: state.systemId || document.getElementById("table-workspace").dataset.systemId || "",
       scene: map,
-      tacticalTerrain: state.tacticalTerrain,
       gm,
+      layer: getPath('_layer') || 'game',
       cell: g.cell,
       width: Math.max(0, map.width - g.x),
       height: Math.max(0, map.height - g.y),
@@ -75,7 +111,7 @@ export function createTokens(surface, board, map, gm, initial) {
       dynamic: state.lighting.mode === "dynamic",
       measureValue: map.measureValue,
       measureUnit: map.measureUnit,
-      tool: ["game", "gm"].includes(getPath("_layer"))
+      tool: gm || ["game", "gm"].includes(getPath("_layer"))
         ? getPath("_tool")
         : "inactive",
     };
@@ -88,16 +124,32 @@ export function createTokens(surface, board, map, gm, initial) {
     if (!r.ok) throw Error("Tokens unavailable.");
     const value = await r.json();
     if (!closed && revision === readRevision) {
-      rows = value.tokens;
+      rows = teleports.apply(snapshots.accept(value.tokens), value.teleports);
       controller.update({ tokens: rows });
     }
     return rows;
   }
-  const command = (action, data) =>
-    window.gravewrightRealtime.resourceCommand("tokens", action, {
-      ...data,
-      mapId: map.id,
-    });
+  const command = async (action, data) => {
+    const pending = snapshots.begin();
+    try {
+      const result = await window.gravewrightRealtime.resourceCommand("tokens", action, {
+        ...data,
+        mapId: map.id,
+      });
+      if (closed) return result;
+      readRevision++;
+      return { ...result, tokens: teleports.apply(snapshots.confirm(pending, result.tokens), result.teleports) };
+    } finally {
+      snapshots.cancel(pending);
+    }
+  };
+  const quick = quickControls(surface, { campaign, gm, command, read, repaint,
+    openSheet: token => controller.call('openSheet', token) });
+  const conditionsChanged = () => repaint();
+  const combatChanged = () => repaint();
+  window.addEventListener('gravewright:combat-state', combatChanged);
+  window.addEventListener('storage', conditionsChanged);
+  window.addEventListener('gravewright:condition-layout', conditionsChanged);
   controller = tokenController(svg, {
     props: props(),
     repaint,
@@ -107,7 +159,10 @@ export function createTokens(surface, board, map, gm, initial) {
       if (closed) return;
       if (type === "motion")
         window.gravewrightRealtime.tokenDrag({ mapId: map.id, ...args[0] });
-      if (type === "hover") hover = args[0];
+      if (type === "hover") {
+        if (hover === args[0]) return;
+        hover = args[0];
+      }
       if (type === "changed") {
         rows = args[0];
         controller?.update({ tokens: rows });
@@ -179,6 +234,12 @@ export function createTokens(surface, board, map, gm, initial) {
         f.elevation.value = t.elevation || 0;
         f.locked.checked = !!t.locked;
         f.disposition.value = t.disposition || "neutral";
+        f.nameDisplay.value = t.nameDisplay || 'selected-or-hover';
+        f.showTurnIndicator.checked = t.showTurnIndicator !== false;
+        for (const [slot, color] of [['bar_1', '#4caf50'], ['bar_2', '#3b82f6']]) {
+          f[slot + 'Visibility'].value = t.appearance?.bars?.[slot]?.visibility || 'everyone';
+          f[slot + 'Color'].value = t.appearance?.bars?.[slot]?.color || color;
+        }
         el.querySelector("[data-token-size]").textContent =
           `Size: ${t.cells} × ${t.heightCells ?? t.cells} cells. Defined by the system's character sheet.`;
         for (const c of t.conditions || []) {
@@ -186,6 +247,7 @@ export function createTokens(surface, board, map, gm, initial) {
             span = document.createElement("span"),
             b = document.createElement("button");
           span.textContent = c.label;
+          span.title = conditionTooltip(c);
           b.type = "button";
           b.setAttribute("aria-label", "Remove " + c.label);
           b.append(icon("Trash"));
@@ -202,6 +264,7 @@ export function createTokens(surface, board, map, gm, initial) {
         f.label.required = mode === "conditions";
         f.rotation.required = mode === "configure";
         f.elevation.required = mode === "configure";
+        const getDuration = mode === 'conditions' ? conditionDurationFields(el.querySelector('[data-mode="conditions"]')) : () => null;
         form.onsubmit = (e) => {
           e.preventDefault();
           const values =
@@ -218,12 +281,22 @@ export function createTokens(surface, board, map, gm, initial) {
                       elevation: Number(f.elevation.value),
                       locked: f.locked.checked,
                       disposition: f.disposition.value,
+                      appearance: {
+                        nameDisplay: f.nameDisplay.value,
+                        showTurnIndicator: f.showTurnIndicator.checked,
+                        bars: Object.fromEntries(['bar_1', 'bar_2'].map(slot => [slot, {
+                          visibility: f[slot + 'Visibility'].value,
+                          color: f[slot + 'Color'].value,
+                        }])),
+                      },
                     },
                   }
                 : {
                     label: f.label.value,
+                  description: f.description.value,
                     kind: f.kind.value,
                     visibility: f.visibility.value,
+                    duration: getDuration(),
                   };
           controller.call(
             "command",
@@ -304,21 +377,29 @@ export function createTokens(surface, board, map, gm, initial) {
           item("BookOpenText", "Open character sheet", () =>
             controller.call("openSheet", t),
           );
-        const combatant = combatState.combatants?.find(
-          (row) => row.token_id === t.id && row.movement?.canRun,
-        );
-        if (t.canControl && combatant)
-          item("Plus", "Correr · second Movement", () =>
-            window.gravewrightRealtime.resourceCommand("combat", "run", {
-              sceneId: map.id,
-              tokenId: t.id,
-              version: combatState.version,
-            }),
-          );
+        if (v.selection.length === 1 && t.canControl)
+          item('Gear', document.documentElement.lang === 'pt-BR' ? 'Controles rápidos' : document.documentElement.lang === 'es' ? 'Controles rápidos' : 'Quick controls', () => quick.open(t.id));
         if (gm) {
+          const locale = document.documentElement.lang;
+          const addLabel = window.gravewrightLocale?.messages?.text?.['Add to initiative']
+            || (locale.startsWith('pt') ? 'Adicionar à iniciativa' : locale.startsWith('es') ? 'Añadir a la iniciativa' : 'Add to initiative');
+          const selectedIds = v.selection.map(token => token.id);
+          item('Sword', addLabel, async () => {
+            const {gravewright} = await import('/static/gravewright_modules/frontend-api.js');
+            let encounter = await gravewright.combat.state({sceneId: map.id});
+            for (const tokenId of new Set(selectedIds)) {
+              if (encounter.combatants.some(entry => entry.token_id === tokenId)) continue;
+              encounter = await gravewright.combat.add({sceneId: map.id, tokenId, version: encounter.version});
+            }
+          }, v.busy);
+          if (v.selection.length === 1)
+            item('UsersThree', 'Permissions', () => openPermissions('tokens', t.id));
           item(
             t.hidden ? "Eye" : "EyeSlash",
-            (t.hidden ? "Reveal" : "Hide") + " selection",
+            window.gravewrightLocale?.messages?.text?.[t.hidden ? 'Move to game layer' : 'Move to GM layer']
+              || (locale.startsWith('pt') ? (t.hidden ? 'Mover para camada de jogo' : 'Mover para camada GM')
+                : locale.startsWith('es') ? (t.hidden ? 'Mover a la capa de juego' : 'Mover a la capa GM')
+                : (t.hidden ? 'Move to game layer' : 'Move to GM layer')),
             () => controller.call("command", "hidden", { hidden: !t.hidden }),
           );
           item("Eye", "Vision", () => controller.call("edit", "vision"));
@@ -384,42 +465,19 @@ export function createTokens(surface, board, map, gm, initial) {
       g = grid(),
       view = p.viewport,
       scale = view.scale;
+    lastViewport = view;
+    quick.update(v.displayed, v.selected, v.interactive && !v.route.length && !selectionPreview, token => ({
+      x: view.x + (token.gridX + token.cells) * g.cell * scale,
+      y: view.y + token.gridY * g.cell * scale,
+    }));
     svg.classList.toggle("token-workspace--pass", !v.interactive);
     svg.classList.toggle("token-workspace--routing", !!v.route.length);
     const group = node("g", {
       transform: `translate(${view.x} ${view.y}) scale(${scale})`,
     });
-    if (v.interactive) {
-      for (const t of v.displayed) {
-        if (!t.canControl || !v.selected.includes(t.id)) continue;
-        const combatant = combatState.combatants?.find((row) => row.token_id === t.id);
-        const movement = combatant?.movement;
-        if (movement?.mode === "ZONES") continue;
-        const perMove = movement?.pointsPerMove ?? 6;
-        const used = movement?.used ?? 0;
-        const regularRemaining = Math.max(0, perMove - used);
-        const canShowRun = !!movement && (movement.canRun || movement.runUsed);
-        if (canShowRun) {
-          const totalRemaining = Math.max(0, perMove * 2 - used);
-          group.append(node("circle", {
-            class: "token-workspace__movement-range token-workspace__movement-range--run",
-            cx: g.x + (t.gridX + t.cells / 2) * g.cell,
-            cy: g.y + (t.gridY + (t.heightCells ?? t.cells) / 2) * g.cell,
-            r: totalRemaining * g.cell,
-            "aria-label": `Correr: up to ${totalRemaining} movement points`,
-            "pointer-events": "none",
-          }));
-        }
-        group.append(node("circle", {
-          class: "token-workspace__movement-range token-workspace__movement-range--regular",
-          cx: g.x + (t.gridX + t.cells / 2) * g.cell,
-          cy: g.y + (t.gridY + (t.heightCells ?? t.cells) / 2) * g.cell,
-          r: regularRemaining * g.cell,
-          "aria-label": `Movement: up to ${regularRemaining} movement points`,
-          "pointer-events": "none",
-        }));
-      }
-    }
+    const combat = window.gravewrightCombatState;
+    const turns = new Map(combat?.active && combat.sceneId === map.id
+      ? combat.combatants.filter(entry => entry.token_id).map(entry => [entry.token_id, entry]) : []);
     for (const stored of v.displayed) {
       let t=stored;
       if(selectionPreview?.objects.some(o=>o.key==='token:'+stored.id)){
@@ -428,6 +486,20 @@ export function createTokens(surface, board, map, gm, initial) {
         const y=g.y+(stored.gridY+(stored.heightCells??stored.cells)/2)*g.cell-center.y;
         t={...stored,gridX:(center.x+x*Math.cos(a)-y*Math.sin(a)+dx-g.x)/g.cell-stored.cells/2,
           gridY:(center.y+x*Math.sin(a)+y*Math.cos(a)+dy-g.y)/g.cell-(stored.heightCells??stored.cells)/2,rotation:(stored.rotation||0)+angle};
+      }
+      const turn = turns.get(t.id);
+      if (t.showTurnIndicator !== false && (turn?.is_current || turn?.is_next)) {
+        const nextTurn = !turn.is_current;
+        const turnClass = nextTurn ? ' token-workspace__turn--next' : '';
+        group.append(node('ellipse', {
+        class: 'token-workspace__turn-disc' + turnClass,
+        [nextTurn ? 'data-combat-next' : 'data-combat-current']: t.id,
+        cx: (t.gridX + t.cells / 2) * g.cell,
+        cy: (t.gridY + (t.heightCells ?? t.cells) / 2) * g.cell,
+        rx: t.cells * g.cell / 2 + 4 / scale,
+        ry: (t.heightCells ?? t.cells) * g.cell / 2 + 4 / scale,
+        'stroke-width': 2 / scale, 'pointer-events': 'none',
+        }));
       }
       const r = node("rect", {
         x: t.gridX * g.cell,
@@ -448,6 +520,23 @@ export function createTokens(surface, board, map, gm, initial) {
         }
       };
       group.append(r);
+      if (conditionLayout() === 'classic') {
+        const conditions = t.conditions || [], size = t.cells * g.cell;
+        const badgeSize = Math.max(13, Math.min(21, size / 3));
+        const columns = Math.max(1, Math.floor(size / (badgeSize + 2)));
+        const target = (label, x, y, width, height) => {
+          const hit = node('rect', { x, y, width, height, fill: 'transparent',
+            tabindex: 0, role: 'img', 'aria-label': label,
+            'aria-describedby': conditionTip.id, 'data-condition-label': label });
+          group.append(hit);
+        };
+        conditions.slice(0, 8).forEach((condition, index) => target(conditionTooltip(condition),
+          t.gridX * g.cell + (index % columns) * (badgeSize + 2),
+          t.gridY * g.cell - badgeSize - 3 - Math.floor(index / columns) * (badgeSize + 2),
+          badgeSize, badgeSize));
+        if (conditions.length > 8) target(conditions.slice(8).map(conditionTooltip).join('\n\n'),
+          t.gridX * g.cell + size + 3, t.gridY * g.cell - 13, 32, 16);
+      }
     }
     for (const t of v.destinations)
       group.append(
@@ -620,17 +709,18 @@ export function createTokens(surface, board, map, gm, initial) {
     const fragment = document.createDocumentFragment();
     fragment.append(group);
     patchSVG(svg, fragment);
-    status.hidden = !(v.error || v.busy || v.route.length);
-    status.setAttribute("role", v.error ? "alert" : "status");
-    status.textContent =
+    if (activeBadge && (!activeBadge.isConnected || !activeBadge.hasAttribute('data-condition-label'))) hideConditionTip();
+    else if (activeBadge) conditionTip.textContent = activeBadge.dataset.conditionLabel;
+    setStatus(
       v.error ||
       (v.walking
         ? "Following the route…"
         : v.route.length
           ? (v.routeBlocked ? "This route crosses a wall. Choose a suggested route or change the points. " : "") + "Ctrl+click adds points. Hold Ctrl to choose a suggestion; release to walk. Esc cancels."
-          : "Saving…");
+          : ""), !!v.error);
     const pieces = v.displayed.map((t) => ({
       key: t.id,
+      teleportVersion: t.teleportVersion,
       x: g.x + (t.gridX + t.cells / 2) * g.cell,
       y: g.y + (t.gridY + (t.heightCells ?? t.cells) / 2) * g.cell,
       size: t.cells * g.cell,
@@ -648,8 +738,9 @@ export function createTokens(surface, board, map, gm, initial) {
       hidden: t.hidden,
       selected: v.selected.includes(t.id),
       hovered: hover === t.id,
+      nameDisplay: t.nameDisplay,
       bars: t.bars,
-      conditions: t.conditions,
+      conditions: conditionLayout() === 'classic' ? t.conditions : [],
     }));
     const preview =
       gm &&
@@ -663,6 +754,7 @@ export function createTokens(surface, board, map, gm, initial) {
           (preview ? v.selected.includes(t.id) : !gm && t.canControl),
       )
       .map((t) => ({
+        sourceId: t.id,
         x: g.x + (t.gridX + t.cells / 2) * g.cell,
         y: g.y + (t.gridY + (t.heightCells ?? t.cells) / 2) * g.cell,
         radius: (t.visionRange || 0) * g.cell,
@@ -683,15 +775,10 @@ export function createTokens(surface, board, map, gm, initial) {
     dialog(v);
   }
   const motion = (e) => controller.receiveMotion(e.detail),
-    combatUpdate = (e) => {
-      combatState = e.detail || { active: false, combatants: [] };
-      void read().catch(() => {});
-      repaint();
-    },
     snapshot = (e) => {
       if (e.detail.mapId !== map.id) return;
       readRevision++;
-      rows = e.detail.tokens;
+      rows = teleports.apply(snapshots.accept(e.detail.tokens), e.detail.teleports);
       controller.update({ tokens: rows });
     },
     layers = (e) => {
@@ -699,19 +786,32 @@ export function createTokens(surface, board, map, gm, initial) {
       state = e.detail;
       controller.update(props());
     },
-    viewport = () => controller.update({ viewport: props().viewport });
+    viewport = () => {
+      hideConditionTip();
+      const previous = lastViewport, next = props().viewport;
+      lastViewport = next;
+      const g = grid(), v = controller.view;
+      quick.update(v.displayed, v.selected, v.interactive && !v.route.length && !selectionPreview, token => ({
+        x: next.x + (token.gridX + token.cells) * g.cell * next.scale,
+        y: next.y + token.gridY * g.cell * next.scale,
+      }));
+      controller.update({ viewport: next }, false);
+      // Panning only translates the existing world-coordinate hit targets.
+      if (previous?.scale === next.scale && svg.firstElementChild)
+        svg.firstElementChild.setAttribute('transform', `translate(${next.x} ${next.y}) scale(${next.scale})`);
+      else repaint();
+    };
   const focusToken=({detail})=>{
     const token=rows.find(row=>row.id===detail.id);if(!token)return;
     const g=grid();board.ping({x:g.x+(token.gridX+token.cells/2)*g.cell,y:g.y+(token.gridY+(token.heightCells||token.cells)/2)*g.cell},true);
   };
   window.addEventListener('gravewright:focus-token',focusToken);
   window.addEventListener("gravewright:token.drag", motion);
-  window.addEventListener("gravewright:combat-state", combatUpdate);
   window.addEventListener("gravewright:tokens.state", snapshot);
   window.addEventListener("gravewright:map-layers", layers);
   window.addEventListener("gravewright:map-viewport", viewport);
   const observer = new MutationObserver(() =>
-    controller.update({ tool: props().tool }),
+    controller.update({ tool: props().tool, layer: props().layer }),
   );
   observer.observe(document.getElementById("table-workspace"), {
     attributes: true,
@@ -750,9 +850,7 @@ export function createTokens(surface, board, map, gm, initial) {
         gridY: Math.max(0, snap((point.y - g.y) / g.cell)),
       });
     } catch (error) {
-      status.hidden = false;
-      status.textContent = error.message;
-      status.setAttribute("role", "alert");
+      setStatus(error.message, true);
     }
   }
   const stopForeign = onForeignDrop((event) => {
@@ -771,17 +869,14 @@ export function createTokens(surface, board, map, gm, initial) {
       gridX: Math.max(0, snap((point.x - g.x) / g.cell)),
       gridY: Math.max(0, snap((point.y - g.y) / g.cell)),
     }).catch((error) => {
-      status.hidden = false;
-      status.textContent = error.message;
-      status.setAttribute("role", "alert");
+      setStatus(error.message, true);
     });
   });
   surface.addEventListener("dragover", dragover);
   surface.addEventListener("drop", drop);
   window.gravewrightRealtime.tokensSubscribe(map.id);
   read().catch((e) => {
-    status.hidden = false;
-    status.textContent = e.message;
+    setStatus(e.message, true);
   });
   return {
     setMap(next) {
@@ -795,6 +890,12 @@ export function createTokens(surface, board, map, gm, initial) {
     destroy() {
       if (closed) return;
       closed = true;
+      teleports.clear();
+      snapshots.clear();
+      quick.destroy();
+      window.removeEventListener('storage', conditionsChanged);
+      window.removeEventListener('gravewright:combat-state', combatChanged);
+      window.removeEventListener('gravewright:condition-layout', conditionsChanged);
       window.removeEventListener('gravewright:mixed-selection',mixedSelection);
       window.removeEventListener('gravewright:selection-preview',mixedPreview);
       stopForeign();
@@ -805,7 +906,6 @@ export function createTokens(surface, board, map, gm, initial) {
       for (const [name, fn] of [
         ["gravewright:focus-token", focusToken],
         ["gravewright:token.drag", motion],
-        ["gravewright:combat-state", combatUpdate],
         ["gravewright:tokens.state", snapshot],
         ["gravewright:map-layers", layers],
         ["gravewright:map-viewport", viewport],
@@ -815,6 +915,7 @@ export function createTokens(surface, board, map, gm, initial) {
       surface.removeEventListener("dragover", dragover);
       surface.removeEventListener("drop", drop);
       svg.remove();
+      conditionTip.remove();
       status.remove();
       editor?.remove();
       confirmation?.remove();

@@ -1,8 +1,9 @@
-"""Install signed browser packages and persist their table-scoped configuration.
+"""Install browser and trusted Django packages with immutable release identities.
 
-The host validates archive bytes but never imports package Python or executes
-package binaries. JavaScript later runs in the user's main browser page, without
-a sandbox; signing keys therefore identify trusted publishers, not permissions.
+Django packages are activated separately by the server supervisor.
+Browser packages cannot contain Python or native binaries. JavaScript later
+runs in the user's main browser page, without a sandbox; signing keys therefore
+identify trusted publishers, not permissions.
 See ``docs/en/modules.md`` (``docs/pt-BR/modules.md`` in Portuguese).
 """
 
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from functools import cached_property
 import io
 import json
 import re
@@ -40,14 +42,23 @@ from gravewright.accounts.services import AuthError
 from .models import ModuleSet, ModuleValue, Package
 
 
+def package_type(manifest):
+    if 'django' in manifest:
+        return 'django'
+    return 'system' if 'system' in manifest else 'module'
+
+
 class ModuleFailure(AuthError):
     def __init__(self, code, message=None):
+        self.message = message if isinstance(message, str) else code
         super().__init__(
             code,
             {
                 "permission_denied": 403,
                 "not_found": 404,
                 "conflict": 409,
+                "managed_start_required": 409,
+                "update_in_progress": 409,
                 "stale_context": 409,
                 "unavailable": 503,
             }.get(code, 400),
@@ -147,10 +158,10 @@ def safe_path(name: str) -> PurePosixPath:
 class Contracts:
     """Load the checked-in SDK registry and validate its JSON data boundaries."""
     def __init__(self):
-        self.registry = json.loads((CONTRACTS / "registry.json").read_text())
+        self.registry = json.loads((CONTRACTS / "registry.json").read_text(encoding="utf-8"))
         self.validators = {}
         for path in (CONTRACTS / "schemas").glob("*.json"):
-            schema = json.loads(path.read_text())
+            schema = json.loads(path.read_text(encoding="utf-8"))
             Draft202012Validator.check_schema(schema)
             self.validators["schemas/" + path.name] = Draft202012Validator(schema)
 
@@ -171,9 +182,17 @@ class ModulePackages:
     """
     def __init__(self, directory: Path, keys: dict[str, str] | None = None):
         self.keys = validate_keys(keys if keys is not None else {})
-        self.directory = directory
+        # Resolve operator-selected storage aliases once (for example macOS
+        # /var or Windows short paths). Links inside installed packages remain
+        # forbidden by verify_installed; trusted ancestors are not package data.
+        self.directory = Path(directory).resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
-        self.contracts = Contracts()
+
+    @cached_property
+    def contracts(self):
+        # Reading verified package bytes needs no JSON-schema compiler. Keep
+        # validation lazy and local to this host instance for mutation/SDK calls.
+        return Contracts()
 
     def verify(self, record: dict, *, require_compatible=True):
         """Authenticate a catalog record, optionally allowing incompatible releases."""
@@ -192,7 +211,7 @@ class ModulePackages:
                        or len(tag) > 64 or any(ord(c) < 32 for c in tag) for tag in tags)
                 or len({tag.casefold() for tag in tags}) != len(tags)):
             raise ModuleFailure("invalid_data", "Invalid package tags")
-        if record.get("type", "module") not in {"module", "system"}:
+        if record.get("type", "module") not in {"module", "system", "django"}:
             raise ModuleFailure("invalid_data", "Invalid package type")
         if not re.fullmatch("[a-f0-9]{64}", record["sha256"]):
             raise ModuleFailure("invalid_data")
@@ -250,6 +269,53 @@ class ModulePackages:
         self.verify(record)
         if record.get("status") == "revoked":
             raise ModuleFailure("permission_denied", "Revoked module version")
+        return self._install(record, archive)
+
+    def install_local(self, archive: bytes, expected_type=None):
+        """Install an owner-supplied ZIP without consulting a remote catalog."""
+        if expected_type not in {None, "module", "system", "django"}:
+            raise ModuleFailure("invalid_data")
+        if len(archive) > MAX_ARCHIVE:
+            raise ModuleFailure("invalid_data", "Archive exceeds the package limit")
+        try:
+            with zipfile.ZipFile(io.BytesIO(archive)) as package:
+                info = package.getinfo("manifest.json")
+                if info.file_size > 1024 * 1024:
+                    raise ModuleFailure("invalid_data", "Manifest exceeds the package limit")
+                manifest = json.loads(package.read(info))
+        except (zipfile.BadZipFile, KeyError, ValueError, OSError):
+            raise ModuleFailure("invalid_data", "Invalid module archive") from None
+        self.contracts.validate("schemas/manifest.json", manifest)
+        record = {
+            "source": "local",
+            "id": manifest["id"],
+            "version": manifest["version"],
+            "sdk": manifest["sdk"]["requires"],
+            "sha256": hashlib.sha256(archive).hexdigest(),
+            "type": package_type(manifest),
+        }
+        if (expected_type is not None and record["type"] != expected_type
+                and not (expected_type == "module" and record["type"] == "django")):
+            raise ModuleFailure("invalid_data", "Package type does not match this library")
+        if not compatible(record["sdk"]):
+            raise ModuleFailure("unavailable", "Incompatible SDK")
+        return self._install(record, archive)
+
+    def _verify_stored_record(self, record):
+        if not isinstance(record, dict):
+            raise ModuleFailure("invalid_data", "Invalid package record")
+        if record.get("source") != "local":
+            self.verify(record)
+            return
+        if (set(record) != {"source", "id", "version", "sdk", "sha256", "type"}
+                or record["type"] not in {"module", "system", "django"}
+                or any(not isinstance(record.get(field), str)
+                       for field in ("id", "version", "sdk", "sha256"))
+                or not re.fullmatch("[a-f0-9]{64}", record["sha256"])
+                or not compatible(record["sdk"])):
+            raise ModuleFailure("invalid_data", "Invalid local package record")
+
+    def _install(self, record: dict, archive: bytes):
         if (
             len(archive) > MAX_ARCHIVE
             or hashlib.sha256(archive).hexdigest() != record["sha256"]
@@ -277,7 +343,8 @@ class ModulePackages:
                 if name.casefold() in names:
                     raise ModuleFailure("invalid_data", "Duplicate package path")
                 names.add(name.casefold())
-                if not entry.is_dir() and Path(name).suffix.lower() not in {
+                python_source = record.get("type") == "django" and Path(name).suffix == ".py"
+                if not entry.is_dir() and not python_source and Path(name).suffix.lower() not in {
                     ".js",
                     ".mjs",
                     ".css",
@@ -321,12 +388,27 @@ class ModulePackages:
             if "system" in manifest:
                 # A package owns its own ruleset identity; it cannot replace the
                 # built-in system or declare ambiguous document type IDs.
-                if manifest["id"] == "gravewright-pdf-system":
+                from gravewright.campaigns.systems import bundled
+                if bundled(manifest["id"]) is not None:
                     raise ModuleFailure("invalid_data")
                 for field in ("actorTypes", "itemTypes"):
                     types = manifest["system"].get(field, [])
                     if len({row["id"] for row in types}) != len(types):
                         raise ModuleFailure("invalid_data")
+            if "content" in manifest:
+                from gravewright.compendiums.content import MAX_COLLECTION_BYTES, validate_collection
+                definition = manifest['system']
+                actor_types = {row['id'] for row in definition.get('actorTypes', [])}
+                item_types = {row['id'] for row in definition.get('itemTypes', [])}
+                for relative in manifest['content']['compendiums']:
+                    path = str(safe_path(relative))
+                    if not path.endswith('.json') or package.getinfo(path).file_size > MAX_COLLECTION_BYTES:
+                        raise ModuleFailure('invalid_data', 'Invalid compendium path or size')
+                    try:
+                        value = json.loads(package.read(path))
+                    except RecursionError:
+                        raise ModuleFailure('invalid_data', 'Invalid compendium JSON depth') from None
+                    validate_collection(value, manifest['id'], actor_types, item_types)
             if (
                 manifest["id"] != record["id"]
                 or manifest["version"] != record["version"]
@@ -336,14 +418,18 @@ class ModulePackages:
                 raise ModuleFailure(
                     "invalid_data", "Manifest does not match signed record"
                 )
-            if "type" in record and record["type"] != ("system" if "system" in manifest else "module"):
+            if "type" in record and record["type"] != package_type(manifest):
                 raise ModuleFailure("invalid_data", "Package type does not match signed record")
-            entry = str(safe_path(manifest["entry"]))
-            if (
-                Path(entry).suffix not in (".js", ".mjs")
-                or entry not in package.namelist()
-            ):
-                raise ModuleFailure("invalid_data", "Missing JavaScript entry")
+            if "django" in manifest:
+                if record.get("type") != "django":
+                    raise ModuleFailure("invalid_data", "Django packages require an explicit signed type")
+                for app in manifest["django"]["apps"]:
+                    if app.split(".")[0] + "/__init__.py" not in package.namelist():
+                        raise ModuleFailure("invalid_data", "Missing Django app package")
+            else:
+                entry = str(safe_path(manifest["entry"]))
+                if Path(entry).suffix not in (".js", ".mjs") or entry not in package.namelist():
+                    raise ModuleFailure("invalid_data", "Missing JavaScript entry")
             archives = self.directory / "archives"
             archives.mkdir(exist_ok=True)
             archived = archives / (record["sha256"] + ".zip")
@@ -415,9 +501,9 @@ class ModulePackages:
             raise ModuleFailure("invalid_data", "Invalid module archive") from None
 
     def verify_installed(self, row, asset=None):
-        """Recheck the signed archive and extracted bytes, including on activation."""
+        """Recheck trust and extracted bytes; return verified bytes for one asset."""
         record = row.record
-        self.verify(record)
+        self._verify_stored_record(record)
         archive = self.directory / "archives" / (row.digest + ".zip")
         try:
             raw = archive.read_bytes()
@@ -435,7 +521,7 @@ class ModulePackages:
                 if (
                     asset is None
                     and {
-                        str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()
+                        p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()
                     }
                     != names
                 ):
@@ -444,8 +530,13 @@ class ModulePackages:
                     path = root / name
                     if any(
                         p.is_symlink() for p in (path, *path.parents)
-                    ) or path.read_bytes() != package.read(name):
+                    ):
                         raise ModuleFailure("invalid_data", "Installed package changed")
+                    extracted = path.read_bytes()
+                    if extracted != package.read(name):
+                        raise ModuleFailure("invalid_data", "Installed package changed")
+                    if asset is not None:
+                        return extracted
         except OSError, zipfile.BadZipFile, KeyError:
             raise ModuleFailure(
                 "invalid_data", "Installed package unavailable"
@@ -462,7 +553,7 @@ class ModulePackages:
             installed = Package.objects.filter(
                 module_id=module_id, version=version, revoked=False
             ).first()
-            if installed:
+            if installed and "django" not in installed.manifest:
                 descriptors.append(
                     {
                         "id": module_id,
@@ -506,8 +597,8 @@ class ModulePackages:
             ).first()
             if not installed:
                 raise ModuleFailure("not_found")
-            if installed.locale_catalogs:
-                raise ModuleFailure("invalid_data", "Language modules are activated for the installation.")
+            if installed.locale_catalogs or "django" in installed.manifest:
+                raise ModuleFailure("invalid_data", "Language and Django modules are activated for the installation.")
             self.verify_installed(installed)
         row.modules, row.replacements, row.revision = (
             modules,
@@ -593,8 +684,15 @@ class ModulePackages:
         return {"value": value, "revision": revision}
 
 
-def host():
+def host(*, require_trust=False):
     """Build the package host from current settings and configured publisher keys."""
     from django.conf import settings
 
-    return ModulePackages(Path(settings.MEDIA_ROOT) / "modules", trusted_keys())
+    directory = settings.GRAVEWRIGHT_MODULES_ROOT or Path(settings.MEDIA_ROOT) / "modules"
+    try:
+        keys = trusted_keys()
+    except MarketplaceConfigurationError:
+        if require_trust:
+            raise
+        keys = {}
+    return ModulePackages(Path(directory), keys)

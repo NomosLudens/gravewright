@@ -32,23 +32,15 @@
             {{ icon('Plus') }}{{ game.newActor }}</button
           ><button data-v-gwtoolbar type="button" data-actor-panel="folder">
             {{ icon('FolderPlus') }}{{ game.createActorFolder }}</button
-          ><button data-v-gwtoolbar type="button" data-actor-panel="upload">
-            {{ icon('UploadSimple') }}{{ game.uploadTemplate }}</button
-          ><input
-            type="file"
-            accept="application/pdf"
-            hidden
-            data-template-upload
-          />
-          <button data-v-gwtoolbar type="button" data-actor-panel="import-kallistis">
-            {{ icon('UploadSimple') }}Importar ficha KALLISTIS</button
-          ><input
-            type="file"
-            accept="application/json,.json"
-            hidden
-            data-kallistis-import
-          />
+          >
+          <button data-v-gwtoolbar type="button" data-actor-panel="import-kallistis">Importar ficha KALLISTIS</button>
+          <input type="file" accept="application/json,.json" hidden data-kallistis-import />
         </div>
+        {% if actor_sheet_provider and actor_sheet_provider.directory_actions_template %}
+        <div class="actor-directory__secondary-actions">
+          {% include actor_sheet_provider.directory_actions_template %}
+        </div>
+        {% endif %}
         {% endif %}<label class="directory-toolbar__search" data-v-gwtoolbar
           >{{ icon('MagnifyingGlass',scope='data-v-gwtoolbar') }}<input
             data-v-gwtoolbar
@@ -121,71 +113,22 @@
       <p role="alert" hidden></p>
     </fieldset></form
 ></template>
-<template id="kallistis-import-dialog"><form class="directory-dialog kallistis-import-dialog" data-v-gwdialog role="dialog">
-  <header class="directory-dialog__header" data-v-gwdialog><strong data-v-gwdialog>Importar ficha KALLISTIS</strong><button type="button" aria-label="Fechar">×</button></header>
-  <fieldset class="directory-dialog__fields" data-v-gwdialog>
+<template id="kallistis-import-dialog"><form class="directory-dialog kallistis-import-dialog" role="dialog">
+  <header class="directory-dialog__header"><strong>Importar ficha KALLISTIS</strong><button type="button" aria-label="Fechar">×</button></header>
+  <fieldset class="directory-dialog__fields">
     <p data-import-status role="alert" hidden></p>
-    <dl class="kallistis-import-dialog__facts">
-      <div><dt>Personagem</dt><dd data-import-character></dd></div>
-      <div><dt>Estado KALLISTIS</dt><dd data-import-state></dd></div>
-      <div><dt>Modo</dt><dd data-import-mode></dd></div>
-      <div><dt>Canônica</dt><dd data-import-canonical></dd></div>
-      <div><dt>Mesa de origem</dt><dd data-import-mesa></dd></div>
-      <div><dt>Email</dt><dd data-import-email></dd></div>
-      <div><dt>ID KALLISTIS</dt><dd data-import-id></dd></div>
-    </dl>
-    <p class="kallistis-import-dialog__label">Grupos da ficha</p>
-    <div data-import-groups></div>
+    <dl class="kallistis-import-dialog__facts"><div><dt>Personagem</dt><dd data-import-character></dd></div><div><dt>Estado KALLISTIS</dt><dd data-import-state></dd></div><div><dt>Modo</dt><dd data-import-mode></dd></div><div><dt>Canônica</dt><dd data-import-canonical></dd></div><div><dt>Mesa de origem</dt><dd data-import-mesa></dd></div><div><dt>Email</dt><dd data-import-email></dd></div><div><dt>ID KALLISTIS</dt><dd data-import-id></dd></div></dl>
+    <p>Grupos da ficha</p><div data-import-groups></div>
     <label><span>Campanha Gravewright existente</span><select name="campaign" required></select></label>
     <label><span>Jogador da campanha</span><select name="membership" required></select></label>
     <button class="gw-folder-editor__primary" type="submit">Confirmar importação</button>
   </fieldset>
 </form></template>
-<template id="actor-permissions"
-  ><form class="directory-dialog" data-v-gwdialog role="dialog">
-    <header class="directory-dialog__header" data-v-gwdialog>
-      <strong></strong
-      ><button class="directory-dialog__close" type="button" aria-label="Close">
-        {{ icon('X') }}
-      </button>
-    </header>
-    <div class="directory-dialog__fields" data-v-gwdialog>
-      <div class="resource-permissions">
-        <p>Choose access for each player.</p>
-        <div data-permission-rows style="display: contents"></div>
-        <button type="submit">Save permissions</button>
-        <p role="alert" hidden></p>
-      </div>
-    </div></form
-></template>
-<template id="actor-permission-row"
-  ><fieldset class="resource-permissions__row">
-    <legend></legend>
-    {% for value,label,glyph in [('none','None','Prohibit'),('read','Read
-    access','Eye'),('owner','Owner','PencilSimple')] %}<label
-      class="resource-permissions__choice"
-      ><input type="radio" value="{{ value }}" />{{ icon(glyph) }}{{ label
-      }}</label
-    >{% endfor %}
-  </fieldset></template
->
-<template id="actor-runtime"
-  ><form class="directory-dialog actor-runtime-dialog" data-v-gwdialog role="dialog">
-    <header class="directory-dialog__header" data-v-gwdialog><strong data-v-gwdialog></strong><button class="directory-dialog__close" type="button" aria-label="Close">{{ icon('X') }}</button></header>
-    <div class="directory-dialog__fields" data-v-gwdialog>
-      <div data-runtime-resources></div>
-      <fieldset class="actor-runtime-dialog__rules"><legend>Session rules</legend><div data-runtime-rules></div><div class="actor-runtime-dialog__actions"><button type="button" data-runtime-rule="round.begin">Begin round</button><button type="button" data-runtime-rule="action.spend">Spend action</button><button type="button" data-runtime-rule="coro.add">Add Coro pulse</button><button type="button" data-runtime-rule="fulgor">Fulgor +1</button></div></fieldset>
-      <div class="actor-runtime-dialog__actions"><button type="button" data-runtime-action="safe_pause">Safe Pause</button><button type="button" data-runtime-action="full_rest">Full Rest</button></div>
-      <fieldset><legend>KALLISTIS attributes</legend><label>Corpo<input name="corpo" data-runtime-attribute type="number" min="-1000" max="1000" value="0"></label><label>Agilidade<input name="agilidade" data-runtime-attribute type="number" min="-1000" max="1000" value="0"></label><label>Intelecto<input name="intelecto" data-runtime-attribute type="number" min="-1000" max="1000" value="0"></label><label>Presença<input name="presenca" data-runtime-attribute type="number" min="-1000" max="1000" value="0"></label><label>Vontade<input name="vontade" data-runtime-attribute type="number" min="-1000" max="1000" value="0"></label><label>Sintonia<input name="sintonia" data-runtime-attribute type="number" min="-1000" max="1000" value="0"></label><label>Marco<input name="marco" type="number" min="-1000" max="1000" value="0"></label></fieldset>
-      <fieldset><legend>KALLISTIS skills (0–5)</legend><div data-runtime-skills></div><button type="button" data-runtime-action="initialize">Initialize runtime</button></fieldset>
-      <fieldset><legend>Conditions</legend><select name="condition_type"></select><button type="button" data-runtime-action="condition.apply">Apply</button><div data-runtime-conditions></div></fieldset>
-      <p role="alert" hidden></p>
-    </div>
-  </form></template>
 <template id="actor-icons"
   >{% for name in
-  ['User','FilePdf','Trash','NotePencil','PencilSimple','UsersThree','Plus','FolderPlus','Eye','EyeSlash','BookOpenText','Gear','Heart','Copy','Clipboard','ArrowCounterClockwise','ArrowClockwise','X']
-  %}<span data-icon="{{ name }}">{{ icon(name) }}</span>{% endfor %}</template
+  ['User','FileText','Trash','NotePencil','PencilSimple','UsersThree','Plus','FolderPlus','Eye','EyeSlash','BookOpenText','Gear','Heart','Copy','Clipboard','ArrowCounterClockwise','ArrowClockwise','Sword','X']
+  %}<span data-icon="{{ name }}">{{ icon(name) }}</span>{% endfor %}{% if actor_sheet_provider and actor_sheet_provider.directory_icons_template %}{% include actor_sheet_provider.directory_icons_template %}{% endif %}</template
 >
-{% include 'gravewright_pdf_system/sheet.html' %} {% include
+{% include 'gravewright_actors/sheet.html' %}
+{% if actor_sheet_provider %}{% include actor_sheet_provider.template %}{% endif %} {% include
 'gravewright_tokens/workspace.html' %}

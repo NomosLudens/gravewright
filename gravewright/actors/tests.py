@@ -24,6 +24,18 @@ from .models import Actor, Asset, Folder, KallistisCharacterLink
     ALLOWED_HOSTS=["testserver"],
 )
 class ActorTests(TransactionTestCase):
+    def test_directory_does_not_load_sheet_json(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        self.actor.data['large_sheet']='x'*100000
+        self.actor.save(update_fields=['data'])
+        with CaptureQueriesContext(connection) as queries:
+            result=services.state(self.campaign.pk,self.gm.pk)
+        self.assertEqual(result['actors'][0]['name'],self.actor.name)
+        actor_queries=[q['sql'] for q in queries if 'FROM "gravewright_actors_actor"' in q['sql']]
+        self.assertTrue(actor_queries)
+        self.assertFalse(any('"gravewright_actors_actor"."data"' in q for q in actor_queries))
+
     def setUp(self):
         fixtures.SocketTests.setUp(self)
         temp = TemporaryDirectory()
@@ -146,7 +158,10 @@ class ActorTests(TransactionTestCase):
         )
         Broadcast.objects.create(campaign=self.campaign, scene=scene)
         token = Token.objects.create(scene=scene, actor=self.actor)
-        self.assertEqual(self.client.get(image_url).status_code, 200)
+        image_response = self.client.get(image_url)
+        self.addCleanup(image_response.close)
+        self.assertEqual(image_response.status_code, 200)
+        image_response.close()
         token.hidden = True
         token.save()
         self.assertEqual(self.client.get(image_url).status_code, 404)
@@ -154,6 +169,19 @@ class ActorTests(TransactionTestCase):
         from pathlib import Path
 
         self.assertFalse(Path(path).exists())
+
+    def test_pdf_upload_uses_configured_limit_instead_of_fixed_ten_mb(self):
+        self.client.force_login(self.gm)
+        url = f"/api/containers/{self.campaign.pk}/actor-upload"
+        raw = b"%PDF-1.4\n%%EOF"
+        for limit, status in ((len(raw) - 1, 400), (len(raw), 200)):
+            with self.subTest(limit=limit), self.settings(PDF_SYSTEM_UPLOAD_MAX_BYTES=limit):
+                response = self.client.post(url, {"file": SimpleUploadedFile("sheet.pdf", raw)})
+                self.assertEqual(response.status_code, status, response.content)
+        large = b"%PDF-1.4\n" + b" " * 10_000_000
+        with self.settings(PDF_SYSTEM_UPLOAD_MAX_BYTES=len(large)):
+            response = self.client.post(url, {"file": SimpleUploadedFile("large.pdf", large)})
+            self.assertEqual(response.status_code, 200, response.content)
 
     def test_pdf_upload_and_delete_repair_all_sheet_sources(self):
         self.client.force_login(self.gm)

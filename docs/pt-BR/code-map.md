@@ -15,7 +15,7 @@ alterar a lógica atual dos serviços.
 | [`manage.py`](../../manage.py) | Entrada dos comandos de administração Django. |
 | [`main.py`](../../main.py) | Inicia o servidor ASGI de desenvolvimento com host e porta configurados. |
 | [`scripts/gravewright_runner.py`](../../scripts/gravewright_runner.py) | Prepara configuração pessoal, banco e recursos e executa o servidor Daphne local do Gravewright Runner. |
-| [`Gravewright Runner.bat`](../../Gravewright%20Runner.bat) | Launcher CMD Windows: detecta/reaproveita uv, Python e Node/npm, instala ferramentas ausentes, executa comandos fixados de dependências/build e inicia a aplicação. |
+| [`Install Windows.bat`](../../Install%20Windows.bat) | Instalador Windows: prepara ferramentas, dependências, frontend e configuração, depois gera `Gravewright Runner.bat` apenas para iniciar a aplicação. |
 | [`scripts/prepare_frontend.py`](../../scripts/prepare_frontend.py) | Planeja a preparação do frontend por impressões das dependências, fontes e saídas e registra os resultados verificados do build para o launcher em lote. |
 | [`scripts/windows/create_shortcut.py`](../../scripts/windows/create_shortcut.py) | Cria o atalho com ícone por ctypes da biblioteca padrão e COM do Windows. |
 | [`config/runner.py`](../../config/runner.py), [`config/runner_asgi.py`](../../config/runner_asgi.py), [`config/runner_urls.py`](../../config/runner_urls.py) | Perfil dedicado à execução local, recursos estáticos coletados e rotas do executor; veja o [guia Windows](windows-runner.md). |
@@ -23,6 +23,8 @@ alterar a lógica atual dos serviços.
 | [`config/environment.py`](../../config/environment.py) | Carrega o ambiente e interpreta booleanos, caminhos e origem pública. |
 | [`config/engine.py`](../../config/engine.py) | Recursos habilitados e limites validados do motor. |
 | [`config/settings.py`](../../config/settings.py) | Apps, SQLite, sessões, templates, mídia e configuração de Channels. |
+| [`config/marketplace_apps.py`](../../config/marketplace_apps.py), [`gravewright/modules/server_apps.py`](../../gravewright/modules/server_apps.py) | Seleção verificada de apps Django, importação na inicialização e ativação autorizada pelo proprietário. |
+| [`scripts/update_supervisor.py`](../../scripts/update_supervisor.py) | Atualização do core e ativação Django, ambientes isolados, backup, migrações, reinício e rollback. |
 | [`config/asgi.py`](../../config/asgi.py), [`config/wsgi.py`](../../config/wsgi.py) | Entradas do servidor; ASGI inclui WebSocket da mesa. |
 | [`config/proxy.py`](../../config/proxy.py) | Restaura esquemas HTTP/WebSocket a partir de um único cabeçalho forwarded-proto válido enviado por um par conectado confiável. |
 | [`config/urls.py`](../../config/urls.py) | Reúne rotas HTTP dos apps. |
@@ -37,14 +39,14 @@ Os caminhos internos abaixo são relativos a `gravewright/`.
 | App | Modelos principais | Leia primeiro | Implementação relacionada |
 | --- | --- | --- | --- |
 | [`accounts/`](../../gravewright/accounts) | `User`, `AuthAttempt`, `UserPreference` | `services.py`, `models.py` | `forms.py` valida contas; `managers.py` normaliza identidades; `client_ip.py` trata proxies confiáveis; `middleware.py` limita requisições de autenticação e define políticas de resposta. |
-| [`campaigns/`](../../gravewright/campaigns) | `Campaign`, `Membership`, `AccessCode`, `JoinAttempt`, `Onboarding`, `StreamerLink` | `services.py`, `streamer.py` | `onboarding.py` prepara orientações iniciais; `catalog.py` descreve o sistema nativo; views tratam convites, participantes e capas. |
+| [`campaigns/`](../../gravewright/campaigns) | `Campaign`, `Membership`, `AccessCode`, `JoinAttempt`, `Onboarding`, `StreamerLink`, `SessionPlan`, `CampaignEvent`, `PreparationBoard`, `PreparationReceipt` | `services.py`, `management.py`, `preparation.py` | `management_views.py` fornece o gestor e as ferramentas HTTP; `streamer.py` controla links de leitura; `onboarding.py` e `catalog.py` cuidam das orientações e metadados do sistema nativo. |
 | [`web/`](../../gravewright/web) | Nenhum | `inside.py`, `responses.py` | Compõe páginas de conta, campanha e configurações; `iconography.py` fornece ícones; `jinja2/` e `static/` guardam a interface compartilhada. |
-| [`table/`](../../gravewright/table) | `LobbyState` | `domain.py`, `views.py`, `services.py` | `media.py` recebe e entrega áudio/cartas; `events.py` declara sinais confiáveis; `dock.json` e arquivos JSON de mensagens configuram a interface. |
+| [`table/`](../../gravewright/table) | `LobbyState`, `ProgressClock`, `ProgressClue`, `MindMap`, `MindMapReceipt` | `domain.py`, `clocks.py`, `clues.py`, `mindmaps.py`, `resource_links.py` | Progresso, descobertas e grafos colaborativos versionados; `resource_links.py` projeta vínculos nativos tipados e define metadados de remapeamento; `views.py` e `services.py` controlam mesa/lobby, `media.py` entrega áudio/cartas e `events.py` declara sinais confiáveis. |
 | [`actors/`](../../gravewright/actors) | `Actor`, `Folder`, `Asset` | `services.py` | Views implementam leitura de fichas, uploads e entrega autenticada de PDF/imagens. |
-| [`pdf_system/`](../../gravewright/pdf_system) | Nenhum | `schema.py` | Padrões e validação da ficha PDF nativa; comportamento no navegador fica em `static/`. |
+| [`pdf_system/`](../../gravewright/pdf_system) | `MappingTemplate` | `schema.py`, `public.py`, `templates.py` | `manual_fields.py`, `field_actions.py`, `formulas.py` e `calculated_fields.py` validam layout e automação; `frontend/` contém modelos/controlador editáveis do navegador, `static/` contém a interface e assets preparados. Veja [PDF System](pdf-system.md). |
 | [`tokens/`](../../gravewright/tokens) | `Token` | `services.py` | Vínculos com atores, snapshots, movimento, visão e prévias filtradas de arraste; `views.py` expõe estado. |
 | [`maps/`](../../gravewright/maps) | `Scene`, `Tile`, `Broadcast`, `SceneState`, `SceneObject`, `Folder`, `Receipt`, `MapAsset`, `AssetFolder` | `services.py`, `objects.py`, `views.py` | `assets.py` cuida da biblioteca; `extra_objects.py`, `markers.py`, `zones.py` validam camadas especializadas; auxiliares de renderização e pré-carregamento priorizam blocos. |
-| [`journals/`](../../gravewright/journals) | `Journal`, `Folder`, `Access`, `Asset`, `Receipt`, `BoardEntry` | `services.py`, `data.py`, `types.py` | `documents.py` valida texto estruturado e blocos secretos; `presentations.py` gerencia tickets; views protegem uploads e downloads. |
+| [`journals/`](../../gravewright/journals) | `Journal`, `Folder`, `Access`, `Asset`, `Receipt`, `BoardEntry`, `Revision` | `services.py`, `history.py`, `types.py` | `data.py` normaliza documentos e dependências de missões; `documents.py` valida texto rico/segredos; `history.py` restaura versões/lixeira e controla anexos retidos; `presentations.py` controla apresentações. |
 | [`chat/`](../../gravewright/chat) | `Message`, `Recipient`, `SendWindow`, `CardAttachment` | `services.py`, `context.py` | `card_attachments.py` captura faces imutáveis; templates renderizam chat e resultados de dados persistidos. |
 | [`dice/`](../../gravewright/dice) | `Submission` | `services.py`, `engine.py` | `grammar/parser.py`, `compiler.py`, `runtime.py` implementam notação e avaliação; documentação e testes com resultados determinísticos ficam próximos. |
 | [`items/`](../../gravewright/items) | `Item`, `Folder` | `services.py` | Documentos filtrados por permissão; `types()` atualmente não retorna tipos nativos. |
@@ -53,10 +55,25 @@ Os caminhos internos abaixo são relativos a `gravewright/`.
 | [`audio/`](../../gravewright/audio) | `Track`, `Playlist`, `Playback` | `services.py`, `transport.py` | `metadata.py` inspeciona arquivos; `soundtrack.py` agenda música; `geometry.py` calcula atenuação pelas paredes. |
 | [`compendiums/`](../../gravewright/compendiums) | `Pack`, `Entry`, `EntryAsset`, `ContentAccess` | `services.py`, `catalog.py` | `graph.py` seleciona dependências portáteis; `assets.py` copia/restaura arquivos; `signals.py` limpa arquivos próprios. |
 | [`realtime/`](../../gravewright/realtime) | `PresenceConnection` | `consumers.py`, `services.py`, `dispatch.py` | `routing.py`, `security.py`, `scene_stream.py`, `gm_guided_prefetch.py` tratam sockets, origem e agendamento de viewport. |
-| [`administration/`](../../gravewright/administration) | `HostSettings`, `Snapshot`, `AuditEvent` | `views.py`, `archives.py`, `preferences.py` | `updates.py` consulta versões; `release_metadata.py` busca e valida metadados das versões. |
+| [`administration/`](../../gravewright/administration) | `HostSettings`, `Snapshot`, `AuditEvent` | `views.py`, `archives.py`, `preparation_archives.py`, `mindmap_archives.py` | Arquivos de campanha, cópias, snapshots, preparação/histórico e remapeamento de vínculos tipados dos grafos; `preferences.py` controla preferências; `updates.py` e `release_metadata.py` consultam e validam releases. |
 | [`modules/`](../../gravewright/modules) | Estado de pacotes/catálogo | `packages.py`, `operations.py`, `contracts/` | Instalação de extensões, marketplace e contratos; consulte ao alterar capacidades de pacotes ou declarações geradas da API. |
 
 ## Acompanhando uma funcionalidade
+
+### Um tópico de mapa mental e seus recursos vinculados
+
+1. Mesa e gestor montam `table/static/gravewright_table/mindmaps.js`;
+   `mindmap-model.js` controla edições locais e `resource-links.js` resolve vínculos.
+2. Métodos `mindmaps` do navegador ou [`api.mindmaps`](../../api/mindmaps.py)
+   chegam a `table/mindmaps.py` pelo transporte nativo e por `table/domain.py`.
+3. O serviço revalida escopo, editores e revisões. A validação do grafo usa
+   `resource_links.Resolver`, reaproveitando projeções nativas na requisição;
+   destinos sem acesso permanecem como marcadores opacos.
+4. `MindMapReceipt` evita escrita duplicada e revalida acesso ao repetir a operação.
+   Alterações confirmadas invalidam clientes autorizados. O auxiliar
+   `maps/blueprint_mindmaps.py` delega somente a ação configurada do tópico.
+5. `administration/mindmap_archives.py` remapeia vínculos tipados em cópias e
+   restaurações, preservando o texto autoral. Veja [Mapas mentais](mindmaps.md).
 
 ### Salvamento de ficha de personagem
 

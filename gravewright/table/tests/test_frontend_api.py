@@ -15,6 +15,15 @@ from gravewright.modules import tests as module_fixtures
 class FrontendApiTests(TestCase):
     setUp = fixtures.TableModuleTests.setUp
 
+    def test_native_service_failures_keep_machine_code_and_useful_display_message(self):
+        from gravewright.journals.services import JournalError
+        self.client.force_login(self.gm)
+        message = 'This deleted document uses files that are missing. Restore the files before trying again.'
+        with patch('gravewright.modules.frontend.journals.command', side_effect=JournalError(message)):
+            response = self.call('journals', 'restoreDeleted', {'revision_id': str(uuid.uuid4())})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {'error': 'invalid_data', 'message': message})
+
     def call(self, domain, method, payload=None, **extra):
         return self.client.post(f'/api/tables/{self.campaign.pk}/api', {
             'domain': domain, 'method': method, 'payload': payload or {},
@@ -26,10 +35,13 @@ class FrontendApiTests(TestCase):
         from gravewright.modules.frontend import CONTRACT
         for domain in CONTRACT['domains']:
             with self.subTest(domain=domain):
-                result = self.call(domain, 'state', {'sceneId': str(self.scene.pk)})
+                payload = {'sceneId': str(self.scene.pk)}
+                if domain == 'ownership':
+                    payload.update(kind='actors', id=str(self.actor.pk))
+                result = self.call(domain, 'state', payload)
                 self.assertEqual(result.status_code, 200, result.content)
         root = Path(__file__).resolve().parents[2] / 'modules'
-        generated = (root / 'static/gravewright_modules/frontend-contract.js').read_text()
+        generated = (root / 'static/gravewright_modules/frontend-contract.js').read_text(encoding='utf-8')
         self.assertEqual(generated.split('export const FRONTEND_CONTRACT = ', 1)[1], json.dumps(CONTRACT, indent=2) + ';\n')
 
     def test_actor_writes_publish_hooks_after_commit_and_replay_once(self):

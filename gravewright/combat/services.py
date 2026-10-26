@@ -14,6 +14,11 @@ from gravewright.table.domain import boolean, number, version
 from gravewright.tokens import services as tokens
 from gravewright.tokens.models import Token
 from gravewright.rules import kallistis_runtime as rules
+from gravewright.dice.grammar.errors import RollError
+from gravewright.combat.providers import get as combat_provider
+from gravewright.dice.engine import evaluate
+import math
+import re
 
 from .effects import advance as advance_effects
 from .models import Encounter
@@ -23,6 +28,79 @@ DEFENSES = {"GUARDA", "FORTITUDE", "INTEGRIDADE"}
 MOVEMENT_MODES = {"GRID", "ZONES"}
 COMBAT_SIDES = {"friendly", "hostile"}
 MAX_EVENTS = 256
+
+
+def initiative_score(entry):
+    try:
+        value = float(entry.get("initiative"))
+        return value if math.isfinite(value) else -float("inf")
+    except (TypeError, ValueError):
+        return -float("inf")
+
+
+def system_combat(who):
+    from gravewright.campaigns.systems import bundled
+    module = bundled(who.campaign.system)
+    if module:
+        return module.get("combat") or {}
+    from gravewright.campaigns.catalog import get_ruleset
+    descriptor = get_ruleset(who.campaign.system, campaign_id=who.campaign_id) or {}
+    combat = descriptor.get("combat", {})
+    return {
+        "formula": combat.get("formula", ""),
+        "manual_input": combat.get("manualInput", "text"),
+        "show_roll": combat.get("showRoll", True),
+        "requires_provider": combat.get("requiresProvider", False),
+    }
+
+
+def system_provider(who):
+    from gravewright.campaigns.systems import resolve_system_id
+    provider = combat_provider(resolve_system_id(who.campaign.system))
+    if system_combat(who).get("requires_provider") and provider is None:
+        raise MapError("The selected system requires its server extension to be enabled.", "unavailable")
+    return provider
+
+
+def configuration(who, row=None):
+    combat = system_combat(who)
+    stored = {key: value for key, value in row.config.items() if key != "_encounter_id"} if row else {}
+    config = {"formula": combat.get("formula", ""), **stored}
+    return {
+        **config,
+        "input": "roll" if config["formula"] else combat.get("manual_input", "text"),
+        "can_roll": combat.get("show_roll", True),
+        "system_id": who.campaign.system,
+    }
+
+
+def roll_initiative(who, formula, data, *, conditions=()):
+    try:
+        combat = system_combat(who)
+        roll = combat.get("roll")
+        if roll:
+            result = roll(formula, data)
+        else:
+            provider = system_provider(who)
+            if provider and provider.prepare_initiative:
+                formula, data = provider.prepare_initiative(
+                    formula, deepcopy(data), conditions=deepcopy(conditions)
+                )
+            def attribute(match):
+                value = data
+                for key in match.group(1).split("."):
+                    value = value.get(key, 0) if isinstance(value, dict) else 0
+                if type(value) not in (int, float) or not math.isfinite(value) or abs(value) > 1e6:
+                    raise MapError("Invalid initiative attribute.")
+                return f"({value})"
+            expression = re.sub(
+                r"@([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)",
+                attribute, formula,
+            )
+            result = evaluate(expression, 1)["value"]["value"]
+        return number(result, -1e6, 1e6)
+    except RollError as error:
+        raise MapError(str(error)) from None
 
 
 def identity(entry):

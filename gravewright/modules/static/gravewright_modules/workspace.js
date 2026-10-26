@@ -1,8 +1,8 @@
 import { HttpClient } from "./http-client.js";
 import { BrowserBridge } from "./browser-bridge.js";
 import { ModuleRuntime } from "./module-runtime.js";
-import { DOMAIN_NAMES } from "./generated.js";
 import { attachSurface } from "./frontend-api.js";
+import { contentReady, afterContentReady } from '/static/gravewright_table/content-state.js';
 // Table integration: native DOM surfaces are attached to both host-page UI
 // registrations and signed-package mounts, each with its own lifetime ownership.
 const table = document.querySelector("#table-workspace");
@@ -24,11 +24,6 @@ if (table) {
       browse.rel = "noopener";
       header.append(browse);
     }
-    const retry = document.createElement("button");
-    retry.type = "button";
-    retry.textContent = "Refresh";
-    retry.onclick = () => refresh(true);
-    header.append(retry);
     pane.append(header);
     const error = document.createElement("p");
     error.className = "module-marketplace__error";
@@ -40,14 +35,18 @@ if (table) {
       p.textContent = "No JavaScript modules installed.";
       pane.append(p);
     }
+    const list = document.createElement('ul');
+    list.className = 'module-marketplace__list';
+    pane.append(list);
     for (const pkg of packages) {
-      const row = document.createElement("article");
+      const row = document.createElement("li");
       row.className = "module-marketplace__item";
-      const div = document.createElement("div"), strong = document.createElement("strong"), small = document.createElement("small");
+      row.dataset.packageId = pkg.id;
+      row.dataset.packageVersion = pkg.version;
+      const strong = document.createElement("strong"), actions = document.createElement('div');
+      actions.className = 'module-marketplace__actions';
       strong.textContent = pkg.name;
-      small.textContent = `${pkg.version} \xB7 ${pkg.description}`;
-      div.append(strong, small);
-      row.append(div);
+      row.append(strong, actions);
       const active = state?.modules.some((m) => m.id === pkg.id && m.version === pkg.version);
       if (!pkg.revoked && active && runtime.canCustomize(pkg.id)) {
         const customize = document.createElement("button");
@@ -60,13 +59,13 @@ if (table) {
           try { await runtime.customize(pkg.id); } catch (error) { report(error); }
           finally { customize.disabled = false; }
         };
-        row.append(customize);
+        actions.append(customize);
       }
       if (pkg.revoked) {
         const span = document.createElement("span");
         span.textContent = "Revoked";
-        row.append(span);
-      } else if (manage) {
+        actions.append(span);
+      } else if (manage && !pkg.locales && !pkg.django) {
         const b = document.createElement("button");
         b.type = "button";
         b.textContent = active ? "Deactivate" : "Activate";
@@ -77,33 +76,9 @@ if (table) {
           else modules[pkg.id] = pkg.version;
           await configure(modules, Object.fromEntries(Object.entries(state.replacements).filter(([, id]) => modules[id])));
         };
-        row.append(b);
+        actions.append(b);
       }
-      pane.append(row);
-    }
-    if (manage && state?.modules.length) {
-      const fieldset = document.createElement("fieldset");
-      fieldset.className = "module-marketplace__replacements";
-      const legend = document.createElement("legend");
-      legend.textContent = "Interface replacements";
-      fieldset.append(legend);
-      for (const domain of DOMAIN_NAMES) {
-        const label = document.createElement("label"), select = document.createElement("select");
-        label.append(document.createTextNode(domain));
-        select.add(new Option("Automatic", ""));
-        for (const pkg of state.modules) select.add(new Option(pkg.id, pkg.id));
-        select.value = state.replacements[domain] ?? "";
-        select.onchange = () => {
-          const replacements = { ...state.replacements };
-          if (select.value) replacements[domain] = select.value;
-          else delete replacements[domain];
-          select.disabled = true;
-          void configure(Object.fromEntries(state.modules.map((m) => [m.id, m.version])), replacements);
-        };
-        label.append(select);
-        fieldset.append(label);
-      }
-      pane.append(fieldset);
+      list.append(row);
     }
   }, attach = function(element, domain, context = {}, viewport) {
     if (surfaces.has(element)) return;
@@ -111,16 +86,25 @@ if (table) {
     root.className = "gw-module-surface";
     root.dataset.domain = domain;
     element.append(root);
-    const native = [...element.children].filter((e) => e !== root), hidden = native.map((e) => e.hidden);
+    const native = [...element.children].filter((e) => e !== root);
+    let hidden, suppressed = false;
     const release = runtime.attach({ domain, root, viewport, context: { tableId, mountId: "", moduleSetRevision: "0", ...context }, defaultVisible: async (visible) => {
-      native.forEach((el, i) => el.hidden = visible ? hidden[i] : true);
+      if (element.setDefaultVisible) await element.setDefaultVisible(visible);
+      else if (!visible && !suppressed) {
+        hidden = native.map(el => el.hidden);
+        suppressed = true;
+        native.forEach(el => el.hidden = true);
+      } else if (visible && suppressed) {
+        native.forEach((el, i) => el.hidden = hidden[i]);
+        suppressed = false;
+      }
     } });
     const releasePublic = attachSurface(element, domain, { tableId, ...context });
     surfaces.set(element, () => {
       releasePublic();
       release();
       root.remove();
-      native.forEach((el, i) => el.hidden = hidden[i]);
+      if (suppressed) native.forEach((el, i) => el.hidden = hidden[i]);
     });
   }, scan = function() {
     document.querySelectorAll(".item-sheet[data-item-id]").forEach(el=>attach(el,"item.sheet",{itemId:el.dataset.itemId}));
@@ -136,12 +120,14 @@ if (table) {
       surfaces.delete(element);
     }
     for (const [selector, domain] of [["#items-panel .game-directory", "item.directory"], ["#actors-panel .game-directory", "actor.directory"], ["#maps-panel .game-directory", "scene.directory"], ["#chat-panel", "chat.log"], [".house-menu__preferences", "preferences"], ["#table-workspace", "table.interface"]]) {
+      // Campaign preparation mounts document providers, without mounting a live table interface.
+      if (domain === 'table.interface' && table.dataset.management === 'true') continue;
       const el = document.querySelector(selector);
       if (el) attach(el, domain);
     }
     document.querySelectorAll(".actor-directory__sheet[data-actor-id],.token-sheet[data-actor-id]").forEach((el) => {
       if (el.dataset.sceneId && el.dataset.sceneId !== window.gravewrightMaps?.current?.id) return;
-      attach(el.querySelector('[data-panel="ficha"]') ?? el, el.classList.contains("token-sheet") ? "token.sheet" : "actor.sheet", { actorId: el.dataset.actorId, ...el.dataset.tokenId ? { tokenId: el.dataset.tokenId } : {}, ...el.dataset.sceneId ? sceneContext() : {} });
+      attach(el.querySelector('.actor-sheet__content') ?? el, el.classList.contains("token-sheet") ? "token.sheet" : "actor.sheet", { actorId: el.dataset.actorId, systemId: el.dataset.systemId, actorType: el.dataset.actorType, canEdit: el.dataset.canEdit === "true", ...el.dataset.tokenId ? { tokenId: el.dataset.tokenId } : {}, ...el.dataset.sceneId ? sceneContext() : {} });
     });
   }, sceneContext = function() {
     const map = window.gravewrightMaps?.current;
@@ -207,6 +193,7 @@ if (table) {
   };
   const runtime = new ModuleRuntime(bridge, report);
   async function refresh(force = false) {
+    if (!contentReady()) return;
     if (scope.signal.aborted) return;
     if (fetching) {
       again = true;
@@ -220,7 +207,7 @@ if (table) {
         await runtime.reconcile(next);
         state = next;
       }
-      packages = (await http.get("/api/module-packages")).filter((row) => !row.locales);
+      packages = await http.get("/api/module-packages");
       render();
     } catch (error) {
       report(error);
@@ -257,8 +244,8 @@ if (table) {
   window.addEventListener("gravewright:modules.updated", (event) => {
     if (event.detail.moduleSetRevision !== state?.moduleSetRevision) {
       runtime.invalidate();
-      void refresh();
     }
+    void refresh();
   }, { signal: scope.signal });
   window.addEventListener("gravewright:connected", () => refresh(), { signal: scope.signal });
   window.addEventListener("gravewright:access-revoked", () => {
@@ -281,5 +268,5 @@ if (table) {
     for (const release of surfaces.values()) release();
     void runtime.close();
   }, { once: true });
-  void refresh();
+  afterContentReady(() => void refresh());
 }

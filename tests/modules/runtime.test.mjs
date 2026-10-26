@@ -16,6 +16,11 @@ class Element {
   }
 }
 Object.assign(globalThis, { location: { origin: "https://example.test" }, document: { createElement: () => new Element() } });
+function deferred() {
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  return {promise, resolve};
+}
 function fixture(modules) {
   const errors = [];
   let ack = "";
@@ -51,6 +56,116 @@ function surface() {
     }
   } };
 }
+
+test('system sheet replaces the whole document and actor registration also serves tokens', async () => {
+  const mounted = [];
+  const module = id => ({ start(){}, stop(){}, register({register}) {
+    register('actor.sheet', { mode: 'replace', mount(block) { mounted.push([id, block.context.tokenId]); } });
+  } });
+  const f = fixture({ system: module('system'), addon: module('addon') });
+  const actor = surface(), token = surface();
+  actor.surface.domain = 'actor.sheet'; token.surface.domain = 'token.sheet';
+  actor.surface.context.systemId = token.surface.context.systemId = 'system';
+  token.surface.context.tokenId = 'token';
+  f.runtime.attach(actor.surface); f.runtime.attach(token.surface);
+  await f.runtime.reconcile(f.state(['addon', 'system']));
+  assert.deepEqual(mounted, [['system', undefined], ['system', 'token']]);
+  assert.deepEqual(actor.visibility, [false]);
+  assert.deepEqual(token.visibility, [false]);
+  await f.runtime.close();
+});
+
+test('attaching during reconciliation keeps the first sheet lifetime and pending work alive', async () => {
+  const start = deferred(), started = deferred();
+  const ack = deferred(), acknowledging = deferred();
+  const sourceRead = deferred(), blocks = [];
+  const f = fixture({ system: {
+    async start() { started.resolve(); await start.promise; },
+    stop() {},
+    register({register}) {
+      register('actor.sheet', {mode:'replace', mount(block) { blocks.push(block); }});
+    },
+  } });
+  const originalAck = f.runtime.bridge.acknowledge;
+  f.runtime.bridge.acknowledge = async revision => {
+    acknowledging.resolve();
+    await ack.promise;
+    await originalAck(revision);
+  };
+  const s = surface(); s.surface.domain = 'actor.sheet'; s.surface.context.systemId = 'system';
+  const reconcile = f.runtime.reconcile(f.state(['system']));
+  await started.promise;
+  const detach = f.runtime.attach(s.surface);
+  start.resolve();
+  await acknowledging.promise;
+  assert.equal(blocks.length, 1);
+  const first = blocks[0];
+  // A real drop can await source permission/data while the first sheet is
+  // visible. Finishing activation must not abort that sheet in the meantime.
+  const pendingCopy = (async () => { await sourceRead.promise; return !first.signal.aborted; })();
+  ack.resolve();
+  await reconcile;
+  await f.runtime.queue;
+  sourceRead.resolve();
+  assert.equal(await pendingCopy, true);
+  assert.equal(blocks.length, 1);
+  assert.equal(first.signal.aborted, false);
+  assert.equal(s.root.children.length, 1);
+  assert.deepEqual(s.visibility, [false]);
+  assert.deepEqual(f.errors, []);
+  detach();
+  assert.equal(first.signal.aborted, true);
+  await f.runtime.close();
+});
+
+test('a default-only surface attached during reconciliation is resolved once', async () => {
+  const start = deferred(), started = deferred();
+  const f = fixture({ system: {
+    async start() { started.resolve(); await start.promise; },
+    stop() {}, register() {},
+  } });
+  const s = surface(); s.surface.domain = 'actor.sheet'; s.surface.context.systemId = 'system';
+  const reconcile = f.runtime.reconcile(f.state(['system']));
+  await started.promise;
+  f.runtime.attach(s.surface);
+  start.resolve();
+  await reconcile;
+  await f.runtime.queue;
+  assert.deepEqual(s.visibility, [true]);
+  assert.equal(s.root.children.length, 0);
+  assert.deepEqual(f.errors, []);
+  await f.runtime.close();
+});
+
+test('sheet types select distinct presentations and a token sheet overrides actor fallback', async () => {
+  const mounted = [];
+  const f = fixture({ system: { start(){}, stop(){}, register({register}) {
+    for (const type of ['hero', 'creature']) register('actor.sheet', { mode: 'replace', types: [type], mount(){ mounted.push(type); } });
+    register('token.sheet', { mode: 'replace', types: ['hero'], mount(){ mounted.push('token-hero'); } });
+  } } });
+  for (const [domain, actorType] of [['actor.sheet','hero'], ['token.sheet','hero'], ['token.sheet','creature'], ['actor.sheet','other']]) {
+    const s = surface(); s.surface.domain = domain;
+    Object.assign(s.surface.context, { systemId: 'system', actorType });
+    f.runtime.attach(s.surface);
+  }
+  await f.runtime.reconcile(f.state(['system']));
+  assert.deepEqual(mounted, ['hero', 'token-hero', 'creature']);
+  await f.runtime.close();
+});
+
+test('explicit sheet preference wins and failed mount restores the system default', async () => {
+  const mounted = [];
+  const f = fixture(Object.fromEntries(['system', 'addon'].map(id => [id, {
+    start(){}, stop(){}, register({register}) { register('actor.sheet', { mode:'replace', mount(){ mounted.push(id); if(id === 'addon') throw Error('failed'); } }); },
+  }])));
+  const s = surface(); s.surface.domain = 'actor.sheet'; s.surface.context.systemId = 'system';
+  f.runtime.attach(s.surface);
+  await f.runtime.reconcile(f.state(['system','addon'], '1', { 'actor.sheet':'addon' }));
+  assert.deepEqual(mounted, ['addon']);
+  assert.deepEqual(s.visibility, [false, true]);
+  assert.equal(s.root.children.length, 0);
+  await f.runtime.close();
+});
 test("all cleanups drain and pending operations reject when their scope closes", async () => {
   const failures = [];
   const life = new Lifetime((e) => failures.push(e));

@@ -79,17 +79,72 @@ class ArchiveTests(TestCase):
         self.assertNotEqual(scene.block_id, self.scene.block_id)
         self.assertEqual(token.actor.campaign, restored)
         self.assertEqual(scene.environment.lighting, {"mode": "manual"})
-        self.assertEqual(Tile.objects.get(scene=scene).file.read(), b"image")
+        with Tile.objects.get(scene=scene).file.open('rb') as stream:
+            self.assertEqual(stream.read(), b"image")
         self.assertEqual(Broadcast.objects.get(campaign=restored).scene, scene)
         asset = Asset.objects.get(campaign=restored)
+        original_asset = Asset.objects.get(campaign=self.campaign)
+        self.assertNotEqual(asset.pk, original_asset.pk)
         self.assertIn(
             str(asset.pk),
             Journal.objects.get(campaign=restored, type="quest").data["image"],
         )
         self.assertEqual(
+            Journal.objects.get(campaign=restored, type="quest").data["image"],
+            f"/game/actors/asset/{asset.pk}",
+        )
+        self.assertEqual(
             BoardEntry.objects.get(board__campaign=restored).quest.campaign, restored
         )
         self.assertEqual(Campaign.objects.count(), 2)
+
+    def test_actor_asset_urls_remap_without_changing_authored_text_or_external_urls(self):
+        from gravewright.journals.models import Revision
+
+        asset = Asset.objects.get(campaign=self.campaign)
+        quest = Journal.objects.get(campaign=self.campaign, type="quest")
+        url = f"/game/actors/asset/{asset.pk}?size=preview#portrait"
+        external = "https://example.test" + url
+        authored = "Portrait reference: " + url
+        quest.data = {"image": url, "cover": {"src": url},
+                      "content": {"href": url, "text": authored},
+                      "external": {"src": external}, "notes": authored}
+        quest.save(update_fields=["data"])
+        Revision.objects.create(campaign=self.campaign, journal_id=quest.pk,
+            title=quest.title, type=quest.type, visibility=quest.visibility,
+            reason="update", version=quest.version, data=quest.data)
+
+        restored = import_campaign(export_campaign(self.campaign), self.user, "Copied portraits")
+        copied_asset = Asset.objects.get(campaign=restored)
+        expected = f"/game/actors/asset/{copied_asset.pk}?size=preview#portrait"
+        copied = Journal.objects.get(campaign=restored, type="quest")
+        for document in (copied, Revision.objects.get(campaign=restored)):
+            self.assertEqual(document.data["image"], expected)
+            self.assertEqual(document.data["cover"]["src"], expected)
+            self.assertEqual(document.data["content"]["href"], expected)
+            self.assertEqual(document.data["content"]["text"], authored)
+            self.assertEqual(document.data["notes"], authored)
+            self.assertEqual(document.data["external"]["src"], external)
+        quest.refresh_from_db()
+        self.assertEqual(quest.data["image"], url)
+
+    def test_omitted_actor_asset_urls_share_an_inert_binding(self):
+        from uuid import UUID
+
+        original_asset = Asset.objects.get(campaign=self.campaign)
+        quest = Journal.objects.get(campaign=self.campaign, type="quest")
+        url = f"/game/actors/asset/{original_asset.pk}"
+        quest.data = {"image": url, "cover": {"src": url}, "content": {"href": url}}
+        quest.save(update_fields=["data"])
+        restored = import_campaign(export_campaign(self.campaign, {"actors": False}),
+                                   self.user, "Without portraits")
+        copied = Journal.objects.get(campaign=restored, type="quest")
+        inert_url = copied.data["image"]
+        inert_id = UUID(inert_url.removeprefix("/game/actors/asset/"))
+        self.assertNotEqual(inert_id, original_asset.pk)
+        self.assertFalse(Asset.objects.filter(pk=inert_id).exists())
+        self.assertEqual(copied.data["cover"]["src"], inert_url)
+        self.assertEqual(copied.data["content"]["href"], inert_url)
 
     def test_corrupt_archive_rejected_without_creating_campaign(self):
         raw = export_campaign(self.campaign)
@@ -137,6 +192,7 @@ class ArchiveTests(TestCase):
 
         from gravewright.chat.models import Message, Recipient
         from gravewright.journals.models import Access
+        from gravewright.table.models import DocumentAccess
 
         player = User.objects.create_user(
             email="backup-player@example.test",
@@ -148,6 +204,7 @@ class ArchiveTests(TestCase):
         self.actor.save()
         journal = Journal.objects.filter(campaign=self.campaign).first()
         Access.objects.create(journal=journal, user=player, level="read")
+        DocumentAccess.objects.create(campaign=self.campaign, kind='journals', resource_id=str(journal.pk), grants={'default':'none', str(player.pk):'read'})
         message = Message.objects.create(
             campaign=self.campaign,
             scene=self.scene,
@@ -164,6 +221,7 @@ class ArchiveTests(TestCase):
             Actor.objects.get(pk=self.actor.pk).permissions, {str(player.pk): "owner"}
         )
         self.assertEqual(Access.objects.get(journal_id=journal.pk).user, player)
+        self.assertEqual(DocumentAccess.objects.get(campaign=self.campaign, kind='journals', resource_id=str(journal.pk)).grants, {'default':'none', str(player.pk):'read'})
         self.assertEqual(Message.objects.get(pk=message.pk).author, player)
         self.assertEqual(Recipient.objects.get(message_id=message.pk).user, self.user)
 

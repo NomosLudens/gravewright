@@ -13,6 +13,13 @@ Contributions can improve code, tests, accessibility, documentation, translation
 5. Update English documentation and its Portuguese counterpart whenever behavior or setup changes. Keep code identifiers and commands identical between translations.
 6. Describe the problem, resulting behavior, validation and any known limits in the pull request. Include screenshots when visual behavior changes; use synthetic campaign data.
 
+## Portable storage contract
+
+All default VTT storage stays in the extracted project folder: `data/` for data,
+logs and Runner/update state; `data/runner/` for managed tools and their caches.
+Do not introduce AppData, HOME or XDG defaults or shared installation metadata.
+Follow [AGENTS.md](AGENTS.md) and retain regression tests for independent copies.
+
 ## Code and documentation
 
 Use English for new comments, docstrings, API documentation and identifiers. Explain responsibilities, trust boundaries, side effects and non-obvious constraints. Avoid comments that merely repeat a statement. Public functions should describe their inputs, results, permission assumptions and important exceptions where these are not apparent from the signature.
@@ -21,7 +28,7 @@ Keep database schema changes in migrations. Never edit an already published migr
 
 Do not commit `.env`, database files, uploaded documents, installed modules, private keys, browser session state or `test-results/`. Use fake accounts and assets you are authorized to distribute in test fixtures.
 
-There is currently no repository-wide formatter/linter configuration or CI workflow defining additional mandatory checks. Follow nearby style and report the commands you actually ran; do not claim CI passed when it did not run.
+There is currently no repository-wide formatter/linter configuration. The [automatic updates workflow](.github/workflows/automatic-updates.yml) checks upgrade recovery on Windows, Linux and macOS, plus browser and module behavior. Follow nearby style, run checks appropriate to the change and report the commands you actually ran; do not claim CI passed when it did not run.
 
 ## Licensing contributions
 

@@ -1,7 +1,19 @@
+import { mountModal } from '/static/gravewright_table/modal.js';
+import { openFormModal, modalText } from '/static/gravewright_table/form-modal.js';
 import { mergePatch, getPath } from '/static/gravewright_web/vendor/datastar-1.0.3.js';
+import { detachWindow, restoreWindow } from '/static/gravewright_table/window-controls.js';
 import { richText, emptyDoc } from './editor.js';
+import { writeReference, readReference } from '/static/gravewright_table/references.js';
 import { pdfView } from './pdf.js';
 import { renderType, typeLabels, typeIcons } from './types.js';
+import { openPresentation, presentationLabel } from './presentation.js';
+import { openPermissions } from '/static/gravewright_table/permissions.js';
+import { initialContent, restoreContent } from '/static/gravewright_table/content-state.js';
+import { createTranslator } from '/static/gravewright_modules/i18n.js';
+import { registerEscapeClose } from '/static/gravewright_web/escape.js';
+import { MAX_CHAPTERS, chapterRows, chapterPath, selectedChapter, canParentChapter, saveChapter, reorderChapter, deleteChapter, movePageToChapter } from './journal-structure.js';
+const translator = createTranslator(), t = (key, params) => translator.t(key, params);
+const structureResult = action => { try { return action(); } catch (error) { throw Error(t(error.message)); } };
 const panel = document.getElementById('journals-panel'), tableId = document.getElementById('table-workspace').dataset.tableId;
 const clone = name => document.getElementById('journal-' + name).content.firstElementChild.cloneNode(true);
 const icons = document.getElementById('journal-icons').content;
@@ -12,7 +24,7 @@ const show = (el, on) => {
     else
         el.setAttribute('hidden', '');
 };
-let state = { journals: [], folders: [], members: [], is_gm: false }, waitingOpen = new Set(), windows = new Map(), menu, dialog, popup;
+let state = { journals: [], folders: [], members: [], is_gm: false }, waitingOpen = new Map(), windows = new Map(), menu, dialog, popup;
 const commands = (action, data) => window.gravewrightRealtime.journalCommand(action, data);
 const storedKey = `gravewright.directory.${tableId}.journals`;
 let closedFolders = new Set();
@@ -41,43 +53,35 @@ function context(event, items, cls = 'journal-context') {
 }
 document.addEventListener('click', dismiss);
 function confirm(text, action) {
-    const el = clone('confirm');
-    el.querySelector('p').textContent = text;
-    const [yes, no] = el.querySelectorAll('button');
-    yes.addEventListener('click', async () => {
-        try {
-            yes.disabled = true;
-            await action();
-            el.remove();
-        }
-        catch (e) {
-            el.querySelector('p').textContent = e.message;
-            yes.disabled = false;
-        }
-    });
-    no.addEventListener('click', () => el.remove());
-    document.body.append(el);
+    const el = openFormModal(modalText('Confirm deletion', 'Confirmar exclusão'), [], action, {key:'journal-confirm',submitLabel:modalText('Delete','Excluir')});
+    const message = document.createElement('p'); message.textContent = text;
+    el.querySelector('[data-fields]').append(message);
 }
-function prompt(label, value, action) { const el = clone('prompt'); el.querySelector('label span').textContent = label; el.querySelector('input').value = value; el.addEventListener('submit', e => { e.preventDefault(); action(el.querySelector('input').value); el.remove(); }); el.querySelector('button[type=button]').addEventListener('click', () => el.remove()); document.body.append(el); el.querySelector('input').focus(); }
+function prompt(label, value, action) {
+    return openFormModal(label, [{name:'value',label,value,required:true}], form => action(form.elements.value.value), {key:'journal-prompt'});
+}
 function form(name, submit) {
-    dialog?.remove();
+    dialog?.close();
     const el = clone(name);
     dialog = el;
-    el.querySelector('.directory-dialog__close').addEventListener('click', () => el.remove());
-    el.querySelector('[data-cancel]')?.addEventListener('click', () => el.remove());
-    el.addEventListener('keydown', e => {
-        if (e.key === 'Escape') {
-            e.stopPropagation();
-            el.remove();
-        }
-    });
+    const footer = document.createElement('footer');
+    let cancel = el.querySelector('[data-cancel]');
+    if (!cancel) {
+        cancel = document.createElement('button'); cancel.type = 'button'; cancel.dataset.cancel = '';
+        cancel.textContent = modalText('Cancel','Cancelar');
+    }
+    footer.append(cancel, el.querySelector('[type=submit]')); el.append(footer);
+    const close = () => { if (!el.querySelector('fieldset').disabled) el.close(); };
+    el.querySelector('.directory-dialog__close').addEventListener('click', close);
+    cancel.addEventListener('click', close);
     el.addEventListener('submit', async (e) => {
         e.preventDefault();
         const fieldset = el.querySelector('fieldset');
         fieldset.disabled = true;
+        for (const button of el.querySelectorAll('button')) button.disabled = true;
         try {
             await submit(el);
-            el.remove();
+            el.close();
         }
         catch (e) {
             const p = el.querySelector('[role=alert]');
@@ -86,9 +90,10 @@ function form(name, submit) {
         }
         finally {
             fieldset.disabled = false;
+            for (const button of el.querySelectorAll('button')) button.disabled = false;
         }
     });
-    document.body.append(el);
+    mountModal(el, {canClose: () => !el.querySelector('fieldset').disabled});
     el.querySelector('input')?.focus();
     return el;
 }
@@ -149,7 +154,7 @@ function tree() {
             if (state.is_gm) {
                 toggle.draggable = true;
                 toggle.addEventListener('dragstart', e => e.dataTransfer.setData('application/x-gravewright-journal', JSON.stringify({ kind: 'folder', id: f.id })));
-                toggle.addEventListener('contextmenu', e => context(e, [['Create journal', () => create(f.id)], ['Create subfolder', () => folderForm(f.id)], ['Edit folder', () => folderForm('', f)], ['Delete folder', () => confirm('Delete this folder? Journals and subfolders will move to the parent folder.', () => commands('folder-delete', { folder_id: f.id }))]], 'gw-folder-menu'));
+                toggle.addEventListener('contextmenu', e => context(e, [['Create journal', () => create(f.id)], ['Create subfolder', () => folderForm(f.id)], ['Edit folder', () => folderForm('', f)], ['Permissions', () => openPermissions('journal-folders', f.id)], ['Delete folder', () => confirm('Delete this folder? Journals and subfolders will move to the parent folder.', () => commands('folder-delete', { folder_id: f.id }))]], 'gw-folder-menu'));
             }
             draw(el.querySelector('.directory-tree'), f.id);
             host.append(el);
@@ -161,10 +166,13 @@ function tree() {
             el.querySelector(':scope > svg').replaceWith(icon(typeIcons[j.type]));
             show(el.querySelector('.directory-entry__grip'), state.is_gm);
             el.addEventListener('click', () => open(j.id));
-            el.addEventListener('contextmenu', e => context(e, [['Open document', () => open(j.id)], ...(state.is_gm ? [['Permissions', () => { open(j.id); windows.get(j.id)?.permissions(); }], ['Delete journal', () => confirm('Delete this journal?', () => commands('delete', { journal_id: j.id }))]] : [])], 'gw-folder-menu'));
+            el.addEventListener('contextmenu', e => context(e, [['Open document', () => open(j.id)], ...(state.is_gm ? [[presentationLabel(), () => windows.has(j.id) ? windows.get(j.id).present() : present(j)], ['Permissions', () => windows.has(j.id) ? windows.get(j.id).permissions() : openPermissions('journals', j.id)], ['Delete journal', () => confirm('Delete this journal?', () => commands('delete', { journal_id: j.id }))]] : [])], 'gw-folder-menu'));
             if (state.is_gm) {
                 el.draggable = true;
-                el.addEventListener('dragstart', e => e.dataTransfer.setData('application/x-gravewright-journal', JSON.stringify({ kind: 'journal', id: j.id })));
+                el.addEventListener('dragstart', e => {
+                    e.dataTransfer.setData('application/x-gravewright-journal', JSON.stringify({ kind: 'journal', id: j.id }));
+                    writeReference(e.dataTransfer, {type: 'journal', id: j.id, title: j.title});
+                });
             }
             host.append(el);
         }
@@ -205,42 +213,34 @@ panel.addEventListener('click', e => {
         popup = detach(panel, 'journals-directory', 'Journals');
 });
 function detach(el, id, title) {
-    const doc = el.ownerDocument;
-    if (doc !== document) {
-        doc.defaultView.focus();
-        return;
-    }
-    const child = window.open('', id, 'popup,width=987,height=754');
-    if (!child)
-        return;
-    child.document.title = title;
-    for (const style of document.querySelectorAll('style,link[rel=stylesheet]'))
-        child.document.head.append(style.cloneNode(true));
-    const marker = document.createComment('detached-journal');
-    el.replaceWith(marker);
-    child.document.body.append(el);
-    el.classList.add(el === panel ? 'game-panel--detached' : 'journal-window--detached');
-    child.addEventListener('pagehide', () => {
-        if (marker.isConnected)
-            marker.replaceWith(el);
-        el.classList.remove('journal-window--detached', 'game-panel--detached');
-    });
-    return child;
+    return detachWindow(el, id, title, {width:987});
 }
-function open(id) {
+function open(id, pageId) {
     const existing = windows.get(id);
     if (existing) {
+        if (pageId && existing.pages.some(page => page.id === pageId)) {
+            existing.selected = pageId; existing.renderIndex(); existing.renderPage();
+        }
         existing.el.classList.remove('journal-window--minimized');
         existing.el.dispatchEvent(new Event('focusin', { bubbles: true }));
         existing.el.ownerDocument.defaultView.focus();
         return;
     }
     const journal = state.journals.find(j => j.id === id);
+    if (journal?.can_open === false) return;
     if (!journal) {
-        waitingOpen.add(id);
+        waitingOpen.set(id, pageId);
+        window.gravewrightRealtime.journalsSubscribe();
         return;
     }
-    windows.set(id, new JournalWindow(journal));
+    const win = new JournalWindow(journal);
+    windows.set(id, win);
+    if (pageId && win.pages.some(page => page.id === pageId)) {
+        win.selected = pageId; win.renderIndex(); win.renderPage();
+    }
+}
+function present(journal, page) {
+    return openPresentation(journal, {members: state.members, targeted: state.targeted_handouts_enabled, page, send: payload => commands('present', payload)});
 }
 async function upload(journalId, file) {
     const data = new FormData();
@@ -260,6 +260,8 @@ class JournalWindow {
     $(selector) { return this.el.querySelector(selector); }
     get pages() { return this.draft.editable_sections || this.draft.sections || []; }
     get current() { return this.pages.find(p => p.id === this.selected); }
+    get chapters() { return this.draft.chapters || []; }
+    get currentChapter() { return selectedChapter(this.chapters, this.pages, this.selected); }
     touch() {
         if (!this.editing || !this.draft.can_edit)
             return;
@@ -280,7 +282,7 @@ class JournalWindow {
             return true;
         const revision = this.revision;
         const d = this.draft;
-        const payload = { journal_id: d.id, title: d.title, visibility: d.visibility, version: d.version, data: d.type === 'quest' ? d.quest : d.type === 'roll_table' ? d.roll_table : d.type === 'quest_board' ? {} : { content: d.content_doc, cover: d.cover_image, sections: this.pages, gm: d.diary?.gm } };
+        const payload = { journal_id: d.id, title: d.title, visibility: d.visibility, version: d.version, data: d.type === 'quest' ? d.quest : d.type === 'roll_table' ? d.roll_table : d.type === 'quest_board' ? {} : { content: d.content_doc, cover: d.cover_image, chapters: this.chapters, sections: this.pages, gm: d.diary?.gm } };
         this.$('.journal-window__save').textContent = 'Saving…';
         this.pending = commands('update', structuredClone(payload)).then(result => { this.draft.version = result.version; this.dirty = this.revision !== revision; if (!this.dirty)
             for (const editor of this.typeEditors || [])
@@ -289,24 +291,29 @@ class JournalWindow {
         const ok = await this.pending;
         return ok && this.dirty ? this.flush() : ok;
     }
-    error(text) { this.$('.journal-window__error span').textContent = text; show(this.$('.journal-window__error'), true); this.$('.journal-window__save').textContent = text; }
+    error(text) { this.$('.journal-window__error span').textContent = t(text); show(this.$('.journal-window__error'), true); this.$('.journal-window__save').textContent = t(text); }
     update(view) {
         this.remote = view;
-        if (!view.can_edit && this.draft.can_edit) {
+        const pagesRestricted = !this.isGM && (this.draft.sections || []).some(old => {
+            const page = (view.sections || []).find(p => p.id === old.id);
+            return !page || old.can_edit && !page.can_edit;
+        });
+        if (pagesRestricted || !view.can_edit && this.draft.can_edit) {
+            for (const modal of this.structureModals || []) modal.close(true);
             this.dirty = false;
             clearTimeout(this.timer);
             this.draft = structuredClone(view);
             this.editing = false;
             this.render();
         }
-        else if (!this.dirty && !this.pending && (view.version !== this.draft.version || view.type === 'quest_board')) {
+        else if (!this.dirty && !this.pending && !this.cancelPageTitleEdit && (view.version !== this.draft.version || view.type === 'quest_board')) {
             this.draft = structuredClone(view);
             this.render();
         }
     }
     async perform(action, data = {}) {
         if (!await this.flush())
-            return;
+            return false;
         try {
             const reply = await commands(action, { journal_id: this.draft.id, ...data });
             if (reply.entry) {
@@ -318,21 +325,25 @@ class JournalWindow {
                 }
                 output.textContent = `${reply.entry.name}: ${reply.entry.result}`;
             }
+            return reply;
         }
         catch (error) {
             this.error(error.message);
+            return false;
         }
     }
     async close(force = false) {
         if (!force && !await this.flush())
             return;
         clearTimeout(this.timer);
+        for (const modal of this.structureModals || []) modal.close(true);
         this.destroyEditors();
         this.popup?.close();
         this.el.remove();
         if (windows.get(this.draft.id) === this) windows.delete(this.draft.id);
     }
     destroyEditors() {
+        this.cancelPageTitleEdit?.();
         for (const cleanup of this.cleanups)
             cleanup();
         this.cleanups = [];
@@ -346,8 +357,7 @@ class JournalWindow {
         show(this.$('[data-action=edit]'), d.can_edit);
         const edit = this.$('[data-action=edit]');
         edit.querySelector('svg').replaceWith(icon(this.editing ? 'Eye' : 'PencilSimple'));
-        edit.querySelector('span').textContent = this.editing ? 'Read' : 'Edit';
-        show(this.$('[data-action=permissions]'), this.isGM && !d.presentation_ticket);
+        edit.querySelector('span').textContent = this.editing ? modalText('Read', 'Ler') : modalText('Edit', 'Editar');
         show(this.$('[data-action=present]'), this.isGM && !d.presentation_ticket);
         show(this.$('[data-action=gm]'), this.isGM && this.editing);
         show(this.$('[data-filter=gm]'), this.isGM);
@@ -361,92 +371,171 @@ class JournalWindow {
         else {
             renderType(this, {...state,is_gm:this.isGM}, upload, open);
         }
-        if (!this.$('.journal-window__permissions').hidden)
-            this.renderPermissions();
     }
     renderIndex() {
         const nav = this.$('.diary-workspace__index');
-        nav.replaceChildren();
+        nav.replaceChildren(); nav.dataset.journalChapters = '';
         const search = this.$('[data-journal-search]').value.toLowerCase();
-        const groups = [...new Set(this.pages.map(p => p.category))];
+        const rows = chapterRows(this.chapters), matches = (page, chapterMatch = false) => (chapterMatch || page.title.toLowerCase().includes(search))
+            && (this.filter === 'all' || page.kind === this.filter) && (!this.gmFilter || page.audience === 'gm');
         let count = 0;
-        for (const category of groups) {
-            const pages = this.pages.filter(p => p.category === category && p.title.toLowerCase().includes(search) && (this.filter === 'all' || p.kind === this.filter) && (!this.gmFilter || p.audience === 'gm'));
-            if (!pages.length)
-                continue;
+        const appendPages = (list, pages) => {
             count += pages.length;
-            const section = document.createElement('section');
-            section.className = 'diary-workspace__chapter';
-            section.dataset.chapter = category;
-            if (category) {
-                const title = document.createElement('button');
-                title.type = 'button';
-                title.className = 'diary-workspace__chapter-title';
-                title.append(icon('CaretRight'));
-                const strong = document.createElement('strong');
-                strong.textContent = category;
-                const small = document.createElement('small');
-                small.textContent = pages.length;
-                title.append(strong, small);
-                title.addEventListener('click', () => { this.closedChapters.has(category) ? this.closedChapters.delete(category) : this.closedChapters.add(category); this.renderIndex(); });
-                title.addEventListener('contextmenu', e => {
-                    if (this.editing)
-                        context(e, [['New page in this chapter', () => this.add('text', category)], ['Rename chapter', () => prompt('Name', category, value => {
-                                    for (const p of this.pages)
-                                        if (p.category === category)
-                                            p.category = value;
-                                    this.touch();
-                                    this.renderIndex();
-                                })], ['Ungroup chapter', () => {
-                                    for (const p of this.pages)
-                                        if (p.category === category)
-                                            p.category = '';
-                                    this.touch();
-                                    this.renderIndex();
-                                }]]);
-                });
-                section.append(title);
-            }
-            const list = document.createElement('div');
-            show(list, !this.closedChapters.has(category) || !!search);
             for (const p of pages) {
                 const el = clone('page-link');
                 el.querySelector('[data-page-icon]').replaceWith(icon({ text: 'FileText', image: 'Image', pdf: 'FilePdf' }[p.kind]));
                 el.querySelector('[data-page-title]').textContent = p.title;
+                el.querySelector('[data-page-title]').setAttribute('translate', 'no');
                 show(el.querySelector('.page-lock'), p.audience === 'gm');
                 if (this.selected === p.id)
                     el.setAttribute('aria-current', 'page');
                 el.addEventListener('click', () => { this.selected = p.id; this.renderIndex(); this.renderPage(); });
                 el.addEventListener('contextmenu', e => {
-                    if (this.editing)
+                    if (this.isGM || this.editing && p.can_edit !== false)
                         this.pageMenu(e, p);
                 });
-                el.draggable = this.editing;
+                el.draggable = true;
                 el.dataset.pageId = p.id;
-                el.addEventListener('dragstart', e => e.dataTransfer.setData('application/x-gravewright-page', p.id));
+                el.addEventListener('dragstart', e => {
+                    e.dataTransfer.setData('application/x-gravewright-page', p.id);
+                    writeReference(e.dataTransfer, {type: 'journal', id: this.draft.id, pageId: p.id, title: p.title});
+                });
                 list.append(el);
             }
-            section.append(list);
-            nav.append(section);
+        };
+        const unassigned = this.pages.filter(page => !page.chapterId && matches(page));
+        if (unassigned.length || this.editing && this.chapters.length && !search) {
+            const section = document.createElement('section'); section.className = 'diary-workspace__chapter'; section.dataset.chapterId = '';
+            const title = document.createElement('strong'); title.className = 'diary-workspace__ungrouped'; title.textContent = t('No chapter');
+            section.append(title); appendPages(section, unassigned); nav.append(section);
         }
-        if (!count) {
+        const build = chapter => {
+            const chapterMatch = !!search && chapterPath(this.chapters, chapter.id).toLowerCase().includes(search);
+            const pages = this.pages.filter(page => page.chapterId === chapter.id && matches(page, chapterMatch));
+            const children = rows.filter(row => row.parentId === chapter.id).map(build).filter(Boolean);
+            if (search && !chapterMatch && !pages.length && !children.length) return null;
+            const section = document.createElement('section'); section.className = 'diary-workspace__chapter'; section.dataset.chapterId = chapter.id;
+            section.style.setProperty('--chapter-depth', String(chapter.depth));
+            const header = document.createElement('div'); header.className = 'diary-workspace__chapter-heading';
+            const title = document.createElement('button'); title.type = 'button'; title.className = 'diary-workspace__chapter-title'; title.dataset.chapterToggle = '';
+            title.setAttribute('aria-expanded', String(!this.closedChapters.has(chapter.id) || !!search)); title.title = chapterPath(this.chapters, chapter.id);
+            title.append(icon('CaretRight'));
+            const name = document.createElement('strong'); name.textContent = chapter.name; name.setAttribute('translate', 'no');
+            const small = document.createElement('small'); small.textContent = pages.length; title.append(name, small);
+            title.addEventListener('click', () => { this.closedChapters.has(chapter.id) ? this.closedChapters.delete(chapter.id) : this.closedChapters.add(chapter.id);
+                const focused = title.ownerDocument.activeElement === title;
+                this.selected = { chapterId: chapter.id }; this.renderIndex(); this.renderPage();
+                if (focused) this.el.querySelector(`[data-chapter-id="${CSS.escape(chapter.id)}"] [data-chapter-toggle]`)?.focus(); });
+            title.addEventListener('contextmenu', event => this.chapterMenu(event, chapter));
+            if (this.editing && this.draft.can_edit) {
+                title.draggable = true; title.addEventListener('dragstart', event => event.dataTransfer.setData('application/x-gravewright-chapter', JSON.stringify({ journalId: this.draft.id, id: chapter.id })));
+                const actions = document.createElement('button'); actions.type = 'button'; actions.className = 'journal-button diary-workspace__chapter-actions'; actions.textContent = '⋮';
+                actions.dataset.chapterActions = ''; actions.setAttribute('aria-label', t('Chapter actions: {name}', { name: chapter.name }));
+                actions.addEventListener('click', event => this.chapterMenu(event, chapter)); header.append(title, actions);
+            } else header.append(title);
+            section.append(header);
+            const list = document.createElement('div'); list.className = 'diary-workspace__chapter-children'; show(list, !this.closedChapters.has(chapter.id) || !!search);
+            appendPages(list, pages);
+            if (!pages.length && !children.length) { const empty = document.createElement('p'); empty.className = 'diary-workspace__chapter-empty'; empty.textContent = t('No pages in this chapter.'); list.append(empty); }
+            list.append(...children); section.append(list); return section;
+        };
+        const roots = rows.filter(row => row.parentId === null).map(build).filter(Boolean); nav.append(...roots);
+        if (!count && !roots.length) {
             const p = document.createElement('p');
             p.className = 'diary-workspace__empty';
-            p.textContent = search || this.filter !== 'all' ? 'No pages match the search.' : 'This journal has no pages yet.';
+            p.textContent = search || this.filter !== 'all' ? modalText('No pages match the search.', 'Nenhuma página corresponde à pesquisa.') : modalText('This journal has no pages yet.', 'Este diário ainda não tem páginas.');
             nav.append(p);
         }
         for (const b of this.el.querySelectorAll('[data-add]'))
             b.disabled = this.pages.length >= 64;
+        this.$('[data-action=chapter]').disabled = this.chapters.length >= MAX_CHAPTERS;
+    }
+    renderPageTitle() {
+        this.cancelPageTitleEdit?.();
+        const page = this.current, chapter = this.currentChapter;
+        const title = this.$('.diary-workspace__identity strong');
+        title.setAttribute('translate', 'no');
+        title.textContent = this.selected === 'gm' ? t('GM area') : page?.title || chapter?.name || this.draft.title;
+        if (!page || !this.editing || !this.draft.can_edit || page.can_edit === false) return;
+        const button = title.ownerDocument.createElement('button');
+        button.type = 'button'; button.dataset.journalPageTitle = '';
+        button.className = 'diary-workspace__page-title'; button.textContent = page.title;
+        button.title = t('Rename page'); button.setAttribute('aria-label', t('Rename page'));
+        button.addEventListener('click', () => this.editPageTitle()); title.replaceChildren(button);
+    }
+    editPageTitle() {
+        const page = this.current;
+        if (!page || !this.editing || !this.draft.can_edit || page.can_edit === false || this.cancelPageTitleEdit) return;
+        const title = this.$('.diary-workspace__identity strong'), input = title.ownerDocument.createElement('input');
+        input.type = 'text'; input.value = page.title; input.maxLength = 120; input.required = true;
+        input.className = 'diary-workspace__page-title-input'; input.dataset.journalPageTitleInput = '';
+        input.setAttribute('aria-label', t('Page title')); input.setAttribute('translate', 'no');
+        const lifetime = new AbortController(), doc = input.ownerDocument;
+        let active = true, finishing = false, pointerDown = false, redraw, redrawTimer, releaseEscape;
+        this.cancelPageTitleEdit = () => { active = false; lifetime.abort(); clearTimeout(redrawTimer); releaseEscape?.(); this.cancelPageTitleEdit = null; };
+        const finish = (save, focus = false) => {
+            if (!active || finishing) return;
+            finishing = true;
+            const value = input.value.trim();
+            if (save && value && value !== page.title && this.current === page && this.editing
+                && this.draft.can_edit && page.can_edit !== false && this.el.isConnected) {
+                page.title = value; this.touch();
+            }
+            redraw = () => {
+                if (!active) return;
+                this.cancelPageTitleEdit();
+                const label = this.$(`[data-page-id="${CSS.escape(page.id)}"] [data-page-title]`);
+                if (label) label.textContent = page.title;
+                if (focus) this.renderIndex();
+                this.$('.diary-workspace__image')?.setAttribute('alt', page.title);
+                this.renderPageTitle();
+                if (!this.dirty && !this.pending && this.remote?.version !== undefined && this.remote.version !== this.draft.version)
+                    this.update(this.remote);
+                if (focus) this.$('[data-journal-page-title]')?.focus();
+            };
+            // A blur precedes pointerup/click. Even changing a label's height
+            // can move the clicked page or arrow, so defer layout until release.
+            if (!focus && pointerDown) input.readOnly = true;
+            else redraw();
+        };
+        doc.addEventListener('pointerdown', () => { pointerDown = true; }, { capture: true, signal: lifetime.signal });
+        const releasePointer = () => { pointerDown = false; if (redraw) { clearTimeout(redrawTimer); redrawTimer = setTimeout(redraw, 0); } };
+        for (const type of ['pointerup', 'pointercancel', 'dragend'])
+            doc.addEventListener(type, releasePointer, { capture: true, signal: lifetime.signal });
+        input.addEventListener('blur', () => finish(true), { signal: lifetime.signal });
+        input.addEventListener('keydown', event => {
+            if (event.isComposing || !['Enter', 'Escape'].includes(event.key)) return;
+            event.preventDefault(); event.stopPropagation(); finish(event.key === 'Enter', true);
+        }, { signal: lifetime.signal });
+        releaseEscape = registerEscapeClose(input, () => finish(false, true));
+        title.replaceChildren(input); input.focus(); input.select();
     }
     renderPage() {
         this.destroyEditors();
         const host = this.$('.diary-workspace__page');
         host.replaceChildren();
         const p = this.current;
-        this.$('.diary-workspace__identity small').textContent = p?.category || 'Journal';
-        this.$('.diary-workspace__identity strong').textContent = this.selected === 'gm' ? 'GM area' : p?.title || this.draft.title;
+        const chapter = this.currentChapter;
+        this.$('.diary-workspace__identity small').textContent = chapter ? chapterPath(this.chapters, chapter.id) : t('Journal');
+        this.$('.diary-workspace__identity small').title = chapter ? chapterPath(this.chapters, chapter.id) : '';
+        this.$('.diary-workspace__identity small').setAttribute('translate', 'no');
+        this.renderPageTitle();
         this.$('[data-page-count]').textContent = p ? `${this.pages.indexOf(p) + 1} / ${this.pages.length}` : '';
-        const editor = (value, label, save) => { const el = document.createElement('div'); host.append(el); const instance = richText(el, value, !this.editing, file => upload(this.draft.id, file), label, next => { save(next); this.touch(); }); this.cleanups.push(() => instance.destroy()); };
+        const persisted = this.remote || state.journals.find(row => row.id === this.draft.id) || this.draft;
+        const pagePersisted = !p || [...(persisted.sections || []), ...(persisted.editable_sections || [])].some(row => row.id === p.id);
+        const editor = (value, label, save) => { const el = document.createElement('div'); host.append(el); const instance = richText(el, value, !this.editing || p?.can_edit === false, file => upload(this.draft.id, file), label, next => { save(next); this.touch(); }, { journalId: this.draft.id, pageId: p?.id, pagePersisted, presentationTicket: this.draft.presentation_ticket }); this.cleanups.push(() => instance.destroy()); };
+        if (chapter && this.selected?.chapterId) {
+            const overview = document.createElement('div'); overview.className = 'diary-workspace__chapter-overview'; overview.dataset.chapterOverview = chapter.id;
+            const summary = document.createElement('p'); summary.textContent = t('This chapter contains {pages} pages and {chapters} subchapters.', {
+                pages: this.pages.filter(page => page.chapterId === chapter.id).length,
+                chapters: this.chapters.filter(row => row.parentId === chapter.id).length }); overview.append(summary);
+            if (this.editing && this.draft.can_edit) for (const [label, action] of [
+                ['New page in this chapter', () => this.add('text', chapter.id)], ['New subchapter', () => this.chapterForm(null, chapter.id)],
+            ]) { const button = document.createElement('button'); button.type = 'button'; button.className = 'journal-button'; button.textContent = t(label);
+                button.disabled = label === 'New subchapter' ? !canParentChapter(this.chapters, null, chapter.id) : this.pages.length >= 64;
+                button.addEventListener('click', action); overview.append(button); }
+            host.append(overview); return;
+        }
         if (this.selected === 'gm' && this.isGM) {
             const gm = this.draft.diary?.gm;
             if (!gm)
@@ -485,7 +574,7 @@ class JournalWindow {
             editor(p.content, 'Page content', value => p.content = value);
             return;
         }
-        if (this.editing) {
+        if (this.editing && p.can_edit !== false) {
             const el = clone('upload');
             el.querySelector('span').textContent = p.src ? 'Replace file' : 'Upload file';
             const input = el.querySelector('input');
@@ -533,18 +622,82 @@ class JournalWindow {
             host.append(text);
         }
     }
-    add(kind, category = this.current?.category || '') {
+    structureModal(modal) {
+        this.structureModals ||= new Set(); this.structureModals.add(modal);
+        modal.addEventListener('close', () => this.structureModals.delete(modal), { once: true }); return modal;
+    }
+    expandChapter(id) {
+        const seen = new Set(); let current = this.chapters.find(chapter => chapter.id === id);
+        while (current && !seen.has(current.id)) { seen.add(current.id); this.closedChapters.delete(current.id); current = this.chapters.find(chapter => chapter.id === current.parentId); }
+    }
+    chapterForm(existing = null, parentId = null) {
+        if (!this.editing || !this.draft.can_edit || !this.el.isConnected) return;
+        const id = existing?.id || `chapter_${crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`;
+        const choices = [{ value: '', label: t('No parent chapter') }, ...chapterRows(this.chapters)
+            .filter(row => canParentChapter(this.chapters, id, row.id)).map(row => ({ value: row.id, label: chapterPath(this.chapters, row.id) }))];
+        const modal = openFormModal(t(existing ? 'Edit chapter' : parentId ? 'New subchapter' : 'New chapter'), [
+            { name: 'name', label: t('Chapter name'), value: existing?.name || '', required: true },
+            { name: 'parentId', label: t('Parent chapter'), value: existing?.parentId || parentId || '', options: choices },
+        ], form => {
+            if (!this.editing || !this.draft.can_edit || !this.el.isConnected) throw Error(t('You cannot edit this journal.'));
+            this.draft.chapters = structureResult(() => saveChapter(this.chapters, { id, name: form.elements.name.value, parentId: form.elements.parentId.value || null }));
+            this.draft.editable_sections = this.pages.map(page => page.chapterId === id ? movePageToChapter(page, this.chapters, id) : page);
+            this.expandChapter(id); this.selected = { chapterId: id }; this.touch(); this.renderIndex(); this.renderPage();
+        }, { key: 'journal-chapter' });
+        modal.dataset.journalChapterEditor = existing?.id || 'new'; modal.querySelector('[name=name]').maxLength = 80;
+        for (const option of modal.querySelectorAll('option')) if (option.value) option.setAttribute('translate', 'no');
+        return this.structureModal(modal);
+    }
+    chapterMenu(event, chapter) {
+        if (!this.editing || !this.draft.can_edit) return;
+        const siblings = chapterRows(this.chapters).filter(row => row.parentId === chapter.parentId), index = siblings.findIndex(row => row.id === chapter.id);
+        const move = direction => { this.draft.chapters = reorderChapter(this.chapters, chapter.id, direction); this.touch(); this.renderIndex(); };
+        context(event, [
+            ...(this.pages.length < 64 ? [[t('New page in this chapter'), () => this.add('text', chapter.id)]] : []),
+            ...(canParentChapter(this.chapters, null, chapter.id) ? [[t('New subchapter'), () => this.chapterForm(null, chapter.id)]] : []),
+            [t('Edit chapter'), () => this.chapterForm(chapter)],
+            ...(index > 0 ? [[t('Move chapter up'), () => move(-1)]] : []),
+            ...(index < siblings.length - 1 ? [[t('Move chapter down'), () => move(1)]] : []),
+            ...(!this.pages.some(page => page.chapterId === chapter.id && page.can_edit === false) ? [[t('Delete chapter'), () => {
+                const modal = openFormModal(t('Delete chapter'), [], () => {
+                    if (!this.editing || !this.draft.can_edit || !this.el.isConnected) throw Error(t('You cannot edit this journal.'));
+                    const next = structureResult(() => deleteChapter(this.chapters, this.pages, chapter.id)); this.draft.chapters = next.chapters; this.draft.editable_sections = next.pages;
+                    if (this.selected?.chapterId === chapter.id) this.selected = chapter.parentId ? { chapterId: chapter.parentId } : 'opening';
+                    this.closedChapters.delete(chapter.id); this.touch(); this.renderIndex(); this.renderPage();
+                }, { key: 'journal-chapter-delete', submitLabel: t('Delete chapter') });
+                modal.dataset.journalChapterDelete = chapter.id;
+                const note = document.createElement('p'); note.textContent = t('Pages will remain without a chapter. Subchapters will move to the parent chapter.'); modal.querySelector('[data-fields]').append(note); this.structureModal(modal);
+            }]] : []),
+        ]);
+        menu?.querySelector('button')?.focus();
+    }
+    movePageForm(page) {
+        if (!this.editing || !this.draft.can_edit || page.can_edit === false) return;
+        const modal = openFormModal(t('Move to chapter'), [{ name: 'chapterId', label: t('Chapter'), value: page.chapterId || '', options: [
+            { value: '', label: t('No chapter') }, ...chapterRows(this.chapters).map(chapter => ({ value: chapter.id, label: chapterPath(this.chapters, chapter.id) })),
+        ] }], form => {
+            const current = this.pages.find(row => row.id === page.id);
+            if (!this.editing || !this.draft.can_edit || !this.el.isConnected || !current || current.can_edit === false) throw Error(t('You cannot edit this journal.'));
+            this.draft.editable_sections = structureResult(() => this.pages.map(row => row.id === page.id ? movePageToChapter(row, this.chapters, form.elements.chapterId.value || null) : row));
+            this.expandChapter(form.elements.chapterId.value);
+            this.touch(); this.renderIndex(); this.renderPage();
+        }, { key: 'journal-page-chapter' }); modal.dataset.journalPageChapter = page.id;
+        for (const option of modal.querySelectorAll('option')) if (option.value) option.setAttribute('translate', 'no');
+        return this.structureModal(modal);
+    }
+    add(kind, chapterId = this.currentChapter?.id || null) {
         if (!this.editing || this.pages.length >= 64)
             return;
-        const p = { id: 'section_' + crypto.randomUUID().replaceAll('-', '').slice(0, 12), title: 'New page', category, kind, audience: 'public', level: 1, sortOrder: (this.pages.length + 1) * 10, content: emptyDoc(), src: '', assetId: '' };
+        const p = movePageToChapter({ id: 'section_' + crypto.randomUUID().replaceAll('-', '').slice(0, 12), title: t('New page'), kind, audience: 'public', level: 1, sortOrder: (this.pages.length + 1) * 10, content: emptyDoc(), src: '', assetId: '' }, this.chapters, chapterId);
         this.draft.editable_sections = [...this.pages, p];
         this.selected = p.id;
+        this.expandChapter(chapterId);
         this.touch();
         this.renderIndex();
         this.renderPage();
     }
     pageMenu(e, p) {
-        context(e, [['Rename page', () => prompt('Name', p.title, value => { p.title = value; this.touch(); this.renderIndex(); this.renderPage(); })], ['Move to chapter', () => prompt('Chapter', p.category, value => { p.category = value; this.touch(); this.renderIndex(); this.renderPage(); })], ...(this.isGM ? [[p.audience === 'gm' ? 'Make public' : 'GM only', () => { p.audience = p.audience === 'gm' ? 'public' : 'gm'; this.touch(); this.renderIndex(); }]] : []), ['Remove page', () => {
+        context(e, [...(this.isGM ? [...(p.audience !== 'gm' ? [[presentationLabel(), () => this.present(p)]] : []), ['Permissions', () => this.permissions(p)]] : []), ['Rename page', () => prompt('Name', p.title, value => { p.title = value; this.touch(); this.renderIndex(); this.renderPage(); })], [t('Move to chapter'), () => this.movePageForm(p)], ...(this.isGM ? [[p.audience === 'gm' ? 'Make public' : 'GM only', () => { p.audience = p.audience === 'gm' ? 'public' : 'gm'; this.touch(); this.renderIndex(); }]] : []), ['Remove page', () => {
                     this.draft.editable_sections = this.pages.filter(row => row.id !== p.id);
                     if (this.selected === p.id)
                         this.selected = this.pages[0]?.id || 'opening';
@@ -553,39 +706,18 @@ class JournalWindow {
                     this.renderPage();
                 }]]);
     }
-    permissions() {
-        const el = this.$('.journal-window__permissions');
-        show(el, el.hidden);
-        if (!el.hidden)
-            this.renderPermissions();
+    async present(page) {
+        if (!await this.flush()) return;
+        return present(this.draft, page);
     }
-    renderPermissions() {
-        this.$('[name=visibility]').value = this.draft.visibility;
-        const host = this.$('[data-member-permissions]');
-        host.replaceChildren();
-        for (const member of state.members.filter(m => m.role !== 'gm')) {
-            const el = clone('permission');
-            el.querySelector('span').textContent = member.name;
-            el.querySelector('select').value = this.draft.permissions?.[member.id] || 'none';
-            el.querySelector('select').addEventListener('change', async (e) => {
-                if (!await this.flush())
-                    return;
-                try {
-                    const result = await commands('access', { journal_id: this.draft.id, target_user_id: member.id, access_level: e.target.value });
-                    this.draft.version = result.version;
-                }
-                catch (error) {
-                    this.error(error.message);
-                }
-            });
-            host.append(el);
-        }
+    async permissions(page) {
+        if (!await this.flush()) return;
+        return openPermissions(page ? 'pages' : 'journals', page ? `${this.draft.id}:${page.id}` : this.draft.id);
     }
     bind() {
         this.$('.journal-window__title').addEventListener('input', e => { this.draft.title = e.target.value; this.touch(); });
         this.$('[data-journal-search]').addEventListener('input', () => this.renderIndex());
-        this.$('[name=visibility]').addEventListener('change', e => { this.editing = true; this.draft.visibility = e.target.value; this.touch(); this.render(); });
-        this.$('.diary-workspace__composer').addEventListener('submit', e => { e.preventDefault(); const input = e.target.querySelector('input'); this.add('text', input.value.trim()); input.value = ''; show(e.target, false); });
+
         this.$('.diary-workspace__index').addEventListener('dragover', e => {
             if (this.editing)
                 e.preventDefault();
@@ -594,11 +726,25 @@ class JournalWindow {
             if (!this.editing)
                 return;
             e.preventDefault();
-            const id = e.dataTransfer.getData('application/x-gravewright-page'), page = this.pages.find(p => p.id === id);
-            if (!page)
+            const chapterId = e.target.closest('[data-chapter-id]')?.dataset.chapterId || null;
+            const draggedChapter = e.dataTransfer.getData('application/x-gravewright-chapter');
+            if (draggedChapter) {
+                try {
+                    const value = JSON.parse(draggedChapter);
+                    if (value.journalId !== this.draft.id || !this.draft.can_edit) return;
+                    const chapter = this.chapters.find(row => row.id === value.id);
+                    if (!chapter || !canParentChapter(this.chapters, chapter.id, chapterId)) return;
+                    this.draft.chapters = saveChapter(this.chapters, { ...chapter, parentId: chapterId }); this.touch(); this.renderIndex(); this.renderPage();
+                } catch { /* Invalid or cross-document drags do not modify this journal. */ }
+                return;
+            }
+            const reference = readReference(e.dataTransfer);
+            if (reference && reference.id !== this.draft.id) return;
+            const id = e.dataTransfer.getData('application/x-gravewright-page'), oldPage = this.pages.find(p => p.id === id);
+            const page = oldPage && movePageToChapter(oldPage, this.chapters, chapterId);
+            if (!page || page.can_edit === false)
                 return;
             const target = e.target.closest('[data-page-id]')?.dataset.pageId;
-            page.category = e.target.closest('[data-chapter]')?.dataset.chapter || '';
             const next = this.pages.filter(p => p.id !== id);
             const index = target ? next.findIndex(p => p.id === target) : next.length;
             next.splice(Math.max(0, index), 0, page);
@@ -606,19 +752,11 @@ class JournalWindow {
             this.draft.editable_sections = next;
             this.touch();
             this.renderIndex();
+            this.renderPage();
         });
-        const presentation = this.$('[data-presentation]');
-        for (const member of state.targeted_handouts_enabled ? state.members : []) {
-            const option = document.createElement('option'); option.value = member.id; option.textContent = member.name;
-            presentation.querySelector('select').append(option);
-        }
-        presentation.onsubmit = async e => {
-            e.preventDefault(); if (!await this.flush()) return;
-            try { await commands('present', {journal_id:this.draft.id, target:presentation.querySelector('select').value}); presentation.hidden = true; }
-            catch(error) {this.error('Could not present the journal.');}
-        };
+        this.$('[data-action=present]').title = presentationLabel();
         this.el.addEventListener('click', async (e) => {
-            if (e.target.closest('[data-action=present]')) { presentation.hidden = !presentation.hidden; return; }
+            if (e.target.closest('[data-action=present]')) { await this.present(); return; }
 
             const b = e.target.closest('button');
             if (!b)
@@ -673,12 +811,7 @@ class JournalWindow {
                 show(filters, filters.hidden);
                 b.setAttribute('aria-expanded', String(!filters.hidden));
             }
-            if (action === 'chapter') {
-                const form = this.$('.diary-workspace__composer');
-                show(form, form.hidden);
-                if (!form.hidden)
-                    form.querySelector('input').focus();
-            }
+            if (action === 'chapter') this.chapterForm();
             if (action === 'prev' || action === 'next') {
                 const index = this.pages.findIndex(p => p.id === this.selected);
                 this.selected = this.pages[index + (action === 'prev' ? -1 : 1)]?.id || 'opening';
@@ -688,24 +821,30 @@ class JournalWindow {
         });
     }
 }
-window.gravewrightJournals = { toggle() { mergePatch({ _journalsOpen: !getPath('_journalsOpen') }); requestAnimationFrame(() => panel.dispatchEvent(new Event('focusin', { bubbles: true }))); window.gravewrightRealtime.journalsSubscribe(); }, open };
+window.gravewrightJournals = { toggle() { if (popup && !popup.closed) { popup.focus(); return; } if (panel.classList.contains('game-panel--minimized')) { restoreWindow(panel); mergePatch({_journalsOpen:true}); return; } mergePatch({ _journalsOpen: !getPath('_journalsOpen') }); requestAnimationFrame(() => panel.dispatchEvent(new Event('focusin', { bubbles: true }))); window.gravewrightRealtime.journalsSubscribe(); }, open };
+window.gravewrightJournals.flush = id => windows.get(id)?.flush() ?? Promise.resolve(true);
 window.addEventListener('gravewright:connected', () => window.gravewrightRealtime.journalsSubscribe());
-window.addEventListener('gravewright:journals', event => {
-    state = event.detail;
-    tree();
-    for (const [id, win] of windows) {
-        const view = state.journals.find(j => j.id === id);
-        if (view)
-            win.update(view);
-        else
-            void win.close(true);
-    }
-    for (const id of waitingOpen)
-        if (state.journals.some(j => j.id === id)) {
-            waitingOpen.delete(id);
-            open(id);
+function receiveState(next) {
+    restoreContent('journals', () => {
+        state = next;
+        tree();
+        for (const [id, win] of windows) {
+            const view = state.journals.find(j => j.id === id);
+            if (view && view.can_open !== false)
+                win.update(view);
+            else
+                void win.close(true);
         }
-});
+        for (const [id, pageId] of waitingOpen)
+            if (state.journals.some(j => j.id === id)) {
+                waitingOpen.delete(id);
+                open(id, pageId);
+            }
+    });
+}
+window.addEventListener('gravewright:journals', event => receiveState(event.detail));
+const initial = initialContent('journals');
+if(initial)receiveState(initial);
 window.addEventListener('gravewright:access-revoked', () => {
     state = { journals: [], folders: [], members: [], is_gm: false };
     tree();
