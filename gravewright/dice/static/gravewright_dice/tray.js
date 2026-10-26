@@ -3,10 +3,11 @@ import { mergePatch, getPath } from '/static/gravewright_web/vendor/datastar-1.0
 import { detachWindow } from '/static/gravewright_table/window-controls.js';
 import { dicePresets, buildPreset } from './presets.js';
 const tray = document.getElementById('dice-tray'), workspace = document.getElementById('table-workspace');
+if (tray && workspace) {
 const $ = s => tray.querySelector(s), field = n => $(`[name="${n}"]`);
 const templates = Object.fromEntries(['term', 'history-entry', 'preset-choice', 'preset-field', 'saved-entry'].map(k => [k, document.getElementById('dice-' + k)]));
 const clone = k => templates[k].content.firstElementChild.cloneNode(true);
-const show = (el, yes) => { el.hidden = !yes; el.style.display = yes ? '' : 'none'; };
+const show = (el, yes) => { if (!el) return; el.hidden = !yes; el.style.display = yes ? '' : 'none'; };
 const storageKey = kind => `gravewright:dice-${kind}:${workspace.dataset.profileId}:${workspace.dataset.tableId}`;
 function load(kind) { try {
     const v = JSON.parse(localStorage.getItem(storageKey(kind)) || '[]');
@@ -31,10 +32,10 @@ catch {
         show(el, true);
     }
 } }
-function formula() { if (field('system').value === 'kallistis') { field('expression').value = '2d10'; refresh(); return; } field('expression').value = terms.map(t => `${t.count}d${t.faces}${t.explode ? '!' : ''}${t.selection ? t.selection + t.selectedCount : ''}`).join(' + ') + (Number($('#dice-modifier').value) ? ` ${Number($('#dice-modifier').value) > 0 ? '+' : '-'} ${Math.abs(Number($('#dice-modifier').value))}` : ''); refresh(); }
+function formula() { if (field('system')?.value === 'kallistis') { field('expression').value = '2d10'; refresh(); return; } field('expression').value = terms.map(t => `${t.count}d${t.faces}${t.explode ? '!' : ''}${t.selection ? t.selection + t.selectedCount : ''}`).join(' + ') + (Number($('#dice-modifier').value) ? ` ${Number($('#dice-modifier').value) > 0 ? '+' : '-'} ${Math.abs(Number($('#dice-modifier').value))}` : ''); refresh(); }
 function refresh() {
-    const expression = field('expression').value.trim(), repeat = Number(field('repeat').value), kallistis = field('system').value === 'kallistis';
-    const mode = kallistis ? field('kallistisMode').value : 'single';
+    const expression = field('expression').value.trim(), repeat = Number(field('repeat').value), kallistis = field('system')?.value === 'kallistis';
+    const mode = kallistis ? field('kallistisMode')?.value || 'action' : 'single';
     show($('[data-kallistis-fields]'), kallistis);
     show($('[data-kallistis-action-fields]'), kallistis && mode === 'action');
     show($('[data-kallistis-opposed-fields]'), kallistis && mode === 'opposed');
@@ -137,11 +138,14 @@ function action(prefix = '') { const name = key => prefix ? prefix + key[0].toUp
 function actionSide(prefix) { const name = key => prefix + key[0].toUpperCase() + key.slice(1); return { action_label: field(name('actionLabel')).value.trim(), attribute: { name: field(name('attributeName')).value, value: Number(field(name('attributeValue')).value) }, skill: { name: field(name('skillName')).value.trim(), value: Number(field(name('skillValue')).value) } }; }
 function valid(names) { return names.every(name => field(name).reportValidity()); }
 function roll(visibility) {
-    if (busy || !valid(['expression', 'repeat', 'label', 'system', 'modifier', 'difficulty'])) return;
-    const system = field('system').value, mode = system === 'kallistis' ? field('kallistisMode').value : 'single';
+    const systemField = field('system'), system = systemField?.value || 'generic';
+    const required = ['expression', 'repeat', 'label'];
+    if (systemField) required.push('system', 'modifier', 'difficulty');
+    if (busy || !valid(required)) return;
+    const mode = system === 'kallistis' ? field('kallistisMode')?.value || 'action' : 'single';
     if (system === 'kallistis' && mode === 'action' && !valid(['actionLabel', 'attributeValue', 'skillName', 'skillValue', 'impulseLevel', 'impulseReason', 'pressureLevel', 'pressureReason', 'helperCount'])) return;
     if (system === 'kallistis' && mode === 'opposed' && !valid(['sideAActionLabel', 'sideAAttributeValue', 'sideASkillName', 'sideASkillValue', 'sideBActionLabel', 'sideBAttributeValue', 'sideBSkillName', 'sideBSkillValue'])) return;
-    const entry = { expression: field('expression').value.trim(), label: field('label').value.trim(), repeat: Number(field('repeat').value), system, modifier: Number(field('modifier').value), difficulty: Number(field('difficulty').value), mode };
+    const entry = { expression: field('expression').value.trim(), label: field('label').value.trim(), repeat: Number(field('repeat').value), system, modifier: Number(field('modifier')?.value ?? $('#dice-modifier').value ?? 0), difficulty: Number(field('difficulty')?.value ?? 15), mode };
     if (mode === 'action') { entry.action = action(); entry.actorId = field('actorId').value || undefined; if (!entry.label) entry.label = entry.action.action_label; }
     if (mode === 'opposed') { entry.label = entry.label || 'Opposed KALLISTIS test'; entry.opposed = { side_a: actionSide('sideA'), side_b: actionSide('sideB') }; }
     error(); setBusy(true); window.gravewrightRealtime.roll({ ...entry, visibility }).then(() => { recent = [entry, ...recent.filter(p => p.expression !== entry.expression || p.label !== entry.label || (p.repeat ?? 1) !== entry.repeat || p.system !== entry.system || p.modifier !== entry.modifier || p.difficulty !== entry.difficulty)].slice(0, 30); persist('history', recent); history(); window.gravewrightDice.close(); }).catch(e => error(e.message)).finally(() => setBusy(false));
@@ -209,10 +213,10 @@ window.gravewrightDice = {
         historyOpen = false;
         $('#dice-faces').value = 24;
         $('#dice-modifier').value = 0;
-        field('system').value = 'generic';
-        field('kallistisMode').value = 'single';
-        field('difficultyPreset').value = '15';
-        field('difficulty').value = 15;
+        if (field('system')) field('system').value = 'generic';
+        if (field('kallistisMode')) field('kallistisMode').value = 'single';
+        if (field('difficultyPreset')) field('difficultyPreset').value = '15';
+        if (field('difficulty')) field('difficulty').value = 15;
         field('expression').value = '';
         field('label').value = '';
         field('repeat').value = 1;
@@ -254,3 +258,4 @@ function syncActors(value) {
 }
 window.addEventListener('gravewright:actors.state', event => syncActors(event.detail));
 window.addEventListener('gravewright:connected', () => window.gravewrightRealtime.actorsSubscribe());
+}
