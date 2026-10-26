@@ -1,5 +1,5 @@
-import { gravewright } from '/static/gravewright_modules/frontend-api.js';
-import { executeNative } from '/static/gravewright_modules/domain-api.js';
+import { gravewright } from '/static/gravewright_modules/frontend-api.js?v=a356ca3e';
+import { executeNative } from '/static/gravewright_modules/domain-api.js?v=0b5f71d4';
 const root=document.querySelector('#table-workspace'),table=root?.dataset.tableId,gm=root?.dataset.role==='gm',states={},windows=new Map();let scene;
 const modules=['items','combat','compendiums'],pending={};
 const panel=name=>document.querySelector(`[data-native-directory="${name}"]`);

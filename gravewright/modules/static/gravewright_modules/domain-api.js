@@ -1,4 +1,4 @@
-import { FRONTEND_CONTRACT } from './frontend-contract.js';
+import { FRONTEND_CONTRACT } from './frontend-contract.js?v=fc57aa4c';
 import { ModuleError } from './lifetime.js';
 
 const collections = { actors: 'actors', tokens: 'tokens', maps: 'maps', journals: 'journals', items: 'items' };

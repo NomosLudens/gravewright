@@ -1,6 +1,6 @@
 import { HttpClient } from './http-client.js';
 import { Lifetime, ModuleError } from './lifetime.js';
-import { createDomainApi, createEvents } from './domain-api.js';
+import { createDomainApi, createEvents } from './domain-api.js?v=0b5f71d4';
 import { SurfaceRegistry } from './surface-registry.js';
 
 // Host-page API lifetime. Signed modules receive a separately leased adapter
